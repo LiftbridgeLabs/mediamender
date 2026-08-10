@@ -1,6 +1,7 @@
 import logging
 import os
 import shutil
+import subprocess
 import threading
 import time
 import unittest
@@ -17,7 +18,7 @@ os.environ.setdefault("STATE_FILE", str(_TEST_ROOT / ".runtime-state.json"))
 os.environ.setdefault("PLEX_CLIENT_ID_FILE", str(_TEST_ROOT / ".runtime-client.json"))
 
 import app
-from src.checks import check_debrid_mount, check_file_threshold
+from src.checks import check_debrid_mount, check_file_threshold, check_mountpoint
 from src.config import (AppConfig, FeatureConfig, LibraryConfig, PathConfig,
                         PlexInstanceConfig, ProviderCheck, parse_config)
 from src.plex_client import PlexClient, trash_item_key
@@ -766,6 +767,46 @@ class SafetyTests(unittest.TestCase):
             result = check_file_threshold(directory, 0.9, None)
         self.assertFalse(result["pass"])
         self.assertIn("refusing", result["detail"])
+
+    def test_mount_check_uses_single_findmnt_target_lookup(self):
+        completed = Mock(
+            returncode=0, stdout="/mnt/symlink_media\n",
+        )
+        with patch("src.checks.os.path.exists", return_value=True), \
+             patch("src.checks.subprocess.run", return_value=completed) as run:
+            result = check_mountpoint(
+                "/mnt/symlink_media/symlinks/vm-altmount/tv",
+            )
+
+        self.assertTrue(result["pass"])
+        self.assertIn("/mnt/symlink_media", result["detail"])
+        run.assert_called_once_with(
+            ["findmnt", "-T", "/mnt/symlink_media/symlinks/vm-altmount/tv",
+             "-n", "-o", "TARGET"],
+            capture_output=True, text=True, timeout=5,
+        )
+
+    def test_mount_check_findmnt_timeout_fails_closed(self):
+        with patch("src.checks.os.path.exists", return_value=True), \
+             patch("src.checks.subprocess.run",
+                   side_effect=subprocess.TimeoutExpired("findmnt", 5)):
+            result = check_mountpoint("/mnt/symlink_media/tv")
+
+        self.assertFalse(result["pass"])
+        self.assertIn("timed out after 5 seconds", result["detail"])
+
+    def test_mount_check_missing_findmnt_uses_mountpoint_fallback(self):
+        missing_findmnt = FileNotFoundError()
+        not_mount = Mock(returncode=32)
+        mounted = Mock(returncode=0)
+        with patch("src.checks.os.path.exists", return_value=True), \
+             patch("src.checks.subprocess.run",
+                   side_effect=[missing_findmnt, not_mount, mounted]) as run:
+            result = check_mountpoint("/mnt/media/tv")
+
+        self.assertTrue(result["pass"])
+        self.assertIn("/mnt/media", result["detail"])
+        self.assertEqual(run.call_count, 3)
 
     def test_debrid_mount_passes_when_discovered_mount_is_populated(self):
         with patch("src.checks.os.path.exists", return_value=True), \

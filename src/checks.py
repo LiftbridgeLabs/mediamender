@@ -16,12 +16,41 @@ def _mountpoint_fallback(path: str) -> Dict:
 
 def check_mountpoint(path: str) -> Dict:
     """
-    Verify path (or one of its parents) is an actual mount point.
-    Walks up the directory tree since media paths are often subdirectories
-    of the actual mount point rather than mount points themselves.
+    Verify the path resolves to a mounted filesystem.
+
+    A single findmnt target lookup avoids invoking mountpoint once for every
+    parent directory. The legacy walk remains only as a compatibility fallback
+    when findmnt is not installed.
     """
     if not os.path.exists(path):
         return {"pass": False, "detail": f"Path does not exist: {path}"}
+
+    try:
+        result = subprocess.run(
+            ["findmnt", "-T", path, "-n", "-o", "TARGET"],
+            capture_output=True, text=True, timeout=5,
+        )
+        target = result.stdout.strip()
+        if result.returncode == 0 and target:
+            detail = (
+                f"Mounted: {path}"
+                if os.path.abspath(target) == os.path.abspath(path)
+                else f"Path accessible via mount at {target}"
+            )
+            return {"pass": True, "detail": detail}
+        return {
+            "pass": False,
+            "detail": f"Could not resolve a mount for path: {path}",
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "pass": False,
+            "detail": f"Mount lookup timed out after 5 seconds: {path}",
+        }
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        return {"pass": False, "detail": f"Mount check error: {e}"}
 
     check = path
     while True:
@@ -36,6 +65,11 @@ def check_mountpoint(path: str) -> Dict:
         except FileNotFoundError:
             # mountpoint binary unavailable — just check path exists and is non-empty
             return _mountpoint_fallback(path)
+        except subprocess.TimeoutExpired:
+            return {
+                "pass": False,
+                "detail": f"Mount lookup timed out after 5 seconds: {path}",
+            }
         except Exception as e:
             return {"pass": False, "detail": f"Mount check error: {e}"}
 
