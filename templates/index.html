@@ -780,6 +780,9 @@ dialog.overlay::backdrop{background:transparent;}
 .repair-file:last-child{border-bottom:0;}
 .repair-file-path{color:var(--muted);font:500 12px/1.5 var(--mono);margin-top:4px;}
 .repair-folder-footer{margin-top:auto;display:flex;justify-content:space-between;align-items:center;gap:12px;padding-top:4px;}
+.repair-select{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:700;color:var(--bright);cursor:pointer;}
+.repair-select input{width:20px;height:20px;accent-color:var(--accent);cursor:pointer;}
+.repair-batch-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .repair-progress{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;margin-top:16px;}
 .repair-progress-step{padding:9px 6px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--muted);font-size:12px;text-align:center;}
 .repair-progress-step.done{border-color:var(--pass-line);color:var(--pass2);background:var(--pass-soft);}
@@ -1133,6 +1136,7 @@ dialog.overlay::backdrop{background:transparent;}
         <h1 class="dashboard-title" id="repair-detail-title">Affected folders</h1>
         <div class="dashboard-subtitle" id="repair-detail-subtitle"></div>
       </div>
+      <div class="repair-batch-actions"><button class="btn btn-secondary" id="repair-select-all" onclick="selectAllRepairFolders()">Select all</button><button class="btn btn-primary" id="repair-selected" onclick="runSelectedRepairFolders()" disabled>Repair selected (0)</button></div>
     </div>
     <div class="repair-folder-grid" id="repair-folder-grid"></div>
   </div>
@@ -1982,6 +1986,7 @@ async function scanAllMetadata(button) {
 // Timestamp repair
 let _repairStatus = null;
 let _repairPoll = null;
+const _repairSelection = new Map();
 const _repairExpanded = new Set();
 let _repairExpansionInitialized = false;
 const _repairPhases = ['Preparing','Temporary rename','First Plex scan','Names restored','Second Plex scan','Verifying','Repaired'];
@@ -2033,9 +2038,9 @@ function updateRepairRollup(status) {
   const copy = document.getElementById('rollup-repair-copy');
   if (status.running || status.active_transaction) {
     const recovery = status.active_transaction?.state === 'recovery_required';
-    card.className = 'rollup-card warn'; statusEl.textContent = recovery ? 'Timestamp recovery required' : 'Repair operation active'; copy.textContent = 'Empty Trash remains locked until repair or recovery completes.';
+    card.className = 'rollup-card warn'; statusEl.textContent = recovery ? 'Timestamp recovery required' : 'Repair operation active'; copy.textContent = status.batch?.running ? `Sequential repair ${status.batch.current || 0} of ${status.batch.total}` : 'Empty Trash remains locked until repair or recovery completes.';
   } else if (affected) {
-    card.className = 'rollup-card warn'; statusEl.textContent = `${affected.toLocaleString()} affected file${affected===1?'':'s'}`; copy.textContent = 'Review the saved scan and explicitly approve one folder at a time.';
+    card.className = 'rollup-card warn'; statusEl.textContent = `${affected.toLocaleString()} affected file${affected===1?'':'s'}`; copy.textContent = 'Review folders, select the ones you approve, and run them sequentially.';
   } else if (ready) {
     card.className = 'rollup-card pass'; statusEl.textContent = 'Ready for manual scans'; copy.textContent = `${ready} Plex server${ready===1?' is':'s are'} configured for timestamp repair.`;
   } else {
@@ -2045,13 +2050,14 @@ function updateRepairRollup(status) {
 
 function renderRepairOverview(status) {
   const active = status.active_transaction;
+  const batch = status.batch || {};
   document.getElementById('repair-active').innerHTML = active ? `
     <div class="repair-active-card">
-      <div class="repair-active-title">${h(active.state.replaceAll('_',' '))} &middot; ${h(active.instance)} / ${h(active.library)}</div>
+      <div class="repair-active-title">${batch.running?`Folder ${batch.current} of ${batch.total} &middot; `:''}${h(active.state.replaceAll('_',' '))} &middot; ${h(active.instance)} / ${h(active.library)}</div>
       <div class="repair-active-meta">${active.worker?`Worker: ${h(active.worker)} &middot; `:''}${h(active.folder)} &middot; ${Number(active.scan_elapsed_seconds||0)}s elapsed &middot; heartbeat ${h(fmtAgo(active.last_heartbeat))}</div>
       ${renderRepairProgress(active.recovery_state || active.state)}
       <div style="margin-top:14px;display:flex;gap:10px;"><button class="btn btn-warn" onclick="cancelRepair()">Cancel safely</button>${active.state === 'recovery_required' ? '<button class="btn btn-primary" onclick="recoverRepair()">Recover</button>' : ''}</div>
-    </div>` : (status.state === 'failed' && status.error ? `<div class="repair-warning" style="border-color:var(--fail-line);color:var(--fail2);">Last repair attempt failed: ${h(status.error)}</div>` : '');
+    </div>` : batch.running ? `<div class="repair-active-card"><div class="repair-active-title">Preparing repair queue &middot; ${batch.current || 0} of ${batch.total}</div><div class="repair-active-meta">${h(batch.folder || 'Validating the first selected folder')}</div><div style="margin-top:14px;"><button class="btn btn-warn" onclick="cancelRepair()">Cancel safely</button></div></div>` : batch.state === 'failed' ? `<div class="repair-warning" style="border-color:var(--fail-line);color:var(--fail2);">Repair queue stopped after ${Number(batch.completed||0)} completed folder(s): ${h(batch.error||'repair failed')}</div>` : (status.state === 'failed' && status.error ? `<div class="repair-warning" style="border-color:var(--fail-line);color:var(--fail2);">Last repair attempt failed: ${h(status.error)}</div>` : '');
 
   const audits = status.audits || {};
   if (!_repairExpansionInitialized) {
@@ -2116,7 +2122,7 @@ function renderRepairOverview(status) {
         <div class="repair-metric"><div class="repair-metric-label">Library items</div><div class="repair-metric-value">${totalItems != null&&Number.isFinite(Number(totalItems))?Number(totalItems).toLocaleString():'\u2014'}</div></div>
       </div>
       ${excludedPaths ? `<div class="repair-warning" style="margin:0 0 16px;border-color:var(--fail-line);color:var(--fail2);"><strong>${excludedPaths} database entr${excludedPaths===1?'y':'ies'} excluded from repair:</strong> ${h(pathIssueSummary)}. View the affected library for details.</div>` : ''}
-      ${audit?.database_count_changed ? `<div class="repair-warning" style="margin:0 0 16px;"><strong>Database count changed since this audit:</strong> ${Number(audit.database_distinct_files||0).toLocaleString()} then, ${Number(audit.live_database_distinct_files||0).toLocaleString()} now. Run a fresh audit before repairing.</div>` : ''}
+      ${audit?.database_count_changed ? `<div class="repair-warning" style="margin:0 0 16px;"><strong>Database changed since this audit:</strong> ${Number(audit.database_distinct_files||0).toLocaleString()} reviewed then, ${Number(audit.live_database_distinct_files||0).toLocaleString()} now. Reviewed folders remain selectable because each is revalidated immediately before repair; run a new audit to discover newly affected folders.</div>` : ''}
       <div class="repair-library-panel"><div class="repair-library-panel-head"><span>Library audit</span><span>${audit ? `snapshot ${h(fmtTime(audit.audited_at))}` : 'not audited'}</span></div>${libraryRows || `<div class="repair-empty-audit"><div><strong style="display:block;color:var(--bright);font-size:17px;margin-bottom:6px;">${instance.ready?'Run the first audit':'Finish setup to begin'}</strong>${h(instance.readiness)}</div></div>`}</div>
       <div class="repair-instance-footer"><div class="repair-instance-footnote">${workerLabel}<br>${audit ? `${affected.toLocaleString()} repairable files across ${Number(audit.affected_folders||0).toLocaleString()} folders · audit ${h(fmtAgo(audit.audited_at))}` : 'No audit results recorded yet'}</div><div class="repair-instance-actions">${!instance.ready?`<button class="btn btn-secondary" data-configure-repair="${h(instance.name)}">Configure</button>`:''}<button class="btn btn-primary" data-audit-instance="${h(instance.name)}" ${instance.ready&&!status.running&&!status.active_transaction?'':'disabled'}>Audit now</button></div></div></div>
     </section>`;
@@ -2157,7 +2163,7 @@ function openRepairLibrary(instance, section, title) {
   document.getElementById('repair-detail-title').textContent = title || 'Affected folders';
   const folders = (audit.folders || []).filter(folder => !section || folder.library_section_id === String(section));
   const pathIssues = (audit.path_issues || []).filter(issue => !section || issue.library_section_id === String(section));
-  const staleAudit = audit.database_count_changed === true;
+  _repairSelection.clear();
   const fileCount = folders.reduce((total,folder)=>total+folder.files.length,0);
   document.getElementById('repair-detail-subtitle').textContent = `${fileCount} repairable file(s) across ${folders.length} folder(s)${pathIssues.length?` · ${pathIssues.length} other path issue(s) excluded`:''} · audit ${fmtTime(audit.audited_at)}`;
   const repairableCards = folders.map(folder => {
@@ -2165,12 +2171,19 @@ function openRepairLibrary(instance, section, title) {
     return `
     <div class="repair-folder-card"><div class="repair-folder-title">${h(folder.title)}</div><div class="repair-folder-subtitle">${h(folder.subtitle || folder.library)} &middot; ${folder.files.length} affected file${folder.files.length===1?'':'s'}</div>
       <div class="repair-files">${folder.files.map(file => `<div class="repair-file"><strong>${h(file.item_title || file.file_path.split(/[\\/]/).pop())}</strong><div class="repair-file-path">${h(file.file_path)}</div><div class="repair-change"><div><span>Plex timestamp</span><strong class="bad">${h(formatUnixDate(file.stored_timestamp))} (${h(file.stored_timestamp)})</strong></div><div><span>Filesystem timestamp</span><strong>${h(file.filesystem_timestamp_iso ? fmtTime(file.filesystem_timestamp_iso) : 'Unavailable')}</strong></div><div><span>Status</span><strong class="bad">Negative Plex part timestamp</strong></div></div></div>`).join('')}</div>
-      <div class="repair-folder-footer"><span class="badge skipped">${staleAudit?'fresh audit required':'manual only'}</span><button class="btn btn-primary" data-repair-payload="${h(encodeURIComponent(JSON.stringify({instance,section:folder.library_section_id,folder:folder.folder,files:folder.files,libraryType:folder.library_type})))}" ${_repairStatus.running||_repairStatus.active_transaction||staleAudit?'disabled':''}>${action}</button></div>
+      <div class="repair-folder-footer"><label class="repair-select"><input type="checkbox" data-repair-select="${h(encodeURIComponent(JSON.stringify({instance,section:folder.library_section_id,folder:folder.folder,files:folder.files,libraryType:folder.library_type,title:folder.title})))}" ${_repairStatus.running||_repairStatus.active_transaction?'disabled':''}> Select</label><button class="btn btn-primary" data-repair-payload="${h(encodeURIComponent(JSON.stringify({instance,section:folder.library_section_id,folder:folder.folder,files:folder.files,libraryType:folder.library_type})))}" ${_repairStatus.running||_repairStatus.active_transaction?'disabled':''}>${action}</button></div>
     </div>`;
   }).join('');
   const issueCards = pathIssues.map(issue => `<div class="repair-folder-card repair-path-issue"><div class="repair-folder-title">${h(issue.item_title || issue.file_path.split(/[\\/]/).pop())}</div><div class="repair-folder-subtitle">Excluded from automatic repair</div><div class="repair-files"><div class="repair-file"><div class="repair-file-path">${h(issue.file_path)}</div><div class="repair-change"><div><span>Plex timestamp</span><strong class="bad">${h(formatUnixDate(issue.stored_timestamp))} (${h(issue.stored_timestamp)})</strong></div><div><span>Path status</span><strong class="bad">${h(pathStateLabel(issue.path_state))}</strong></div><div><span>Action</span><strong>Resolve the filesystem path before a fresh audit</strong></div></div></div></div></div>`).join('');
   document.getElementById('repair-folder-grid').innerHTML = repairableCards + issueCards || '<div class="empty-msg">No affected folders remain. Run a fresh audit to confirm.</div>';
   document.querySelectorAll('[data-repair-payload]').forEach(button => button.addEventListener('click', () => { const payload=JSON.parse(decodeURIComponent(button.dataset.repairPayload)); runRepairFolder(payload.instance,payload.section,payload.folder,payload.files,payload.libraryType); }));
+  document.querySelectorAll('[data-repair-select]').forEach(input => input.addEventListener('change', () => {
+    const payload=JSON.parse(decodeURIComponent(input.dataset.repairSelect));
+    const key=`${payload.section}\u0000${payload.folder}`;
+    if (input.checked) _repairSelection.set(key,payload); else _repairSelection.delete(key);
+    updateRepairSelectionControls();
+  }));
+  updateRepairSelectionControls();
 }
 
 function closeRepairLibrary() { document.getElementById('repair-detail').style.display='none'; document.getElementById('repair-overview').style.display=''; }
@@ -2183,6 +2196,37 @@ async function runRepairFolder(instance, section, folder, files, libraryType) {
   const data = await response.json();
   if (!response.ok) return toast(data.error || 'Repair could not start', 'fail');
   closeRepairLibrary(); toast('Timestamp repair started','warn'); setTimeout(loadRepairStatus,500);
+}
+
+function updateRepairSelectionControls() {
+  const count=_repairSelection.size;
+  const button=document.getElementById('repair-selected');
+  if (button) { button.textContent=`Repair selected (${count})`; button.disabled=count===0||Boolean(_repairStatus?.running||_repairStatus?.active_transaction); }
+  const selectAll=document.getElementById('repair-select-all');
+  const available=[...document.querySelectorAll('[data-repair-select]:not(:disabled)')];
+  if (selectAll) selectAll.textContent=available.length&&available.every(input=>input.checked)?'Clear selection':'Select all';
+}
+
+function selectAllRepairFolders() {
+  const inputs=[...document.querySelectorAll('[data-repair-select]:not(:disabled)')];
+  const select=inputs.some(input=>!input.checked);
+  inputs.forEach(input=>{ if (input.checked!==select) { input.checked=select; input.dispatchEvent(new Event('change')); } });
+  updateRepairSelectionControls();
+}
+
+async function runSelectedRepairFolders() {
+  const selected=[..._repairSelection.values()];
+  if (!selected.length) return;
+  const files=selected.reduce((total,item)=>total+item.files.length,0);
+  const list=selected.map((item,index)=>`${index+1}. ${item.title || item.folder} (${item.files.length} file${item.files.length===1?'':'s'})`).join('\n');
+  if (!confirm(`Repair ${selected.length} reviewed folders sequentially?\n\n${list}\n\nEach folder will receive a fresh safety check and exact affected-file comparison immediately before repair. Emptyarr stops the queue on the first changed or unsafe folder. Completed folders will not require another audit before the remaining reviewed folders continue.\n\nTotal affected symlinks: ${files}\nThe underlying provider objects will not be modified.`)) return;
+  const response=await fetch('/api/timestamp-repair/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:selected[0].instance,folders:selected.map(item=>({library_section_id:item.section,folder:item.folder}))})});
+  const data=await response.json();
+  if (!response.ok) return toast(data.error||'Repair queue could not start','fail');
+  _repairSelection.clear();
+  closeRepairLibrary();
+  toast(`Started sequential repair of ${data.folders} folder(s)`,'warn');
+  setTimeout(loadRepairStatus,500);
 }
 
 async function cancelRepair() { await fetch('/api/timestamp-repair/cancel',{method:'POST'}); toast('Safe cancellation requested','warn'); }

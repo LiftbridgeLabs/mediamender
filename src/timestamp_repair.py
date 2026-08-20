@@ -360,6 +360,34 @@ class TimestampRepairManager:
             if item.get("file_path")
         }
 
+    def complete_audited_folder(self, instance_name: str, section_id: str,
+                                folder: str) -> None:
+        """Remove one verified folder while preserving the remaining review."""
+        audits = self._read_json(self.audit_path, {})
+        audit = audits.get(instance_name, {}) if isinstance(audits, dict) else {}
+        folders = list(audit.get("folders", []))
+        removed = next((
+            item for item in folders
+            if item.get("library_section_id") == str(section_id)
+            and item.get("folder") == folder
+        ), None)
+        if not removed:
+            return
+        removed_files = len(removed.get("files", []))
+        audit["folders"] = [item for item in folders if item is not removed]
+        audit["affected_folders"] = len(audit["folders"])
+        audit["distinct_files"] = sum(
+            len(item.get("files", [])) for item in audit["folders"]
+        )
+        audit["database_distinct_files"] = max(
+            0, int(audit.get("database_distinct_files", 0)) - removed_files,
+        )
+        states = audit.get("path_state_counts", {})
+        states["repairable_timestamp"] = audit["distinct_files"]
+        audit["database_count_changed"] = False
+        audit["live_database_distinct_files"] = audit["database_distinct_files"]
+        atomic_write_json(str(self.audit_path), audits)
+
     def _validate_file(self, path: str, expected_prefixes: list[str]) -> dict:
         if not any(_inside(path, prefix) for prefix in expected_prefixes):
             raise ValueError(f"Path is outside the configured repair prefixes: {path}")
@@ -471,7 +499,8 @@ class TimestampRepairManager:
     def run_folder(self, instance, library, repair_config, plex, folder: str,
                    section_id: Optional[str] = None,
                    preflight: Optional[Callable[[], dict]] = None,
-                   expected_files: Optional[set[str]] = None) -> dict:
+                   expected_files: Optional[set[str]] = None,
+                   batch_position: str = "1/1") -> dict:
         self._cancel.clear()
         resolved_section = str(section_id or library.section_id or "")
         if not resolved_section:
@@ -512,7 +541,7 @@ class TimestampRepairManager:
                     "transaction_id": str(uuid.uuid4()), "instance": instance.name,
                     "library": library.name, "library_section_id": resolved_section,
                     "folder": folder, "state": "prepared", "created_at": _now(),
-                    "batch_position": "1/1", "renames": renames,
+                    "batch_position": batch_position, "renames": renames,
                     "timestamp_changes": [
                         {
                             "file_path": part.file_path,

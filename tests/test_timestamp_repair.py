@@ -200,6 +200,33 @@ class TimestampRepairTransactionTests(unittest.TestCase):
 
         self.assertEqual(totals, {"Plex": 2, "Other": 1})
 
+    def test_completed_folder_is_removed_without_invalidating_remaining_review(self):
+        self.manager.audit_path.parent.mkdir(parents=True, exist_ok=True)
+        self.manager.audit_path.write_text(json.dumps({"Plex": {
+            "instance": "Plex", "negative_rows": 3,
+            "database_distinct_files": 3, "distinct_files": 3,
+            "affected_folders": 2,
+            "path_state_counts": {"repairable_timestamp": 3},
+            "folders": [
+                {"library_section_id": "2", "folder": "/links/One",
+                 "files": [{"file_path": "/links/One/a.mkv"}]},
+                {"library_section_id": "2", "folder": "/links/Two",
+                 "files": [{"file_path": "/links/Two/a.mkv"},
+                           {"file_path": "/links/Two/b.mkv"}]},
+            ],
+        }}), encoding="utf-8")
+
+        self.manager.complete_audited_folder("Plex", "2", "/links/One")
+
+        audit = json.loads(self.manager.audit_path.read_text(
+            encoding="utf-8",
+        ))["Plex"]
+        self.assertEqual(audit["distinct_files"], 2)
+        self.assertEqual(audit["affected_folders"], 1)
+        self.assertEqual(audit["database_distinct_files"], 2)
+        self.assertEqual(audit["folders"][0]["folder"], "/links/Two")
+        self.assertFalse(audit["database_count_changed"])
+
     def test_ambiguous_recovery_keeps_manifest_for_operator(self):
         transaction = {
             "transaction_id": "tx", "instance": "Plex", "library": "Movies",
@@ -346,6 +373,9 @@ class TimestampRepairApiTests(unittest.TestCase):
         self.assertIn("Second Plex scan", html)
         self.assertIn("Excluded from automatic repair", html)
         self.assertIn("Recovery blocked", html)
+        self.assertIn("Repair selected (0)", html)
+        self.assertIn("runSelectedRepairFolders", html)
+        self.assertIn("Each folder will receive a fresh safety check", html)
 
     def test_audit_enrichment_adds_complete_library_total(self):
         audit = {"libraries": [
@@ -471,6 +501,99 @@ class TimestampRepairApiTests(unittest.TestCase):
         self.assertIn("recovery is required", response.get_json()["error"])
         self.assertTrue(any("Timestamp repair blocked" in line for line in logs.output))
         thread.assert_not_called()
+
+    def test_selected_folders_run_sequentially_from_one_reviewed_audit(self):
+        client = app.app.test_client()
+        with client.session_transaction() as browser_session:
+            browser_session["_csrf_token"] = "known-token"
+        library = LibraryConfig("TV Shows", "physical", [], section_id="2")
+        instance = PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+            timestamp_repair=TimestampRepairConfig(
+                enabled=True, database_path="/plex-db/library.db",
+                allowed_prefixes=["/links"],
+            ),
+        )
+        plex = Mock()
+        thread = Mock()
+        with patch.object(app, "config", AppConfig(instances=[instance])), \
+             patch.object(app, "_timestamp_runtime",
+                          return_value=(instance, library, plex)), \
+             patch.object(app, "_remote_recovery_required", return_value=False), \
+             patch.object(app.timestamp_repair, "status", return_value={
+                 "running": False, "active_transaction": None,
+             }), \
+             patch.object(app.timestamp_repair, "audited_folder",
+                          return_value=True), \
+             patch.object(app.timestamp_repair, "audited_files",
+                          side_effect=[{"/links/One/a.mkv"},
+                                       {"/links/Two/a.mkv"}]), \
+             patch.object(app.timestamp_repair, "run_folder",
+                          side_effect=[{"ok": True}, {"ok": True}]) as run, \
+             patch.object(app.timestamp_repair,
+                          "complete_audited_folder") as complete, \
+             patch("app.threading.Thread", return_value=thread) as factory:
+            response = client.post(
+                "/api/timestamp-repair/run",
+                json={"instance": "Plex", "folders": [
+                    {"library_section_id": "2", "folder": "/links/One"},
+                    {"library_section_id": "2", "folder": "/links/Two"},
+                ]},
+                headers={"X-CSRF-Token": "known-token"},
+            )
+            factory.call_args.kwargs["target"]()
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.get_json()["folders"], 2)
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[0].kwargs["batch_position"], "1/2")
+        self.assertEqual(run.call_args_list[1].kwargs["batch_position"], "2/2")
+        self.assertEqual(complete.call_count, 2)
+        self.assertEqual(app._repair_batch["state"], "completed")
+
+    def test_repair_batch_stops_after_first_failed_folder(self):
+        client = app.app.test_client()
+        with client.session_transaction() as browser_session:
+            browser_session["_csrf_token"] = "known-token"
+        library = LibraryConfig("TV Shows", "physical", [], section_id="2")
+        instance = PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+            timestamp_repair=TimestampRepairConfig(
+                enabled=True, database_path="/plex-db/library.db",
+                allowed_prefixes=["/links"],
+            ),
+        )
+        thread = Mock()
+        with patch.object(app, "config", AppConfig(instances=[instance])), \
+             patch.object(app, "_timestamp_runtime",
+                          return_value=(instance, library, Mock())), \
+             patch.object(app, "_remote_recovery_required", return_value=False), \
+             patch.object(app.timestamp_repair, "status", return_value={
+                 "running": False, "active_transaction": None,
+             }), \
+             patch.object(app.timestamp_repair, "audited_folder",
+                          return_value=True), \
+             patch.object(app.timestamp_repair, "audited_files",
+                          return_value={"/links/file.mkv"}), \
+             patch.object(app.timestamp_repair, "run_folder",
+                          return_value={"ok": False, "error": "changed"}) as run, \
+             patch.object(app.timestamp_repair,
+                          "complete_audited_folder") as complete, \
+             patch("app.threading.Thread", return_value=thread) as factory:
+            response = client.post(
+                "/api/timestamp-repair/run",
+                json={"instance": "Plex", "folders": [
+                    {"library_section_id": "2", "folder": "/links/One"},
+                    {"library_section_id": "2", "folder": "/links/Two"},
+                ]}, headers={"X-CSRF-Token": "known-token"},
+            )
+            factory.call_args.kwargs["target"]()
+
+        self.assertEqual(response.status_code, 202)
+        run.assert_called_once()
+        complete.assert_not_called()
+        self.assertEqual(app._repair_batch["state"], "failed")
+        self.assertEqual(app._repair_batch["completed"], 0)
 
 
 if __name__ == "__main__":

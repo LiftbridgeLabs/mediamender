@@ -90,6 +90,8 @@ if not startup_recovery.get("ok"):
 _worker_signature_verifier = SignatureVerifier()
 _remote_repair_lock = threading.RLock()
 _remote_repair: dict = {}
+_repair_batch_lock = threading.RLock()
+_repair_batch: dict = {"running": False}
 _worker_scan_contexts: dict[str, dict] = {}
 _worker_recovery_cache: dict[str, tuple[float, str | None, bool]] = {}
 _remote_pending_path = timestamp_repair.root / "controller-remote-active.json"
@@ -1093,6 +1095,10 @@ def _repair_readiness(instance) -> tuple[bool, str]:
 @require_auth
 def api_timestamp_repair_status():
     status = timestamp_repair.status()
+    with _repair_batch_lock:
+        status["batch"] = dict(_repair_batch)
+    if status["batch"].get("running"):
+        status["running"] = True
     local_active = status.get("active_transaction")
     if isinstance(local_active, dict) and not status.get("running"):
         local_active = {
@@ -1221,38 +1227,70 @@ def api_timestamp_repair_run():
         return jsonify({"error": "Timestamp Repair is disabled"}), 409
     data = request.get_json(silent=True) or {}
     instance_name = str(data.get("instance", ""))
-    section_id = str(data.get("library_section_id", ""))
-    folder = str(data.get("folder", ""))
-    instance, library, plex = _timestamp_runtime(instance_name, section_id)
-    if not instance or not library or not plex:
-        return jsonify({"error": "Configured Plex instance/library not found"}), 404
+    requested = data.get("folders")
+    if not isinstance(requested, list):
+        requested = [{
+            "library_section_id": data.get("library_section_id", ""),
+            "folder": data.get("folder", ""),
+        }]
+    if not requested or len(requested) > 100:
+        return jsonify({"error": "Select between 1 and 100 reviewed folders"}), 400
     if _remote_recovery_required():
         logger.warning(
-            "[%s / %s] Timestamp repair blocked: a remote worker requires "
+            "[%s] Timestamp repair blocked: a remote worker requires "
             "recovery or its recovery state cannot be verified",
-            instance.name, library.name,
+            instance_name,
         )
         return jsonify({
             "error": "Remote repair worker recovery is required before "
                      "another timestamp repair can start",
         }), 409
-    if not timestamp_repair.audited_folder(instance_name, section_id, folder):
-        return jsonify({"error": "Folder is not present in the latest server-side audit"}), 400
-    expected_files = timestamp_repair.audited_files(
-        instance_name, section_id, folder,
-    )
     repair_status = timestamp_repair.status()
     with _remote_repair_lock:
         remote_running = bool(_remote_repair.get("running"))
-    if repair_status.get("running") or repair_status.get("active_transaction") or remote_running:
+    with _repair_batch_lock:
+        batch_running = bool(_repair_batch.get("running"))
+    if (repair_status.get("running") or repair_status.get("active_transaction")
+            or remote_running or batch_running):
         return jsonify({"error": "A timestamp repair is already active"}), 409
 
-    repair_worker = instance.timestamp_repair.worker
+    jobs = []
+    seen = set()
+    for item in requested:
+        section_id = str(item.get("library_section_id", ""))
+        folder = str(item.get("folder", ""))
+        key = (section_id, folder)
+        if not section_id or not folder or key in seen:
+            return jsonify({"error": "Each selected folder must be unique and complete"}), 400
+        seen.add(key)
+        instance, library, plex = _timestamp_runtime(instance_name, section_id)
+        if not instance or not library or not plex:
+            return jsonify({"error": "Configured Plex instance/library not found"}), 404
+        if not timestamp_repair.audited_folder(instance_name, section_id, folder):
+            return jsonify({
+                "error": f"Folder is not present in the latest server-side audit: {folder}",
+            }), 400
+        expected_files = timestamp_repair.audited_files(
+            instance_name, section_id, folder,
+        )
+        jobs.append((instance, library, plex, section_id, folder, expected_files))
 
-    if repair_worker != "local":
+    def _perform(job, position: str) -> dict:
+        instance, library, plex, section_id, folder, expected_files = job
+        repair_worker = instance.timestamp_repair.worker
+        if repair_worker == "local":
+            return timestamp_repair.run_folder(
+                instance, library, instance.timestamp_repair, plex, folder,
+                section_id,
+                preflight=lambda: runner._collect_library_checks(
+                    instance, library, config, plex, section_id=section_id,
+                )[0],
+                expected_files=expected_files,
+                batch_position=position,
+            )
         worker = _repair_worker(repair_worker)
         if not worker:
-            return jsonify({"error": "Configured repair worker was not found"}), 400
+            return {"ok": False, "error": "Configured repair worker was not found"}
         run_id = secrets.token_urlsafe(24)
         with _remote_repair_lock:
             _remote_repair.clear()
@@ -1261,22 +1299,12 @@ def api_timestamp_repair_run():
                 "transaction_id": run_id, "instance": instance.name,
                 "library": library.name, "folder": folder,
                 "worker": worker.name, "last_heartbeat": _utc_now(),
+                "batch_position": position,
             })
             _worker_scan_contexts[run_id] = {
                 "worker": worker.name, "instance": instance.name,
                 "section_id": section_id, "folder": folder, "plex": plex,
             }
-
-    def _run():
-        if repair_worker == "local":
-            timestamp_repair.run_folder(
-                instance, library, instance.timestamp_repair, plex, folder, section_id,
-                preflight=lambda: runner._collect_library_checks(
-                    instance, library, config, plex, section_id=section_id,
-                )[0],
-                expected_files=expected_files,
-            )
-            return
         result = {"ok": False, "error": "Worker repair did not start"}
         try:
             with lease(instance.name, operation="timestamp_repair") as (acquired, reason):
@@ -1295,6 +1323,7 @@ def api_timestamp_repair_run():
                     "library_section_id": section_id,
                     "folder": folder,
                     "expected_files": sorted(expected_files),
+                    "batch_position": position,
                 }
                 pre_dispatch_status = RepairWorkerClient(
                     worker, timeout=3,
@@ -1330,14 +1359,75 @@ def api_timestamp_repair_run():
                     "last_heartbeat": _utc_now(),
                 })
             _worker_recovery_cache.pop(worker.name, None)
+        return result
 
+    def _run():
+        total = len(jobs)
+        completed = 0
+        result = {"ok": True}
+        try:
+            for index, job in enumerate(jobs, start=1):
+                with _repair_batch_lock:
+                    if _repair_batch.get("cancel_requested"):
+                        result = {
+                            "ok": False,
+                            "error": "Repair queue cancelled safely",
+                        }
+                        break
+                position = f"{index}/{total}"
+                with _repair_batch_lock:
+                    _repair_batch.update({
+                        "running": True, "state": "running",
+                        "current": index, "total": total,
+                        "completed": completed, "failed": 0,
+                        "folder": job[4], "error": "",
+                    })
+                result = _perform(job, position)
+                if not result.get("ok"):
+                    break
+                timestamp_repair.complete_audited_folder(
+                    instance_name, job[3], job[4],
+                )
+                completed += 1
+        except Exception as exc:
+            logger.exception(
+                "Timestamp repair queue failed while updating local state"
+            )
+            result = {
+                "ok": False,
+                "error": f"Repair queue state update failed ({type(exc).__name__})",
+            }
+        finally:
+            with _repair_batch_lock:
+                _repair_batch.update({
+                    "running": False,
+                    "state": "completed" if result.get("ok") else "failed",
+                    "completed": completed,
+                    "failed": 0 if result.get("ok") else 1,
+                    "error": result.get("error", ""),
+                    "finished_at": _utc_now(),
+                })
+
+    with _repair_batch_lock:
+        if _repair_batch.get("running"):
+            return jsonify({"error": "A timestamp repair is already active"}), 409
+        _repair_batch.clear()
+        _repair_batch.update({
+            "running": True, "state": "queued", "current": 0,
+            "total": len(jobs), "completed": 0, "failed": 0,
+            "folder": "", "error": "", "started_at": _utc_now(),
+            "cancel_requested": False,
+        })
     threading.Thread(target=_run, daemon=True, name="timestamp-repair").start()
-    return jsonify({"status": "triggered"}), 202
+    return jsonify({"status": "triggered", "folders": len(jobs)}), 202
 
 
 @app.route("/api/timestamp-repair/cancel", methods=["POST"])
 @require_auth
 def api_timestamp_repair_cancel():
+    with _repair_batch_lock:
+        if _repair_batch.get("running"):
+            _repair_batch["cancel_requested"] = True
     timestamp_repair.cancel()
     with _remote_repair_lock:
         worker_name = _remote_repair.get("worker") if _remote_repair.get("running") else None

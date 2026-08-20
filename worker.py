@@ -176,6 +176,7 @@ def create_worker_app(secret: str | None = None, worker_name: str | None = None,
                 instance, library, config, proxy,
                 str(payload.get("folder", "")), section_id=section_id,
                 expected_files=set(payload.get("expected_files", [])),
+                batch_position=str(payload.get("batch_position", "1/1")),
             )
             return jsonify(result), (200 if result.get("ok") else 400)
         except Exception as exc:
