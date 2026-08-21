@@ -31,6 +31,11 @@ def _environment_hash(password: str) -> str:
     return hashlib.sha256(f"mediamender:{password}".encode()).hexdigest()
 
 
+def _previous_environment_hash(password: str) -> str:
+    """Hash namespace used by pre-mediaMender installations."""
+    return hashlib.sha256(f"emptyarr:{password}".encode()).hexdigest()
+
+
 def _verify_password(plain: str, stored: str) -> bool:
     """Verify plain password against stored hash.
     Supports bcrypt (new) and SHA-256 (legacy config.yml hashes).
@@ -40,8 +45,10 @@ def _verify_password(plain: str, stored: str) -> bool:
             return bcrypt.checkpw(plain.encode(), stored.encode())
         except Exception:
             return False
-    # Legacy SHA-256 fallback for configs created before bcrypt was introduced
-    return secrets.compare_digest(_environment_hash(plain), stored)
+    # SHA-256 fallback for environment auth and older config files.
+    return secrets.compare_digest(_environment_hash(plain), stored) or secrets.compare_digest(
+        _previous_environment_hash(plain), stored,
+    )
 
 
 def _get_credentials(config=None):
