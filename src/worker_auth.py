@@ -19,11 +19,17 @@ def signed_headers(secret: str, worker: str, method: str, path: str,
     signature = hmac.new(
         secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256,
     ).hexdigest()
+    # Send the new branded headers plus the legacy names so a controller and
+    # repair worker can be upgraded independently without breaking pairing.
     return {
         f"X-{PRODUCT_NAME}-Worker": worker,
         f"X-{PRODUCT_NAME}-Timestamp": timestamp,
         f"X-{PRODUCT_NAME}-Nonce": request_nonce,
         f"X-{PRODUCT_NAME}-Signature": signature,
+        "X-Emptyarr-Worker": worker,
+        "X-Emptyarr-Timestamp": timestamp,
+        "X-Emptyarr-Nonce": request_nonce,
+        "X-Emptyarr-Signature": signature,
     }
 
 
