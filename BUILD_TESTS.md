@@ -1,4 +1,4 @@
-# mediaWarden build test inventory
+# mediaMender build test inventory
 
 This repository-only document describes the validations that run before every
 Docker image publication. Markdown files are excluded by `.dockerignore`, so
@@ -184,7 +184,7 @@ python -m unittest discover -s tests -v
 ### Log storage and viewer API
 
 - `test_rotation_uses_readable_log_filenames` — rotations use names such as
-  `mediawarden.1.log`.
+  `mediamender.1.log`.
 - `test_retention_removes_expired_rotated_logs` — files beyond the configured
   retention duration are removed.
 - `test_total_storage_removes_oldest_rotated_logs` — the total MB cap removes
@@ -215,7 +215,7 @@ python -m unittest discover -s tests -v
 ## Configuration validation
 
 - PyYAML parses `data/config.yml.example`.
-- Python's XML parser loads `unraid/mediawarden.xml` and the legacy `unraid/emptyarr.xml`.
+- Python's XML parser loads `unraid/mediamender.xml`.
 - `docker compose config --quiet` validates the Compose model.
 
 ## Container validation and publication
@@ -223,10 +223,8 @@ python -m unittest discover -s tests -v
 After all tests pass, the build uses the production `Dockerfile` and explicit
 allowlisted `COPY` instructions. The workflow publishes:
 
-- `liftbridgelabs/mediawarden:latest` (primary)
-- `liftbridgelabs/mediawarden:<full-git-commit-sha>` (primary)
-- `liftbridgelabs/emptyarr:latest` (compatibility alias)
-- `liftbridgelabs/emptyarr:<full-git-commit-sha>` (compatibility alias)
+- `liftbridgelabs/mediamender:latest` (primary)
+- `liftbridgelabs/mediamender:<full-git-commit-sha>` (primary)
 
 The Docker build context excludes repository metadata, tests, local
 configuration, runtime data, logs, editor files, and Markdown documentation.

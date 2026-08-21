@@ -19,17 +19,11 @@ def signed_headers(secret: str, worker: str, method: str, path: str,
     signature = hmac.new(
         secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256,
     ).hexdigest()
-    # Send the new branded headers plus the legacy names so a controller and
-    # repair worker can be upgraded independently without breaking pairing.
     return {
         f"X-{PRODUCT_NAME}-Worker": worker,
         f"X-{PRODUCT_NAME}-Timestamp": timestamp,
         f"X-{PRODUCT_NAME}-Nonce": request_nonce,
         f"X-{PRODUCT_NAME}-Signature": signature,
-        "X-Emptyarr-Worker": worker,
-        "X-Emptyarr-Timestamp": timestamp,
-        "X-Emptyarr-Nonce": request_nonce,
-        "X-Emptyarr-Signature": signature,
     }
 
 
@@ -42,10 +36,10 @@ class SignatureVerifier:
     def verify(self, secret: str, worker: str, method: str, path: str,
                body: bytes, headers, now: int | None = None) -> tuple[bool, str]:
         current = int(now if now is not None else time.time())
-        timestamp = str(headers.get(f"X-{PRODUCT_NAME}-Timestamp", headers.get("X-Emptyarr-Timestamp", "")))
-        nonce = str(headers.get(f"X-{PRODUCT_NAME}-Nonce", headers.get("X-Emptyarr-Nonce", "")))
-        signature = str(headers.get(f"X-{PRODUCT_NAME}-Signature", headers.get("X-Emptyarr-Signature", "")))
-        supplied_worker = str(headers.get(f"X-{PRODUCT_NAME}-Worker", headers.get("X-Emptyarr-Worker", "")))
+        timestamp = str(headers.get(f"X-{PRODUCT_NAME}-Timestamp", ""))
+        nonce = str(headers.get(f"X-{PRODUCT_NAME}-Nonce", ""))
+        signature = str(headers.get(f"X-{PRODUCT_NAME}-Signature", ""))
+        supplied_worker = str(headers.get(f"X-{PRODUCT_NAME}-Worker", ""))
         try:
             request_time = int(timestamp)
         except ValueError:

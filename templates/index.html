@@ -5,15 +5,15 @@
   const PRODUCT_NAME = {{ product_name|tojson }};
   // Apply theme before page renders to avoid flash
   (function(){
-    var t = localStorage.getItem('mediawarden-theme') || localStorage.getItem('emptyarr-theme') || 'dark';
+    var t = localStorage.getItem('mediamender-theme') || 'dark';
     document.documentElement.setAttribute('data-theme', t);
   })();
 </script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{{ product_name }}</title>
-<link rel="icon" type="image/svg+xml" href="/static/mediawarden.svg">
-<link rel="apple-touch-icon" href="/static/mediawarden.svg">
+<link rel="icon" type="image/png" href="/static/mediamender.png">
+<link rel="apple-touch-icon" href="/static/mediamender.png">
 <style>
 :root {
   --bg:        #0d1012;
@@ -863,15 +863,15 @@ dialog.overlay::backdrop{background:transparent;}
 <!-- ── NAV ── -->
 <nav>
   <a class="nav-brand" href="#dashboard" onclick="showPage('dashboard',document.getElementById('nav-dashboard'))">
-    <img class="nav-brand-logo" src="/static/mediawarden.svg" alt="{{ product_name }}">
+    <img class="nav-brand-logo" src="/static/mediamender.png" alt="{{ product_name }}">
     <span class="nav-brand-name">{{ product_name }}</span>
   </a>
   <div class="nav-links">
     <button class="nav-link active" onclick="showPage('dashboard',this)" id="nav-dashboard">
       Dashboard
     </button>
-    <button class="nav-link" data-feature="trash_removal" onclick="showPage('emptyarr',this)" id="nav-emptyarr">
-      {{ product_name }}
+    <button class="nav-link" data-feature="trash_removal" onclick="showPage('mediamender',this)" id="nav-mediamender">
+      Empty Trash
     </button>
     <button class="nav-link" data-feature="library_refresh" onclick="showPage('library-refresh',this)" id="nav-library-refresh">
       Library Refresh
@@ -909,7 +909,7 @@ dialog.overlay::backdrop{background:transparent;}
 <div class="page active" id="page-dashboard">
   {% if config_missing %}
   <div class="welcome-wrap">
-    <div class="welcome-icon"><img src="/static/mediawarden.svg" alt="{{ product_name }}" style="width:80px;height:80px;object-fit:contain;"></div>
+    <div class="welcome-icon"><img src="/static/mediamender.png" alt="{{ product_name }}" style="width:80px;height:80px;object-fit:contain;"></div>
     <div class="welcome-title">Welcome to {{ product_name }}</div>
     <div class="welcome-desc">No configuration found. Use the setup wizard to add your Plex instances and configure your libraries.</div>
     <button class="btn btn-primary" onclick="openWizard()">Open Setup Wizard</button>
@@ -920,12 +920,12 @@ dialog.overlay::backdrop{background:transparent;}
   </div>
   <div class="startup-progress" data-feature="trash_removal" id="dashboard-startup-progress"><span class="spin"></span><span>Starting read-only safety checks…</span></div>
   <div class="rollup-grid">
-    <section class="rollup-card" data-feature="trash_removal" id="rollup-emptyarr">
+    <section class="rollup-card" data-feature="trash_removal" id="rollup-mediamender">
       <div class="rollup-kicker">Automated protection</div><div class="rollup-title">{{ product_name }}</div>
-      <div class="rollup-status" id="rollup-emptyarr-status">Checking libraries…</div>
-      <div class="rollup-copy" id="rollup-emptyarr-copy">Loading current Plex, mount, provider, and file-threshold health.</div>
+      <div class="rollup-status" id="rollup-mediamender-status">Checking libraries…</div>
+      <div class="rollup-copy" id="rollup-mediamender-copy">Loading current Plex, mount, provider, and file-threshold health.</div>
       <div class="rollup-metrics"><div class="rollup-metric"><strong id="rollup-protected">0</strong><span>Healthy</span></div><div class="rollup-metric"><strong id="rollup-protection-attention">0</strong><span>Attention</span></div></div>
-      <button class="btn btn-primary" onclick="showPage('emptyarr',document.getElementById('nav-emptyarr'))">Open {{ product_name }}</button>
+      <button class="btn btn-primary" onclick="showPage('mediamender',document.getElementById('nav-mediamender'))">Open Empty Trash</button>
     </section>
     <section class="rollup-card" data-feature="metadata_health" id="rollup-metadata">
       <div class="rollup-kicker">Plex matching</div><div class="rollup-title">Metadata Health</div>
@@ -952,8 +952,8 @@ dialog.overlay::backdrop{background:transparent;}
   {% endif %}
 </div>
 
-<!-- ── EMPTYARR PROTECTION PAGE ── -->
-<div class="page" data-feature="trash_removal" id="page-emptyarr">
+<!-- ── MEDIAMENDER PROTECTION PAGE ── -->
+<div class="page" data-feature="trash_removal" id="page-mediamender">
   {% if not config_missing %}
   <div class="dashboard-intro">
     <div>
@@ -965,12 +965,12 @@ dialog.overlay::backdrop{background:transparent;}
       </div>
     </div>
     <div class="dashboard-intro-actions">
-      <div id="emptyarr-global-controls" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"></div>
+      <div id="mediamender-global-controls" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"></div>
       <button class="btn btn-secondary" onclick="showPage('history',null)">View activity</button>
       <button class="btn btn-primary" onclick="showPage('settings',document.getElementById('nav-settings'))">Manage libraries</button>
     </div>
   </div>
-  <div class="startup-progress" id="emptyarr-startup-progress"><span class="spin"></span><span>Starting read-only safety checks…</span></div>
+  <div class="startup-progress" id="mediamender-startup-progress"><span class="spin"></span><span>Starting read-only safety checks…</span></div>
   <div class="dashboard-view-switcher">
     <div class="server-tabs" role="tablist" aria-label="Dashboard view">
       <button class="server-tab active" type="button" role="tab" aria-selected="true"
@@ -996,7 +996,7 @@ dialog.overlay::backdrop{background:transparent;}
       <div class="protection-summary">
         <div class="overview-label">Protection status</div>
         <div class="protection-main">
-          <div class="protection-mark"><img src="/static/mediawarden.svg" alt="{{ product_name }}"></div>
+          <div class="protection-mark"><img src="/static/mediamender.png" alt="{{ product_name }}"></div>
           <div>
             <h2 class="protection-title" id="protection-title">Checking your libraries…</h2>
             <div class="protection-copy" id="protection-copy">Loading the latest health and run state.</div>
@@ -1035,7 +1035,7 @@ dialog.overlay::backdrop{background:transparent;}
   {% endif %}
   {% if config_missing %}
   <div class="welcome-wrap">
-    <div class="welcome-icon"><img src="/static/mediawarden.svg" alt="{{ product_name }}" style="width:80px;height:80px;object-fit:contain;"></div>
+    <div class="welcome-icon"><img src="/static/mediamender.png" alt="{{ product_name }}" style="width:80px;height:80px;object-fit:contain;"></div>
     <div class="welcome-title">Welcome to {{ product_name }}</div>
     <div class="welcome-desc">No configuration found. Use the setup wizard to add your Plex instances and configure your libraries.</div>
     <button class="btn btn-primary" style="font-size:14px;padding:10px 28px;" onclick="openWizard()">Open Setup Wizard</button>
@@ -1536,9 +1536,8 @@ dialog.overlay::backdrop{background:transparent;}
             </div>
             <div class="form-hint" style="margin-bottom:16px;">
               Password is stored as a bcrypt hash in config.yml — never in plaintext.
-              You can also set <code style="color:var(--accent2);">MEDIAWARDEN_USERNAME</code> /
-              <code style="color:var(--accent2);">MEDIAWARDEN_PASSWORD</code> env vars instead.
-              The legacy <code style="color:var(--accent2);">EMPTYARR_*</code> names remain supported.
+              You can also set <code style="color:var(--accent2);">MEDIAMENDER_USERNAME</code> /
+              <code style="color:var(--accent2);">MEDIAMENDER_PASSWORD</code> env vars instead.
             </div>
             <div style="display:flex;gap:8px;align-items:center;">
               <button class="btn btn-primary" onclick="saveAuth()">Set Credentials</button>
@@ -1604,7 +1603,7 @@ dialog.overlay::backdrop{background:transparent;}
             <div style="font-size:14px;color:var(--text2);line-height:1.75;margin-bottom:18px;">
               Settings changed here are written to the persistent configuration file. A Compose
               <code style="color:var(--accent2);">.env</code> file is optional and only supplies
-              environment overrides—it is not required for normal mediaWarden configuration.
+              environment overrides—it is not required for normal mediaMender configuration.
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
               <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px;">
@@ -1704,7 +1703,7 @@ dialog.overlay::backdrop{background:transparent;}
                 <div id="log-view-status" class="form-hint" style="margin:0 0 6px;"></div>
                 <pre id="log-viewer"
                      tabindex="0"
-                     aria-label="mediaWarden log output"
+                     aria-label="mediaMender log output"
                      style="height:400px;margin:0;overflow:auto;white-space:pre;background:#0a0f16;color:#d7e2ef;border:1px solid var(--border2);border-radius:8px;padding:12px;font:11px/1.55 var(--mono);"></pre>
               </div>
             </div>
@@ -1719,7 +1718,7 @@ dialog.overlay::backdrop{background:transparent;}
         <div class="card" style="margin-bottom:16px;">
           <div class="card-body">
             <div style="display:grid;grid-template-columns:auto 1fr;gap:20px;align-items:center;">
-              <img src="/static/mediawarden.svg" alt="{{ product_name }}" style="width:76px;height:76px;object-fit:contain;">
+              <img src="/static/mediamender.png" alt="{{ product_name }}" style="width:76px;height:76px;object-fit:contain;">
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
                 <div>
                   <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Version</div>
@@ -1727,7 +1726,7 @@ dialog.overlay::backdrop{background:transparent;}
                 </div>
                 <div>
                   <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Project</div>
-                  <a href="https://github.com/LiftbridgeLabs/mediawarden" target="_blank" rel="noreferrer" style="color:var(--accent2);font-size:14px;">GitHub repository ↗</a>
+                  <a href="https://github.com/LiftbridgeLabs/mediamender" target="_blank" rel="noreferrer" style="color:var(--accent2);font-size:14px;">GitHub repository ↗</a>
                 </div>
               </div>
             </div>
@@ -1739,7 +1738,7 @@ dialog.overlay::backdrop{background:transparent;}
             {{ product_name }} makes network requests <strong style="color:var(--bright);">only</strong> to services you configure:
             your Plex server, debrid provider APIs (if you set an API key), and your Discord webhook.
             No telemetry. No analytics. No phone-home. Fully open source —
-            <a href="https://github.com/LiftbridgeLabs/mediawarden/blob/main/PRIVACY.md" target="_blank" rel="noreferrer" style="color:var(--accent2);">read PRIVACY.md</a>
+            <a href="https://github.com/LiftbridgeLabs/mediamender/blob/main/PRIVACY.md" target="_blank" rel="noreferrer" style="color:var(--accent2);">read PRIVACY.md</a>
           </div>
         </div>
       </div>
@@ -1750,7 +1749,7 @@ dialog.overlay::backdrop{background:transparent;}
 
 <footer class="app-footer">
   <div class="footer-brand">
-    <img class="footer-logo" src="/static/mediawarden.svg" alt="{{ product_name }}">
+    <img class="footer-logo" src="/static/mediamender.png" alt="{{ product_name }}">
     <div>
       <span class="footer-product">{{ product_name }}</span>
       <span class="footer-version">v{{ app_version }}</span>
@@ -1758,10 +1757,10 @@ dialog.overlay::backdrop{background:transparent;}
     </div>
   </div>
   <div class="footer-links">
-    <a href="https://github.com/LiftbridgeLabs/mediawarden" target="_blank" rel="noreferrer">GitHub</a>
-    <a href="https://github.com/LiftbridgeLabs/mediawarden/issues" target="_blank" rel="noreferrer">Report an issue</a>
-    <a href="https://github.com/LiftbridgeLabs/mediawarden/blob/main/README.md" target="_blank" rel="noreferrer">Documentation</a>
-    <a href="https://github.com/LiftbridgeLabs/mediawarden/blob/main/PRIVACY.md" target="_blank" rel="noreferrer">Privacy</a>
+    <a href="https://github.com/LiftbridgeLabs/mediamender" target="_blank" rel="noreferrer">GitHub</a>
+    <a href="https://github.com/LiftbridgeLabs/mediamender/issues" target="_blank" rel="noreferrer">Report an issue</a>
+    <a href="https://github.com/LiftbridgeLabs/mediamender/blob/main/README.md" target="_blank" rel="noreferrer">Documentation</a>
+    <a href="https://github.com/LiftbridgeLabs/mediamender/blob/main/PRIVACY.md" target="_blank" rel="noreferrer">Privacy</a>
   </div>
 </footer>
 
@@ -2476,12 +2475,12 @@ function applyStatus(data, nextRuns) {
 }
 
 function updateProtectionRollup(summary) {
-  const card = document.getElementById('rollup-emptyarr');
+  const card = document.getElementById('rollup-mediamender');
   if (!card) return;
   document.getElementById('rollup-protected').textContent = summary.ready.toLocaleString();
   document.getElementById('rollup-protection-attention').textContent = summary.attention.toLocaleString();
-  const status = document.getElementById('rollup-emptyarr-status');
-  const copy = document.getElementById('rollup-emptyarr-copy');
+  const status = document.getElementById('rollup-mediamender-status');
+  const copy = document.getElementById('rollup-mediamender-copy');
   if (summary.attention) {
     card.className = 'rollup-card warn'; status.textContent = `${summary.attention} ${summary.attention===1?'library needs':'libraries need'} attention`; copy.textContent = 'Review the affected libraries before allowing Empty Trash.';
   } else if (summary.pending) {
@@ -2499,7 +2498,7 @@ function applyStartupProgress(progress) {
   const message = progress.running
     ? `Checking ${h(progress.current || 'library safety')} — ${completed} of ${total} complete`
     : `Read-only startup checks complete — ${completed} of ${total} libraries updated`;
-  ['dashboard-startup-progress','emptyarr-startup-progress'].forEach(id => {
+  ['dashboard-startup-progress','mediamender-startup-progress'].forEach(id => {
     const element = document.getElementById(id);
     if (!element) return;
     element.className = `startup-progress ${progress.running?'':'done'}`;
@@ -3063,10 +3062,10 @@ function workerCompose(index) {
   const databaseDirs = [...new Set(assigned.map(instance => repairConfig(instance).database_path.replace(/[\\/][^\\/]+$/, '')).filter(Boolean))];
   const prefixes = [...new Set(assigned.flatMap(instance => repairConfig(instance).allowed_prefixes).filter(Boolean))];
   const volumes = [
-    ...databaseDirs.map((path,i) => `      - \${MEDIAWARDEN_PLEX_DATABASE_DIR_${i+1}:?Set an absolute Plex database host path in Dockge .env}:${path}:ro`),
-    ...prefixes.map((path,i) => `      - \${MEDIAWARDEN_REPAIR_FOLDER_${i+1}:?Set an absolute repair-folder host path in Dockge .env}:${path}:rw,slave`),
+    ...databaseDirs.map((path,i) => `      - \${MEDIAMENDER_PLEX_DATABASE_DIR_${i+1}:?Set an absolute Plex database host path in Dockge .env}:${path}:ro`),
+    ...prefixes.map((path,i) => `      - \${MEDIAMENDER_REPAIR_FOLDER_${i+1}:?Set an absolute repair-folder host path in Dockge .env}:${path}:rw,slave`),
   ];
-  return `services:\n  mediawarden-repair-worker:\n    image: liftbridgelabs/mediawarden:latest\n    container_name: mediawarden-repair-worker\n    restart: unless-stopped\n    ports:\n      - "8223:8223"\n    environment:\n      - MEDIAWARDEN_ROLE=repair-worker\n      - MEDIAWARDEN_WORKER_NAME=${worker.name}\n      - MEDIAWARDEN_WORKER_TOKEN=\${MEDIAWARDEN_WORKER_TOKEN:?Paste the pairing secret into Dockge .env}\n      - MEDIAWARDEN_WORKER_DATABASE_ROOTS=${databaseDirs.join(',') || '/plex-db'}\n      - MEDIAWARDEN_WORKER_MEDIA_ROOTS=${prefixes.join(',') || '/repair-media'}\n      - PUID=99\n      - PGID=100\n    volumes:\n      - \${MEDIAWARDEN_WORKER_DATA_DIR:?Set an absolute worker-data host path in Dockge .env}:/app/data\n${volumes.join('\n')}`;
+  return `services:\n  mediamender-repair-worker:\n    image: liftbridgelabs/mediamender:latest\n    container_name: mediamender-repair-worker\n    restart: unless-stopped\n    ports:\n      - "8223:8223"\n    environment:\n      - MEDIAMENDER_ROLE=repair-worker\n      - MEDIAMENDER_WORKER_NAME=${worker.name}\n      - MEDIAMENDER_WORKER_TOKEN=\${MEDIAMENDER_WORKER_TOKEN:?Paste the pairing secret into Dockge .env}\n      - MEDIAMENDER_WORKER_DATABASE_ROOTS=${databaseDirs.join(',') || '/plex-db'}\n      - MEDIAMENDER_WORKER_MEDIA_ROOTS=${prefixes.join(',') || '/repair-media'}\n      - PUID=99\n      - PGID=100\n    volumes:\n      - \${MEDIAMENDER_WORKER_DATA_DIR:?Set an absolute worker-data host path in Dockge .env}:/app/data\n${volumes.join('\n')}`;
 }
 
 async function copyWorkerCompose(index) {
@@ -3960,7 +3959,7 @@ async function connectPlexAccount(target) {
   cancelPlexAccountConnect(target, false);
   const popup = window.open(
     'about:blank',
-    `mediawarden-plex-auth-${target}`,
+    `mediamender-plex-auth-${target}`,
     'popup=yes,width=720,height=760,resizable=yes,scrollbars=yes'
   );
   if (popup) popup.opener = null;
@@ -4576,8 +4575,7 @@ function applyTheme(theme) {
   const sun  = document.getElementById('theme-icon-sun');
   if (moon) moon.style.display = theme === 'light' ? 'none' : 'block';
   if (sun)  sun.style.display  = theme === 'light' ? 'block' : 'none';
-  localStorage.setItem('mediawarden-theme', theme);
-  localStorage.setItem('emptyarr-theme', theme);
+  localStorage.setItem('mediamender-theme', theme);
 }
 function toggleTheme() {
   const current = document.documentElement.getAttribute('data-theme') || 'dark';
@@ -4585,13 +4583,13 @@ function toggleTheme() {
 }
 // Apply saved theme immediately
 (function() {
-  const saved = localStorage.getItem('mediawarden-theme') || localStorage.getItem('emptyarr-theme') || 'dark';
+  const saved = localStorage.getItem('mediamender-theme') || 'dark';
   applyTheme(saved);
 })();
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 function moveProtectionControls() {
-  const target = document.getElementById('emptyarr-global-controls');
+  const target = document.getElementById('mediamender-global-controls');
   if (!target) return;
   const schedule = document.querySelector('.nav-right .sched-wrap');
   if (schedule) {

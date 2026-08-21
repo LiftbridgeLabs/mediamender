@@ -26,9 +26,9 @@ def hash_api_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def _legacy_hash(password: str) -> str:
-    """Legacy deterministic SHA-256 hash used for environment login auth."""
-    return hashlib.sha256(f"emptyarr:{password}".encode()).hexdigest()
+def _environment_hash(password: str) -> str:
+    """Deterministic SHA-256 hash used for environment login auth."""
+    return hashlib.sha256(f"mediamender:{password}".encode()).hexdigest()
 
 
 def _verify_password(plain: str, stored: str) -> bool:
@@ -41,15 +41,14 @@ def _verify_password(plain: str, stored: str) -> bool:
         except Exception:
             return False
     # Legacy SHA-256 fallback for configs created before bcrypt was introduced
-    return secrets.compare_digest(_legacy_hash(plain), stored)
+    return secrets.compare_digest(_environment_hash(plain), stored)
 
 
 def _get_credentials(config=None):
-    env_user = get_env("EMPTYARR_USERNAME")
-    env_pass = get_env("EMPTYARR_PASSWORD")
+    env_user = get_env("MEDIAMENDER_USERNAME")
+    env_pass = get_env("MEDIAMENDER_PASSWORD")
     if env_user and env_pass:
-        # Keep SHA-256 for compatibility with the environment login path.
-        return env_user, _legacy_hash(env_pass)
+        return env_user, _environment_hash(env_pass)
     if config and getattr(config, "auth_username", "") and getattr(config, "auth_password_hash", ""):
         return config.auth_username, config.auth_password_hash
     return None, None
@@ -120,7 +119,7 @@ def has_valid_api_token(config=None) -> bool:
     token = request.headers.get("X-API-Token", "")
     if not token:
         return False
-    configured_token = get_env("EMPTYARR_API_TOKEN")
+    configured_token = get_env("MEDIAMENDER_API_TOKEN")
     expected_hash = (
         hash_api_token(configured_token)
         if configured_token

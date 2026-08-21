@@ -1,17 +1,16 @@
-# mediaWarden
+# mediaMender
 
-> Formerly published as Emptyarr. Existing `emptyarr` Docker tags, environment
-> variables, data paths, and Unraid mappings remain supported for upgrades.
+mediaMender is a maintenance and repair suite for Plex media libraries.
 
 Plex doesn't automatically clean up its library trash when you're using symlinked debrid or usenet media. When a file gets replaced or removed, Plex marks it unavailable — but unless you have "empty trash automatically after every scan" turned on (which you probably don't, because that's risky), those entries just pile up.
 
-mediaWarden runs on a schedule, checks that your mounts are actually healthy, and then calls Plex's emptyTrash API. If anything looks wrong — mount missing, symlinks broken, file count dropped — it skips the empty and can notify you through Discord or Apprise.
+mediaMender runs on a schedule, checks that your mounts are actually healthy, and then calls Plex's emptyTrash API. If anything looks wrong — mount missing, symlinks broken, file count dropped — it skips the empty and can notify you through Discord or Apprise.
 
 ---
 
 ## How it works
 
-Before emptying trash on any library, mediaWarden runs:
+Before emptying trash on any library, mediaMender runs:
 
 1. **Mount check** — walks up the path tree to find the nearest mount point and verifies it's accessible
 2. **Debrid mount check** — for debrid/usenet paths, reads symlink targets via `os.readlink()` (without resolving them), finds the underlying FUSE mount point, and verifies it is accessible and non-empty. This detects a dead mount even when symlinks point into trash and would otherwise appear broken
@@ -26,16 +25,16 @@ All checks pass → trash gets emptied. Any check fails → skip, log it, notify
 
 ### Unraid WebUI (recommended)
 
-mediaWarden is distributed as a prebuilt Docker image. A normal Unraid installation
+mediaMender is distributed as a prebuilt Docker image. A normal Unraid installation
 does not require the terminal, a Git checkout, or a local image build.
 
-If a mediaWarden template is available in your Apps feed, install it there.
+If a mediaMender template is available in your Apps feed, install it there.
 Otherwise, open **Docker → Add Container** and configure:
 
 | Setting | Value |
 |---|---|
-| Name | `mediaWarden` |
-| Repository | `liftbridgelabs/mediawarden:latest` |
+| Name | `mediaMender` |
+| Repository | `liftbridgelabs/mediamender:latest` |
 | Network | `bridge` or the custom Docker network used by your media applications |
 | Container port | `8222` |
 | Host port | `8222` or another available port |
@@ -47,12 +46,12 @@ Add these path mappings in the container editor:
 
 | Host | Container | Mode |
 |---|---|---|
-| `/mnt/cache/appdata/mediawarden/data` | `/app/data` | Read/Write |
+| `/mnt/cache/appdata/mediamender/data` | `/app/data` | Read/Write |
 | `/mnt/symlink_media` | `/mnt/symlink_media` | Read Only - Slave |
 | `/mnt/user/media` | `/mnt/user/media` | Read Only |
 
 The host paths are examples; select the paths used by your own Unraid setup.
-Container paths are what mediaWarden displays and saves in its library settings.
+Container paths are what mediaMender displays and saves in its library settings.
 
 > The container path for symlink media must match what the symlinks actually
 > point to. For example, if their targets begin with `/symlink_media/`, use
@@ -83,10 +82,10 @@ The session key is generated once and persisted automatically in the data
 directory.
 
 Non-empty environment variables such as `PLEX_TOKEN_<NAME>`, `RD_API_KEY`,
-`DISCORD_WEBHOOK`, or `MEDIAWARDEN_USERNAME` remain supported as optional
-deployment-managed overrides. The legacy `EMPTYARR_*` names remain supported.
+`DISCORD_WEBHOOK`, or `MEDIAMENDER_USERNAME` remain supported as optional
+deployment-managed overrides.
 A Compose `.env` file only supplies those environment overrides; it is not
-mediaWarden's primary configuration file.
+mediaMender's primary configuration file.
 
 ### Docker Compose
 
@@ -95,9 +94,9 @@ file using the published image:
 
 ```yaml
 services:
-  mediawarden:
-    image: liftbridgelabs/mediawarden:latest
-    container_name: mediaWarden
+  mediamender:
+    image: liftbridgelabs/mediamender:latest
+    container_name: mediaMender
     restart: unless-stopped
     ports:
       - "8222:8222"
@@ -106,12 +105,12 @@ services:
       PGID: "100"
       TZ: America/Denver
     volumes:
-      - /mnt/cache/appdata/mediawarden/data:/app/data
+      - /mnt/cache/appdata/mediamender/data:/app/data
       - /mnt/symlink_media:/mnt/symlink_media:ro,slave
       - /mnt/user/media:/mnt/user/media:ro
 ```
 
-Change the timezone, port, and host paths for your system. If mediaWarden must
+Change the timezone, port, and host paths for your system. If mediaMender must
 reach Plex by container name, attach it to the same custom Docker network as
 Plex.
 
@@ -119,7 +118,7 @@ Plex.
 
 Open `http://YOUR_IP:8222` and run through the setup wizard. You can connect
 your Plex account in the browser to discover servers and libraries automatically;
-mediaWarden never receives your Plex password. Manual URL/token setup remains
+mediaMender never receives your Plex password. Manual URL/token setup remains
 available as a fallback.
 
 ---
@@ -130,13 +129,13 @@ Local builds are intended for development or testing changes that are not yet
 in the published image:
 
 ```bash
-git clone https://github.com/LiftbridgeLabs/mediawarden.git
-cd mediawarden
-docker build -t mediawarden:local .
+git clone https://github.com/LiftbridgeLabs/mediamender.git
+cd mediamender
+docker build -t mediamender:local .
 ```
 
 Normal Unraid and Compose installations should use
-`liftbridgelabs/mediawarden:latest` instead.
+`liftbridgelabs/mediamender:latest` instead.
 
 ---
 
@@ -168,7 +167,7 @@ overrides. Libraries without a `cron` value inherit `schedule.default_cron`.
 half-hour boundary. A daily time selected in the UI is evaluated in the
 container timezone (`TZ`).
 
-There is no automatic Empty Trash run immediately at startup. mediaWarden does run
+There is no automatic Empty Trash run immediately at startup. mediaMender does run
 the non-destructive safety checks in the background so the dashboard can show
 current Plex, mount, provider, and file-threshold health before the first
 scheduled protection run. This preload does not inspect trash, write history,
@@ -178,7 +177,7 @@ available when an immediate full safety run is wanted.
 ### Metadata Health
 
 Open **Metadata Health** to run an explicit, read-only scan for top-level movie and
-show items whose primary Plex GUID starts with `local://`. mediaWarden makes one
+show items whose primary Plex GUID starts with `local://`. mediaMender makes one
 bulk Plex request per configured movie or TV library, saves the latest result,
 and displays the title, rating key, metadata key, and a direct Plex details
 link. This scan is never scheduled and does not affect the Empty Trash safety
@@ -194,9 +193,9 @@ such as YouTube or Sportarr when no AutoPulse/OmniScan-style trigger is
 available. It uses the existing Plex URL, token, and section ID and requires no
 additional Docker mounts.
 
-Plex accepts refresh requests asynchronously, so mediaWarden reports the request
+Plex accepts refresh requests asynchronously, so mediaMender reports the request
 as accepted rather than claiming the scan is complete. After an accepted
-request, mediaWarden applies the configured library-specific Empty Trash safety
+request, mediaMender applies the configured library-specific Empty Trash safety
 hold (15 minutes by default). Existing trash inventory stabilization and all
 other destructive safety checks still run afterward.
 
@@ -214,7 +213,7 @@ libraries:
 
 ### Manual Plex part timestamp repair
 
-mediaWarden can optionally audit Plex's database for media parts whose stored
+mediaMender can optionally audit Plex's database for media parts whose stored
 timestamp is negative and repair one explicitly reviewed movie or TV season
 folder at a time. This is backend-neutral: it can protect symlink trees created
 by NZBDAV, Decypharr, AltMount, Ultimate Usenet, or another tool when the
@@ -222,7 +221,7 @@ filesystem exposed an invalid modification time while Plex scanned it.
 
 The feature is disabled by default and is never scheduled. Open **Timestamp
 Repair**, run an audit, inspect the exact affected filenames on a folder card,
-then explicitly approve that folder. mediaWarden durably records the transaction,
+then explicitly approve that folder. mediaMender durably records the transaction,
 temporarily renames only the affected symlinks, requests two path-limited Plex
 HTTP scans, restores the original names, and verifies positive timestamps.
 Empty Trash and timestamp repair share one maintenance lock.
@@ -254,14 +253,14 @@ database directory read-only:
 - /mnt/cache/appdata/plex/Library/Application Support/Plex Media Server/Plug-in Support/Databases:/plex-db:ro
 ```
 
-The writable path must exactly match the path stored by Plex. mediaWarden never
+The writable path must exactly match the path stored by Plex. mediaMender never
 writes to Plex's database or symlink targets and does not require Docker-socket
 access. Its PUID/PGID must have rename permission on the allowed symlink tree.
 
 Configure this from **Settings → Timestamp Repair**. After the database
 directory is mounted, **Discover** locates
 `com.plexapp.plugins.library.db`; the UI saves the per-server configuration and
-shows whether each instance is ready. Docker isolation means mediaWarden cannot
+shows whether each instance is ready. Docker isolation means mediaMender cannot
 create host mounts or infer a host appdata path from a Plex API token.
 
 #### Unraid container fields
@@ -274,7 +273,7 @@ Timestamp Repair → Discover** and select the database found for that instance.
 For each enabled local repair instance, add one additional Unraid **Path**
 manually for every allowed repair prefix:
 
-- Host path: the narrow symlink folder mediaWarden may repair.
+- Host path: the narrow symlink folder mediaMender may repair.
 - Container path: the exact same absolute path stored in the Plex database.
 - Access mode: read/write with slave propagation (`rw,slave`).
 
@@ -286,11 +285,11 @@ safety preload needs these repair-only mappings.
 #### Plex on another machine
 
 Run one repair-only sidecar on the remote Plex machine. This is not another
-mediaWarden controller: it has no dashboard, scheduler, Empty Trash operation,
-notifications, or Plex token. The main mediaWarden remains the only UI and sends
+mediaMender controller: it has no dashboard, scheduler, Empty Trash operation,
+notifications, or Plex token. The main mediaMender remains the only UI and sends
 signed, replay-protected filesystem requests. When Plex must scan a folder, the
 sidecar calls a transaction-limited signed controller endpoint and the main
-mediaWarden performs the Plex HTTP request.
+mediaMender performs the Plex HTTP request.
 
 In **Settings → Timestamp Repair**, add a worker, generate its pairing secret,
 assign the remote Plex instance, and use **Copy worker Compose**. Replace each
@@ -302,7 +301,7 @@ requires only:
 - explicitly allowed symlink prefixes mounted read/write at the exact paths
   stored in Plex.
 
-If a configured worker is unreachable, mediaWarden fails closed for maintenance
+If a configured worker is unreachable, mediaMender fails closed for maintenance
 because it cannot prove that a rename transaction is not awaiting recovery.
 
 ### Example config
@@ -376,12 +375,12 @@ plex_instances:
 
 Settings → Security. Enter username and password, save. Takes effect immediately, no restart needed. Stored as a bcrypt hash in config.yml — never plaintext.
 
-You can also set `MEDIAWARDEN_USERNAME` and `MEDIAWARDEN_PASSWORD` env vars instead (these take priority; legacy `EMPTYARR_*` names remain supported).
+You can also set `MEDIAMENDER_USERNAME` and `MEDIAMENDER_PASSWORD` env vars instead.
 
 API access uses a separate random token; the login password hash is never an
 API credential. Generate or rotate the token under Settings â†’ Security and
-copy it when shownâ€”emptyarr stores only its hash and cannot display it again.
-You may alternatively set `MEDIAWARDEN_API_TOKEN` as an environment override.
+copy it when shownâ€”mediaMender stores only its hash and cannot display it again.
+You may alternatively set `MEDIAMENDER_API_TOKEN` as an environment override.
 
 The API token is useful for Home Assistant, scripts, health monitors, and
 external dashboards. Send it in the `X-API-Token` header to read endpoints such
@@ -389,15 +388,15 @@ as `/api/status`, `/api/history`, and `/api/logs`, or to trigger an authorized
 run without storing the UI password:
 
 ```bash
-curl -H "X-API-Token: YOUR_TOKEN" http://MEDIAWARDEN:8222/api/status
+curl -H "X-API-Token: ${MEDIAMENDER_API_TOKEN}" http://MEDIAMENDER:8222/api/status
 ```
 
 ## Logs
 
 Settings → General → Logging contains the running log viewer and all rotated
 log files. Select a prior file to view it or download it. The active file is
-`mediawarden.log`; rotations use names such as `mediawarden.1.log` and
-`mediawarden.2.log`. Existing `emptyarr.log` files remain readable during migration.
+`mediamender.log`; rotations use names such as `mediamender.1.log` and
+`mediamender.2.log`.
 
 Retention is configured in understandable storage and time units:
 
@@ -412,14 +411,14 @@ container console for Docker/Unraid.
 
 Logs record scheduled/manual runs, safety checks, skipped operations, Plex
 actions and results, configuration changes, provider failures, and operational
-errors. mediaWarden does not intentionally log passwords, Plex tokens, provider
+errors. mediaMender does not intentionally log passwords, Plex tokens, provider
 keys, or API tokens.
 
 ---
 
 ## Notifications
 
-mediaWarden supports native Discord embeds plus named Apprise destinations. Friendly
+mediaMender supports native Discord embeds plus named Apprise destinations. Friendly
 presets in Settings cover Telegram, ntfy, Gotify, email/SMTP, Pushover, and
 generic webhooks; the custom preset accepts any
 [Apprise service URL](https://appriseit.com/services/).
@@ -448,21 +447,21 @@ are planned after the first destination release is proven stable.
 ### Unraid WebUI
 
 From the **Docker** page, use **Check for Updates**, then apply the update for
-mediaWarden. Unraid pulls the current `liftbridgelabs/mediawarden:latest` image and recreates
+mediaMender. Unraid pulls the current `liftbridgelabs/mediamender:latest` image and recreates
 the container while preserving everything mapped to `/app/data`.
 
 ### Docker Compose
 
 ```bash
-docker compose pull mediawarden
-docker compose up -d mediawarden
+docker compose pull mediamender
+docker compose up -d mediamender
 ```
 
 ---
 
 ## Privacy
 
-mediaWarden talks to your Plex server, Plex's authorization/discovery service when
+mediaMender talks to your Plex server, Plex's authorization/discovery service when
 you choose account linking, configured debrid provider APIs, and notification
 services you configure. It sends no telemetry or analytics. See
 [PRIVACY.md](PRIVACY.md).
