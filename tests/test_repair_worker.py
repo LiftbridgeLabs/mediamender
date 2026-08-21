@@ -73,8 +73,8 @@ class RepairWorkerApiTests(unittest.TestCase):
             connection.commit()
         self.secret = "worker-secret-" * 3
         with patch.dict(os.environ, {
-            "EMPTYARR_WORKER_DATABASE_ROOTS": str(self.database_root),
-            "EMPTYARR_WORKER_MEDIA_ROOTS": str(self.media_root),
+            "MEDIAMENDER_WORKER_DATABASE_ROOTS": str(self.database_root),
+            "MEDIAMENDER_WORKER_MEDIA_ROOTS": str(self.media_root),
         }):
             worker_app = create_worker_app(
                 self.secret, "altmount-worker", str(self.data_root),
@@ -357,10 +357,10 @@ class RepairWorkerControllerTests(unittest.TestCase):
         self.assertIn("Remote repair workers", html)
         self.assertIn("Copy worker Compose", html)
         self.assertIn("Discover databases", html)
-        self.assertIn("MEDIAWARDEN_ROLE=repair-worker", html)
-        self.assertIn("MEDIAWARDEN_WORKER_DATA_DIR:?Set an absolute", html)
-        self.assertIn("MEDIAWARDEN_WORKER_TOKEN:?Paste the pairing secret", html)
-        self.assertNotIn("./emptyarr-worker-data:/app/data", html)
+        self.assertIn("MEDIAMENDER_ROLE=repair-worker", html)
+        self.assertIn("MEDIAMENDER_WORKER_DATA_DIR:?Set an absolute", html)
+        self.assertIn("MEDIAMENDER_WORKER_TOKEN:?Paste the pairing secret", html)
+        self.assertNotIn("./mediamender-worker-data:/app/data", html)
         self.assertIn("Assign at least one Plex instance to this worker", html)
         self.assertIn("1. Add a worker", html)
         self.assertIn("Assign &amp; configure", html)

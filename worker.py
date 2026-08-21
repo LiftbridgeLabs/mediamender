@@ -94,10 +94,10 @@ def create_worker_app(secret: str | None = None, worker_name: str | None = None,
                       data_dir: str | None = None,
                       register_recovery_check: bool = True) -> Flask:
     app = Flask(__name__)
-    configured_secret = secret if secret is not None else get_env("EMPTYARR_WORKER_TOKEN")
-    configured_name = worker_name or get_env("EMPTYARR_WORKER_NAME", "repair-worker")
-    database_roots = _roots("MEDIAWARDEN_WORKER_DATABASE_ROOTS", "/plex-db")
-    media_roots = _roots("MEDIAWARDEN_WORKER_MEDIA_ROOTS", "/repair-media")
+    configured_secret = secret if secret is not None else get_env("MEDIAMENDER_WORKER_TOKEN")
+    configured_name = worker_name or get_env("MEDIAMENDER_WORKER_NAME", "repair-worker")
+    database_roots = _roots("MEDIAMENDER_WORKER_DATABASE_ROOTS", "/plex-db")
+    media_roots = _roots("MEDIAMENDER_WORKER_MEDIA_ROOTS", "/repair-media")
     manager = TimestampRepairManager(
         data_dir or os.environ.get("WORKER_DATA_DIR", "data/worker"),
         register_recovery_check=register_recovery_check,
@@ -204,5 +204,5 @@ def create_worker_app(secret: str | None = None, worker_name: str | None = None,
 
 
 app = create_worker_app(
-    register_recovery_check=get_env("EMPTYARR_ROLE") == "repair-worker",
+    register_recovery_check=get_env("MEDIAMENDER_ROLE") == "repair-worker",
 )

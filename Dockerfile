@@ -1,10 +1,10 @@
 FROM python:3.12-slim
 
-LABEL org.opencontainers.image.title="mediaWarden" \
+LABEL org.opencontainers.image.title="mediaMender" \
       org.opencontainers.image.description="Plex media safety, metadata health, timestamp repair, and library refresh" \
-      org.opencontainers.image.url="https://github.com/LiftbridgeLabs/mediawarden" \
-      org.opencontainers.image.source="https://github.com/LiftbridgeLabs/mediawarden" \
-      org.opencontainers.image.documentation="https://github.com/LiftbridgeLabs/mediawarden/blob/main/README.md" \
+      org.opencontainers.image.url="https://github.com/LiftbridgeLabs/mediamender" \
+      org.opencontainers.image.source="https://github.com/LiftbridgeLabs/mediamender" \
+      org.opencontainers.image.documentation="https://github.com/LiftbridgeLabs/mediamender/blob/main/README.md" \
       org.opencontainers.image.vendor="LiftbridgeLabs"
 
 # gosu: privilege dropping (Debian equivalent of su-exec)

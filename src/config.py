@@ -362,7 +362,7 @@ def parse_config(raw: dict, config_missing: bool = False) -> AppConfig:
             name=name,
             url=str(item.get("url", "")).strip(),
             token=_env_override(
-                f"MEDIAWARDEN_WORKER_TOKEN_{safe}", str(item.get("token", "")),
+                f"MEDIAMENDER_WORKER_TOKEN_{safe}", str(item.get("token", "")),
             ),
             controller_url=str(item.get("controller_url", "")).strip(),
         ))

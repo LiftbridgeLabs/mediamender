@@ -1,33 +1,32 @@
 <?xml version="1.0"?>
 <Container version="2">
-  <n>mediaWarden</n>
-  <Repository>liftbridgelabs/mediawarden:latest</Repository>
-  <Registry>https://hub.docker.com/r/liftbridgelabs/mediawarden</Registry>
+  <n>mediaMender</n>
+  <Repository>liftbridgelabs/mediamender:latest</Repository>
+  <Registry>https://hub.docker.com/r/liftbridgelabs/mediamender</Registry>
   <Network>bridge</Network>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/LiftbridgeLabs/mediawarden/issues</Support>
-  <Project>https://github.com/LiftbridgeLabs/mediawarden</Project>
+  <Support>https://github.com/LiftbridgeLabs/mediamender/issues</Support>
+  <Project>https://github.com/LiftbridgeLabs/mediamender</Project>
   <Overview>
-    mediaWarden protects Plex media libraries and provides metadata health,
+    mediaMender maintains Plex media libraries and provides metadata health,
     timestamp repair, and scheduled library refresh workflows. Configure it
-    through the built-in web setup wizard. Existing Emptyarr deployments can
-    continue using the legacy template and image tag during migration.
+    through the built-in web setup wizard.
   </Overview>
   <Category>MediaApp:Video Tools:</Category>
-  <Icon>https://raw.githubusercontent.com/LiftbridgeLabs/mediawarden/main/static/mediawarden.svg</Icon>
+  <Icon>https://raw.githubusercontent.com/LiftbridgeLabs/mediamender/main/static/mediamender.png</Icon>
   <WebUI>http://[IP]:[PORT:8222]/</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/LiftbridgeLabs/mediawarden/main/unraid/mediawarden.xml</TemplateURL>
+  <TemplateURL>https://raw.githubusercontent.com/LiftbridgeLabs/mediamender/main/unraid/mediamender.xml</TemplateURL>
   <ExtraParams>--restart unless-stopped</ExtraParams>
 
   <Config Name="Web UI Port" Target="8222" Default="8222" Mode="tcp"
-          Description="Port for the mediaWarden web interface and setup wizard."
+          Description="Port for the mediaMender web interface and setup wizard."
           Type="Port" Display="always" Required="true" Mask="false">8222</Config>
 
   <Config Name="Data Directory" Target="/app/data"
-          Default="/mnt/cache/appdata/mediawarden/data" Mode="rw"
-          Description="Persistent mediaWarden configuration, state, and logs."
-          Type="Path" Display="always" Required="true" Mask="false">/mnt/cache/appdata/mediawarden/data</Config>
+          Default="/mnt/cache/appdata/mediamender/data" Mode="rw"
+          Description="Persistent mediaMender configuration, state, and logs."
+          Type="Path" Display="always" Required="true" Mask="false">/mnt/cache/appdata/mediamender/data</Config>
 
   <Config Name="Symlink Media Root" Target="/mnt/symlink_media"
           Default="/mnt/symlink_media" Mode="ro,slave"
@@ -49,13 +48,13 @@
           Description="Optional second local Plex database directory."
           Type="Path" Display="advanced" Required="false" Mask="false"></Config>
 
-  <Config Name="Web UI Username (optional)" Target="MEDIAWARDEN_USERNAME"
+  <Config Name="Web UI Username (optional)" Target="MEDIAMENDER_USERNAME"
           Default="" Mode="" Description="Optional web UI username override."
           Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
-  <Config Name="Web UI Password (optional)" Target="MEDIAWARDEN_PASSWORD"
+  <Config Name="Web UI Password (optional)" Target="MEDIAMENDER_PASSWORD"
           Default="" Mode="" Description="Optional web UI password override."
           Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
-  <Config Name="API Token Override (optional)" Target="MEDIAWARDEN_API_TOKEN"
+  <Config Name="API Token Override (optional)" Target="MEDIAMENDER_API_TOKEN"
           Default="" Mode="" Description="Optional deployment-managed API token."
           Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
 

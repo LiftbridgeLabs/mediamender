@@ -9,7 +9,7 @@ logger = logging.getLogger(f"{PRODUCT_SLUG}.notifications")
 
 
 def _brand_text(value: str) -> str:
-    return value.replace("Emptyarr", PRODUCT_NAME).replace("emptyarr", PRODUCT_NAME)
+    return value
 
 
 def _brand_payload(value):

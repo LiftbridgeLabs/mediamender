@@ -40,7 +40,7 @@ class LoggingTests(unittest.TestCase):
             max_total_size_mb=3,
             retention_days=14,
         )
-        self.logger = logging.getLogger(f"emptyarr-test-{id(self)}")
+        self.logger = logging.getLogger(f"mediamender-test-{id(self)}")
         self.logger.handlers = [self.manager.handler]
         self.logger.propagate = False
         self.logger.setLevel(logging.INFO)
@@ -56,11 +56,11 @@ class LoggingTests(unittest.TestCase):
         self.logger.info(payload)
         self.logger.info(payload)
         names = {item["name"] for item in self.manager.list_files()}
-        self.assertIn("mediawarden.log", names)
-        self.assertIn("mediawarden.1.log", names)
+        self.assertIn("mediamender.log", names)
+        self.assertIn("mediamender.1.log", names)
 
     def test_retention_removes_expired_rotated_logs(self):
-        expired = self.directory / "mediawarden.9.log"
+        expired = self.directory / "mediamender.9.log"
         expired.write_text("old", encoding="utf-8")
         old = time.time() - (2 * 86400)
         os.utime(expired, (old, old))
@@ -68,8 +68,8 @@ class LoggingTests(unittest.TestCase):
         self.assertFalse(expired.exists())
 
     def test_total_storage_removes_oldest_rotated_logs(self):
-        first = self.directory / "mediawarden.8.log"
-        second = self.directory / "mediawarden.9.log"
+        first = self.directory / "mediamender.8.log"
+        second = self.directory / "mediamender.9.log"
         first.write_bytes(b"a" * (700 * 1024))
         second.write_bytes(b"b" * (700 * 1024))
         os.utime(first, (time.time() - 20, time.time() - 20))
@@ -86,11 +86,11 @@ class LoggingTests(unittest.TestCase):
         listing = client.get("/api/logs")
         self.assertEqual(listing.status_code, 200)
         names = [item["name"] for item in listing.get_json()["files"]]
-        self.assertIn("mediawarden.log", names)
-        content = client.get("/api/logs/mediawarden.log")
+        self.assertIn("mediamender.log", names)
+        content = client.get("/api/logs/mediamender.log")
         self.assertEqual(content.status_code, 200)
         self.assertIn("log-api-test-marker", content.get_json()["content"])
-        download = client.get("/api/logs/mediawarden.log/download")
+        download = client.get("/api/logs/mediamender.log/download")
         self.assertEqual(download.status_code, 200)
         self.assertIn("attachment", download.headers["Content-Disposition"])
         download.close()
@@ -171,13 +171,13 @@ class WebSecurityTests(unittest.TestCase):
         with patch.object(app.config, "auth_username", "admin"), \
              patch.object(app.config, "auth_password_hash", "password-hash"), \
              patch.object(app, "generate_api_token",
-                          return_value="mediawarden_new-secret"), \
+                          return_value="mediamender_new-secret"), \
              patch.object(app, "_update_api_token_hash") as update:
             generated = client.post("/api/auth/token", headers=headers)
             status = client.get("/api/auth/token")
         self.assertEqual(generated.status_code, 200)
-        self.assertEqual(generated.get_json()["token"], "mediawarden_new-secret")
-        update.assert_called_once_with(hash_api_token("mediawarden_new-secret"))
+        self.assertEqual(generated.get_json()["token"], "mediamender_new-secret")
+        update.assert_called_once_with(hash_api_token("mediamender_new-secret"))
         self.assertNotIn("token", status.get_json())
 
     def test_generated_api_token_persists_only_its_hash(self):
@@ -200,7 +200,7 @@ class WebSecurityTests(unittest.TestCase):
              patch.object(app.config, "auth_username", "admin"), \
              patch.object(app.config, "auth_password_hash", "password-hash"), \
              patch.object(app, "generate_api_token",
-                          return_value="mediawarden_new-secret"), \
+                          return_value="mediamender_new-secret"), \
              patch.object(app, "_apply_runtime_config"):
             response = client.post(
                 "/api/auth/token",
@@ -211,9 +211,9 @@ class WebSecurityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             saved["auth"]["api_token_hash"],
-            hash_api_token("mediawarden_new-secret"),
+            hash_api_token("mediamender_new-secret"),
         )
-        self.assertNotIn("mediawarden_new-secret", saved_text)
+        self.assertNotIn("mediamender_new-secret", saved_text)
 
     def test_metadata_address_is_rejected(self):
         ok, _ = app._is_valid_plex_url("http://169.254.10.10:32400")
@@ -298,8 +298,8 @@ class ConfigPrecedenceTests(unittest.TestCase):
         key_path = Path("tests/.runtime-session-key").resolve()
         key_path.unlink(missing_ok=True)
         overrides = {
-            "EMPTYARR_SECRET_KEY": "",
-            "EMPTYARR_SECRET_KEY_FILE": str(key_path),
+            "MEDIAMENDER_SECRET_KEY": "",
+            "MEDIAMENDER_SECRET_KEY_FILE": str(key_path),
         }
         try:
             with patch.dict(os.environ, overrides):
@@ -692,11 +692,11 @@ class MetadataAuditTests(unittest.TestCase):
 
     def test_navigation_and_startup_progress_match_feature_layout(self):
         html = app.app.test_client().get("/").get_data(as_text=True)
-        labels = ["Dashboard", "mediaWarden", "Metadata Health",
+        labels = ["Dashboard", "mediaMender", "Metadata Health",
                   "Timestamp Repair", "Settings"]
         positions = [html.index(f">\n      {label}\n") for label in labels]
         self.assertEqual(positions, sorted(positions))
-        self.assertIn("emptyarr-startup-progress", html)
+        self.assertIn("mediamender-startup-progress", html)
         self.assertIn("dashboard-startup-progress", html)
         self.assertIn("moveProtectionControls", html)
         self.assertIn("showPage('dashboard'", html)
@@ -1103,7 +1103,7 @@ class SafetyTests(unittest.TestCase):
         changed = [{"type": "movie", "title": "New", "rating_key": "2"}]
         plex.get_trash_items.side_effect = [initial, changed, changed, []]
 
-        with self.assertLogs("mediawarden", level="WARNING") as captured:
+        with self.assertLogs("mediamender", level="WARNING") as captured:
             self._run_with_checks(instance, library, config, plex)
 
         output = "\n".join(captured.output)

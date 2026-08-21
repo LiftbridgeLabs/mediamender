@@ -158,12 +158,12 @@ app = Flask(__name__)
 
 def _load_session_key() -> str:
     """Resolve a session key from an override or the persistent data directory."""
-    configured = get_env("EMPTYARR_SECRET_KEY").strip()
+    configured = get_env("MEDIAMENDER_SECRET_KEY").strip()
     if configured:
         return configured
 
     key_path = get_env(
-        "EMPTYARR_SECRET_KEY_FILE",
+        "MEDIAMENDER_SECRET_KEY_FILE",
         os.path.join(os.path.dirname(os.path.abspath(CONFIG_PATH)), ".session-key"),
     )
     try:
@@ -759,10 +759,8 @@ def _active_config_overrides() -> list[str]:
         "DISCORD_WEBHOOK",
         "LOG_LEVEL",
         "LOG_DIR",
-        "MEDIAWARDEN_USERNAME",
-        "MEDIAWARDEN_PASSWORD",
-        "EMPTYARR_USERNAME",
-        "EMPTYARR_PASSWORD",
+        "MEDIAMENDER_USERNAME",
+        "MEDIAMENDER_PASSWORD",
         "RD_API_KEY",
         "AD_API_KEY",
         "TB_API_KEY",
@@ -784,12 +782,18 @@ def _active_config_overrides() -> list[str]:
 
 @app.route("/favicon.ico", methods=["GET"])
 def favicon():
-    return send_from_directory(app.static_folder, "mediawarden.svg", mimetype="image/svg+xml")
+    return send_from_directory(app.static_folder, "mediamender.png", mimetype="image/png")
+
+
+@app.route("/favicon.png", methods=["GET"])
+def favicon_png():
+    return send_from_directory(app.static_folder, "mediamender.png", mimetype="image/png")
 
 
 @app.route("/favicon.svg", methods=["GET"])
-def favicon_svg():
-    return send_from_directory(app.static_folder, "mediawarden.svg", mimetype="image/svg+xml")
+def favicon_svg_compat():
+    # Preserve old bookmarks while the app uses the raster PNG everywhere.
+    return send_from_directory(app.static_folder, "mediamender.png", mimetype="image/png")
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -2415,7 +2419,7 @@ def api_auth_token():
     denied = _require_browser_auth()
     if denied:
         return denied
-    configured_by_env = bool(get_env("EMPTYARR_API_TOKEN"))
+    configured_by_env = bool(get_env("MEDIAMENDER_API_TOKEN"))
     return jsonify({
         "ok": True,
         "configured": configured_by_env or bool(config.auth_api_token_hash),
@@ -2431,10 +2435,10 @@ def api_auth_token_generate():
     denied = _require_browser_auth()
     if denied:
         return denied
-    if get_env("EMPTYARR_API_TOKEN"):
+    if get_env("MEDIAMENDER_API_TOKEN"):
         return jsonify({
             "ok": False,
-            "error": "API token is managed by MEDIAWARDEN_API_TOKEN (EMPTYARR_API_TOKEN remains supported)",
+            "error": "API token is managed by MEDIAMENDER_API_TOKEN",
         }), 409
     try:
         token = generate_api_token()
@@ -2456,10 +2460,10 @@ def api_auth_token_revoke():
     denied = _require_browser_auth()
     if denied:
         return denied
-    if get_env("EMPTYARR_API_TOKEN"):
+    if get_env("MEDIAMENDER_API_TOKEN"):
         return jsonify({
             "ok": False,
-            "error": "Remove MEDIAWARDEN_API_TOKEN (or EMPTYARR_API_TOKEN) to revoke this token",
+            "error": "Remove MEDIAMENDER_API_TOKEN to revoke this token",
         }), 409
     try:
         _update_api_token_hash()

@@ -16,7 +16,7 @@ PROVIDERS = {
         },
     },
     "alldebrid": {
-        "url":     "https://api.alldebrid.com/v4/user?agent=mediawarden",
+        "url":     "https://api.alldebrid.com/v4/user?agent=mediamender",
         "headers": lambda key: {"Authorization": f"Bearer {key}"},
         "parse":   lambda d: {
             "username": d.get("data", {}).get("user", {}).get("username", "?"),

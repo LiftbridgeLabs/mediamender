@@ -7,11 +7,11 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from src.branding import LEGACY_SLUG, PRODUCT_SLUG
+from src.branding import PRODUCT_SLUG
 
 
-_LOG_NAME = re.compile(rf"^(?:{re.escape(PRODUCT_SLUG)}|{re.escape(LEGACY_SLUG)})(?:\.(\d+))?\.log$")
-_LEGACY_LOG_NAME = re.compile(rf"^(?:{re.escape(PRODUCT_SLUG)}|{re.escape(LEGACY_SLUG)})\.log\.(\d+)$")
+_LOG_NAME = re.compile(rf"^{re.escape(PRODUCT_SLUG)}(?:\.(\d+))?\.log$")
+_LEGACY_LOG_NAME = re.compile(rf"^{re.escape(PRODUCT_SLUG)}\.log\.(\d+)$")
 
 
 class RetentionRotatingFileHandler(logging.handlers.RotatingFileHandler):
