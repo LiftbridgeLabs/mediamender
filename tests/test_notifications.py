@@ -74,7 +74,7 @@ class NotificationDeliveryTests(unittest.TestCase):
         webhook = "https://discord.com/api/webhooks/123/super-secret"
         response = Mock(status_code=204)
         with patch("src.notifications.requests.post", return_value=response), \
-             self.assertLogs("emptyarr.notifications", level="INFO") as captured:
+             self.assertLogs("mediawarden.notifications", level="INFO") as captured:
             notifications._post(webhook, {"content": "test"})
 
         output = "\n".join(captured.output)
@@ -86,7 +86,7 @@ class NotificationDeliveryTests(unittest.TestCase):
         webhook = "https://discord.com/api/webhooks/123/super-secret"
         failure = RuntimeError(f"request failed for {webhook}")
         with patch("src.notifications.requests.post", side_effect=failure), \
-             self.assertLogs("emptyarr.notifications", level="WARNING") as captured:
+             self.assertLogs("mediawarden.notifications", level="WARNING") as captured:
             notifications._post(webhook, {"content": "test"})
 
         output = "\n".join(captured.output)

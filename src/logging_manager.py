@@ -7,10 +7,11 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from src.branding import LEGACY_SLUG, PRODUCT_SLUG
 
 
-_LOG_NAME = re.compile(r"^emptyarr(?:\.(\d+))?\.log$")
-_LEGACY_LOG_NAME = re.compile(r"^emptyarr\.log\.(\d+)$")
+_LOG_NAME = re.compile(rf"^(?:{re.escape(PRODUCT_SLUG)}|{re.escape(LEGACY_SLUG)})(?:\.(\d+))?\.log$")
+_LEGACY_LOG_NAME = re.compile(rf"^(?:{re.escape(PRODUCT_SLUG)}|{re.escape(LEGACY_SLUG)})\.log\.(\d+)$")
 
 
 class RetentionRotatingFileHandler(logging.handlers.RotatingFileHandler):
@@ -127,7 +128,7 @@ class LogManager:
         self.log_dir = Path(log_dir).resolve()
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.handler = RetentionRotatingFileHandler(
-            str(self.log_dir / "emptyarr.log"),
+            str(self.log_dir / f"{PRODUCT_SLUG}.log"),
             max_file_size_mb=max_file_size_mb,
             max_total_size_mb=max_total_size_mb,
             retention_days=retention_days,

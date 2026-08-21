@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>emptyarr — Login</title>
-<link rel="icon" type="image/png" href="/static/favicon.png">
+<title>{{ product_name }} — Login</title>
+<link rel="icon" type="image/svg+xml" href="/static/mediawarden.svg">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -118,9 +118,9 @@
 <body>
 <div class="login-wrap">
   <div class="login-logo">
-    <span class="login-logo-icon"><img src="/static/icon.png" alt="emptyarr" style="width:82px;height:82px;object-fit:contain;filter:drop-shadow(0 10px 18px rgba(0,0,0,.35));"></span>
-    <div class="login-logo-text">emptyarr</div>
-    <div class="login-logo-sub">plex trash watchdog</div>
+    <span class="login-logo-icon"><img src="/static/mediawarden.svg" alt="{{ product_name }}" style="width:82px;height:82px;object-fit:contain;filter:drop-shadow(0 10px 18px rgba(0,0,0,.35));"></span>
+    <div class="login-logo-text">{{ product_name }}</div>
+    <div class="login-logo-sub">Plex media safety</div>
   </div>
   <div class="login-card">
     <div class="login-title">Sign in</div>
@@ -141,7 +141,7 @@
       <button class="login-btn" type="submit">Sign in</button>
     </form>
   </div>
-  <div class="login-version">emptyarr v{{ app_version }}</div>
+  <div class="login-version">{{ product_name }} v{{ app_version }}</div>
 </div>
 </body>
 </html>

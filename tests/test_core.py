@@ -56,11 +56,11 @@ class LoggingTests(unittest.TestCase):
         self.logger.info(payload)
         self.logger.info(payload)
         names = {item["name"] for item in self.manager.list_files()}
-        self.assertIn("emptyarr.log", names)
-        self.assertIn("emptyarr.1.log", names)
+        self.assertIn("mediawarden.log", names)
+        self.assertIn("mediawarden.1.log", names)
 
     def test_retention_removes_expired_rotated_logs(self):
-        expired = self.directory / "emptyarr.9.log"
+        expired = self.directory / "mediawarden.9.log"
         expired.write_text("old", encoding="utf-8")
         old = time.time() - (2 * 86400)
         os.utime(expired, (old, old))
@@ -68,8 +68,8 @@ class LoggingTests(unittest.TestCase):
         self.assertFalse(expired.exists())
 
     def test_total_storage_removes_oldest_rotated_logs(self):
-        first = self.directory / "emptyarr.8.log"
-        second = self.directory / "emptyarr.9.log"
+        first = self.directory / "mediawarden.8.log"
+        second = self.directory / "mediawarden.9.log"
         first.write_bytes(b"a" * (700 * 1024))
         second.write_bytes(b"b" * (700 * 1024))
         os.utime(first, (time.time() - 20, time.time() - 20))
@@ -86,11 +86,11 @@ class LoggingTests(unittest.TestCase):
         listing = client.get("/api/logs")
         self.assertEqual(listing.status_code, 200)
         names = [item["name"] for item in listing.get_json()["files"]]
-        self.assertIn("emptyarr.log", names)
-        content = client.get("/api/logs/emptyarr.log")
+        self.assertIn("mediawarden.log", names)
+        content = client.get("/api/logs/mediawarden.log")
         self.assertEqual(content.status_code, 200)
         self.assertIn("log-api-test-marker", content.get_json()["content"])
-        download = client.get("/api/logs/emptyarr.log/download")
+        download = client.get("/api/logs/mediawarden.log/download")
         self.assertEqual(download.status_code, 200)
         self.assertIn("attachment", download.headers["Content-Disposition"])
         download.close()
@@ -171,13 +171,13 @@ class WebSecurityTests(unittest.TestCase):
         with patch.object(app.config, "auth_username", "admin"), \
              patch.object(app.config, "auth_password_hash", "password-hash"), \
              patch.object(app, "generate_api_token",
-                          return_value="emptyarr_new-secret"), \
+                          return_value="mediawarden_new-secret"), \
              patch.object(app, "_update_api_token_hash") as update:
             generated = client.post("/api/auth/token", headers=headers)
             status = client.get("/api/auth/token")
         self.assertEqual(generated.status_code, 200)
-        self.assertEqual(generated.get_json()["token"], "emptyarr_new-secret")
-        update.assert_called_once_with(hash_api_token("emptyarr_new-secret"))
+        self.assertEqual(generated.get_json()["token"], "mediawarden_new-secret")
+        update.assert_called_once_with(hash_api_token("mediawarden_new-secret"))
         self.assertNotIn("token", status.get_json())
 
     def test_generated_api_token_persists_only_its_hash(self):
@@ -200,7 +200,7 @@ class WebSecurityTests(unittest.TestCase):
              patch.object(app.config, "auth_username", "admin"), \
              patch.object(app.config, "auth_password_hash", "password-hash"), \
              patch.object(app, "generate_api_token",
-                          return_value="emptyarr_new-secret"), \
+                          return_value="mediawarden_new-secret"), \
              patch.object(app, "_apply_runtime_config"):
             response = client.post(
                 "/api/auth/token",
@@ -211,9 +211,9 @@ class WebSecurityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             saved["auth"]["api_token_hash"],
-            hash_api_token("emptyarr_new-secret"),
+            hash_api_token("mediawarden_new-secret"),
         )
-        self.assertNotIn("emptyarr_new-secret", saved_text)
+        self.assertNotIn("mediawarden_new-secret", saved_text)
 
     def test_metadata_address_is_rejected(self):
         ok, _ = app._is_valid_plex_url("http://169.254.10.10:32400")
@@ -616,7 +616,7 @@ class MetadataAuditTests(unittest.TestCase):
         self.assertIn("Libraries on", html)
         self.assertIn("Custom cron expression", html)
         self.assertIn("data-schedule-cron", html)
-        self.assertIn("Folders Emptyarr may repair", html)
+        self.assertIn("Folders ${PRODUCT_NAME} may repair", html)
         self.assertIn("Use this database", html)
         self.assertIn("Plex timestamp", html)
         self.assertIn("Filesystem timestamp", html)
@@ -692,7 +692,7 @@ class MetadataAuditTests(unittest.TestCase):
 
     def test_navigation_and_startup_progress_match_feature_layout(self):
         html = app.app.test_client().get("/").get_data(as_text=True)
-        labels = ["Dashboard", "Emptyarr", "Metadata Health",
+        labels = ["Dashboard", "mediaWarden", "Metadata Health",
                   "Timestamp Repair", "Settings"]
         positions = [html.index(f">\n      {label}\n") for label in labels]
         self.assertEqual(positions, sorted(positions))
@@ -1103,7 +1103,7 @@ class SafetyTests(unittest.TestCase):
         changed = [{"type": "movie", "title": "New", "rating_key": "2"}]
         plex.get_trash_items.side_effect = [initial, changed, changed, []]
 
-        with self.assertLogs("emptyarr", level="WARNING") as captured:
+        with self.assertLogs("mediawarden", level="WARNING") as captured:
             self._run_with_checks(instance, library, config, plex)
 
         output = "\n".join(captured.output)

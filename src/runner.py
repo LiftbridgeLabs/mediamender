@@ -14,11 +14,18 @@ from src.providers import check_provider
 from src import notifications
 from src.storage import atomic_write_json
 from src.maintenance import lease
+from src.branding import PRODUCT_SLUG
 
-logger = logging.getLogger("emptyarr")
+logger = logging.getLogger(PRODUCT_SLUG)
 
 MAX_HISTORY      = 100
 _history: List[Dict]          = []
+_library_refresh_guard = None
+
+
+def set_library_refresh_guard(check) -> None:
+    global _library_refresh_guard
+    _library_refresh_guard = check
 _instance_status: Dict        = {}   # instance_name -> {library_name -> status}
 _last_global_checks: Dict     = {}   # instance_name -> {check_name -> result}
 _scheduling_enabled: bool     = True
@@ -517,6 +524,15 @@ def run_library(instance: PlexInstanceConfig, library: LibraryConfig,
                 "A run is already in progress")
         return
     try:
+        refresh_hold = (
+            _library_refresh_guard(instance.name, library.name)
+            if _library_refresh_guard else None
+        )
+        if refresh_hold and not dry_run:
+            message = f"Plex library refresh in progress — {refresh_hold}; trash empty skipped"
+            logger.info(f"[{instance.name} / {library.name}] {message}")
+            _record(instance.name, library.name, "skipped", {}, message)
+            return
         with lease(
             instance.name,
             operation="empty_trash",

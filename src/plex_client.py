@@ -3,6 +3,7 @@ import defusedxml.ElementTree as ET
 from typing import Optional, List, Dict
 
 from src.version import __version__
+from src.branding import PRODUCT_NAME, PRODUCT_SLUG
 
 
 # Plex media type IDs
@@ -66,9 +67,9 @@ class PlexClient:
         self.session = requests.Session()
         self.session.headers.update({
             "X-Plex-Token":             token,
-            "X-Plex-Product":           "emptyarr",
+            "X-Plex-Product":           PRODUCT_NAME,
             "X-Plex-Version":           __version__,
-            "X-Plex-Client-Identifier": "emptyarr",
+            "X-Plex-Client-Identifier": PRODUCT_SLUG,
             "Accept":                   "application/json",
         })
 
@@ -307,6 +308,19 @@ class PlexClient:
             response = self._get(
                 f"/library/sections/{section_id}/refresh",
                 params={"path": path},
+                timeout=30,
+            )
+            if response.status_code in (200, 201, 202, 204):
+                return {"ok": True, "http": response.status_code}
+            return {"ok": False, "http": response.status_code}
+        except Exception as exc:
+            return {"ok": False, "http": None, "error": type(exc).__name__}
+
+    def refresh_section(self, section_id: str) -> Dict:
+        """Request a normal full refresh of one Plex library section."""
+        try:
+            response = self.session.post(
+                f"{self.url}/library/sections/{section_id}/refresh",
                 timeout=30,
             )
             if response.status_code in (200, 201, 202, 204):

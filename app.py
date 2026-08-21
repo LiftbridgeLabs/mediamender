@@ -34,9 +34,11 @@ from src import plex_auth
 from src import notifications
 from src.version import __version__
 from src.timestamp_repair import TimestampRepairManager
+from src.library_refresh import LibraryRefreshManager
 from src.maintenance import lease, set_recovery_check
 from src.repair_worker_client import RepairWorkerClient, validate_worker_url
 from src.worker_auth import SignatureVerifier
+from src.branding import PRODUCT_NAME, PRODUCT_SLUG, get_env
 
 LOG_DIR  = os.environ.get("LOG_DIR", "data/logs")
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -57,7 +59,7 @@ logging.basicConfig(
     level=logging.INFO,
     handlers=[_console, _file_handler],
 )
-logger = logging.getLogger("emptyarr")
+logger = logging.getLogger(PRODUCT_SLUG)
 
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 CONFIG_PATH = os.environ.get("CONFIG_PATH", "data/config.yml")
@@ -82,6 +84,10 @@ plex_clients: dict[str, PlexClient] = {
 timestamp_repair = TimestampRepairManager(
     os.path.dirname(os.path.abspath(CONFIG_PATH)),
 )
+library_refresh = LibraryRefreshManager(
+    os.path.dirname(os.path.abspath(CONFIG_PATH)),
+)
+runner.set_library_refresh_guard(library_refresh.trash_hold_reason)
 startup_recovery = timestamp_repair.recover()
 if not startup_recovery.get("ok"):
     logger.error("Timestamp repair startup recovery requires attention: %s",
@@ -152,11 +158,11 @@ app = Flask(__name__)
 
 def _load_session_key() -> str:
     """Resolve a session key from an override or the persistent data directory."""
-    configured = os.environ.get("EMPTYARR_SECRET_KEY", "").strip()
+    configured = get_env("EMPTYARR_SECRET_KEY").strip()
     if configured:
         return configured
 
-    key_path = os.environ.get(
+    key_path = get_env(
         "EMPTYARR_SECRET_KEY_FILE",
         os.path.join(os.path.dirname(os.path.abspath(CONFIG_PATH)), ".session-key"),
     )
@@ -197,6 +203,9 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"]   = os.environ.get("SESSION_COOKIE_SECURE", "false").lower() == "true"
 scheduler      = BackgroundScheduler()
 _next_runs: dict = {}
+_library_refresh_next_runs: dict = {}
+_library_refresh_queue_lock = threading.Lock()
+_library_refresh_queue: dict = {"running": False}
 _runtime_lock = threading.RLock()
 _config_file_lock = threading.Lock()
 _status_refresh_lock = threading.Lock()
@@ -213,6 +222,10 @@ _status_refresh_progress = {
 
 def _job_key(instance_name: str, library_name: str) -> str:
     return f"{instance_name}::{library_name}"
+
+
+def _refresh_job_key(instance_name: str, library_name: str) -> str:
+    return f"refresh::{instance_name}::{library_name}"
 
 
 def make_job(inst: PlexInstanceConfig, lib: LibraryConfig):
@@ -233,6 +246,22 @@ def make_job(inst: PlexInstanceConfig, lib: LibraryConfig):
     return job
 
 
+def make_refresh_job(inst: PlexInstanceConfig, lib: LibraryConfig):
+    def job():
+        with _runtime_lock:
+            live_inst = next((item for item in config.instances
+                              if item.name == inst.name), None)
+            live_lib = next((item for item in live_inst.libraries
+                             if item.name == lib.name), None) if live_inst else None
+            plex = plex_clients.get(inst.name)
+        if (not live_inst or not live_lib or not live_lib.refresh_enabled
+                or plex is None or not config.features.library_refresh):
+            return
+        library_refresh.run(live_inst, live_lib, plex, source="scheduled")
+        _update_refresh_next(live_inst.name, live_lib.name)
+    return job
+
+
 def _update_next(instance_name: str, library_name: str):
     key = _job_key(instance_name, library_name)
     job = scheduler.get_job(key)
@@ -243,6 +272,15 @@ def _update_next(instance_name: str, library_name: str):
             _next_runs[key] = nft.isoformat()
 
 
+def _update_refresh_next(instance_name: str, library_name: str):
+    key = _refresh_job_key(instance_name, library_name)
+    job = scheduler.get_job(key)
+    if job:
+        nft = getattr(job, 'next_fire_time', None) or getattr(job, 'next_run_time', None)
+        if nft:
+            _library_refresh_next_runs[_job_key(instance_name, library_name)] = nft.isoformat()
+
+
 def _effective_cron(target: AppConfig, lib: LibraryConfig) -> str:
     return lib.cron or target.default_cron
 
@@ -251,6 +289,7 @@ def _refresh_next_runs():
     for inst in config.instances:
         for lib in inst.libraries:
             _update_next(inst.name, lib.name)
+            _update_refresh_next(inst.name, lib.name)
 
 
 def _start_readonly_status_refresh(target_config: AppConfig = None,
@@ -322,27 +361,38 @@ def _setup_scheduler(new_config: AppConfig = None):
     target = new_config or config
     scheduler.remove_all_jobs()
     _next_runs.clear()
-    if not target.features.trash_removal:
-        return
+    _library_refresh_next_runs.clear()
 
-    triggers = {}
-    for inst in target.instances:
-        for lib in inst.libraries:
-            key = _job_key(inst.name, lib.name)
-            triggers[key] = CronTrigger.from_crontab(_effective_cron(target, lib))
-    for inst in target.instances:
-        for lib in inst.libraries:
-            key = _job_key(inst.name, lib.name)
-            scheduler.add_job(
-                make_job(inst, lib),
-                triggers[key],
-                id=key,
-                name=f"{inst.name} / {lib.name}",
-                replace_existing=True,
-            )
+    if target.features.trash_removal:
+        for inst in target.instances:
+            for lib in inst.libraries:
+                key = _job_key(inst.name, lib.name)
+                scheduler.add_job(
+                    make_job(inst, lib),
+                    CronTrigger.from_crontab(_effective_cron(target, lib)),
+                    id=key,
+                    name=f"{inst.name} / {lib.name}",
+                    replace_existing=True,
+                )
+    if target.features.library_refresh:
+        for inst in target.instances:
+            for lib in inst.libraries:
+                if not lib.refresh_enabled:
+                    continue
+                key = _refresh_job_key(inst.name, lib.name)
+                scheduler.add_job(
+                    make_refresh_job(inst, lib),
+                    CronTrigger.from_crontab(lib.refresh_cron),
+                    id=key,
+                    name=f"Refresh {inst.name} / {lib.name}",
+                    replace_existing=True,
+                    coalesce=True,
+                    max_instances=1,
+                )
     for inst in target.instances:
         for lib in inst.libraries:
             _update_next(inst.name, lib.name)
+            _update_refresh_next(inst.name, lib.name)
 
 
 try:
@@ -381,7 +431,8 @@ def _validate_path(path, library_type: str, context: str) -> None:
     _validate_provider_checks(path.get("provider_checks", []), context)
 
 
-def _validate_library(library, instance_name: str, names: set) -> None:
+def _validate_library(library, instance_name: str, names: set,
+                      require_paths: bool = True) -> None:
     if not isinstance(library, dict):
         raise ValueError(f"{instance_name}: every library must be an object")
     name = str(library.get("name", "")).strip()
@@ -397,17 +448,24 @@ def _validate_library(library, instance_name: str, names: set) -> None:
     cron = str(library.get("cron", "")).strip()
     if cron:
         CronTrigger.from_crontab(cron)
+    refresh_cron = str(library.get("refresh_cron", "0 * * * *")).strip()
+    CronTrigger.from_crontab(refresh_cron)
+    refresh_guard = int(library.get("refresh_guard_minutes", 15))
+    if not 1 <= refresh_guard <= 240:
+        raise ValueError(
+            f"{context}: refresh safety hold must be between 1 and 240 minutes"
+        )
     paths = library.get("paths", [])
     if not isinstance(paths, list):
         raise ValueError(f"{context}: paths must be a list")
-    if not paths:
+    if require_paths and not paths:
         raise ValueError(f"{context}: configure at least one filesystem path")
     for path in paths:
         _validate_path(path, library_type, context)
 
 
 def _validate_instance(instance, names: set, machine_ids: set,
-                       worker_names: set[str]) -> None:
+                       worker_names: set[str], require_paths: bool = True) -> None:
     if not isinstance(instance, dict):
         raise ValueError("Every Plex instance must be an object")
     name = str(instance.get("name", "")).strip()
@@ -459,7 +517,7 @@ def _validate_instance(instance, names: set, machine_ids: set,
         raise ValueError(f"{name}: libraries must be a list")
     library_names = set()
     for library in libraries:
-        _validate_library(library, name, library_names)
+        _validate_library(library, name, library_names, require_paths)
 
 
 def _validate_safety_limits(raw: dict) -> None:
@@ -564,8 +622,14 @@ def _validate_raw_config(raw: dict) -> AppConfig:
         worker_names.add(name)
     instance_names = set()
     machine_ids = set()
+    features = raw.get("features", {})
+    require_paths = not isinstance(features, dict) or features.get(
+        "trash_removal", True,
+    ) is not False
     for instance in instances:
-        _validate_instance(instance, instance_names, machine_ids, worker_names)
+        _validate_instance(
+            instance, instance_names, machine_ids, worker_names, require_paths,
+        )
     return parse_config(raw)
 
 
@@ -695,6 +759,8 @@ def _active_config_overrides() -> list[str]:
         "DISCORD_WEBHOOK",
         "LOG_LEVEL",
         "LOG_DIR",
+        "MEDIAWARDEN_USERNAME",
+        "MEDIAWARDEN_PASSWORD",
         "EMPTYARR_USERNAME",
         "EMPTYARR_PASSWORD",
         "RD_API_KEY",
@@ -718,7 +784,12 @@ def _active_config_overrides() -> list[str]:
 
 @app.route("/favicon.ico", methods=["GET"])
 def favicon():
-    return send_from_directory(app.static_folder, "favicon.png", mimetype="image/png")
+    return send_from_directory(app.static_folder, "mediawarden.svg", mimetype="image/svg+xml")
+
+
+@app.route("/favicon.svg", methods=["GET"])
+def favicon_svg():
+    return send_from_directory(app.static_folder, "mediawarden.svg", mimetype="image/svg+xml")
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -739,7 +810,7 @@ def login():
             return redirect(url_for("index"))
         else:
             error = "Invalid username or password"
-    return render_template("login.html", error=error, app_version=__version__)
+    return render_template("login.html", error=error, app_version=__version__, product_name=PRODUCT_NAME)
 
 
 @app.route("/logout", methods=["GET"])
@@ -765,6 +836,7 @@ def index():
         config_path=CONFIG_PATH,
         config_overrides=_active_config_overrides(),
         scheduler_timezone=str(scheduler.timezone),
+        product_name=PRODUCT_NAME,
     )
 
 
@@ -774,6 +846,8 @@ def api_status():
     with _status_refresh_progress_lock:
         refresh_progress = dict(_status_refresh_progress)
     return jsonify({
+        "product":            PRODUCT_NAME,
+        "product_slug":       PRODUCT_SLUG,
         "instances":          _build_ui_instances(),
         "next_runs":          _next_runs,
         "global_checks":      runner.get_last_global_checks(),
@@ -790,6 +864,116 @@ def api_status():
 @require_auth
 def api_history():
     return jsonify(runner.get_history())
+
+
+@app.route("/api/library-refresh/status", methods=["GET"])
+@require_auth
+def api_library_refresh_status():
+    saved = library_refresh.status()
+    with _library_refresh_queue_lock:
+        queue = dict(_library_refresh_queue)
+    with _runtime_lock:
+        instances = [{
+            "name": instance.name,
+            "libraries": [{
+                "name": library.name,
+                "section_id": library.section_id,
+                "enabled": library.refresh_enabled,
+                "cron": library.refresh_cron,
+                "guard_minutes": library.refresh_guard_minutes,
+                "next_run": _library_refresh_next_runs.get(
+                    _job_key(instance.name, library.name), "",
+                ),
+            } for library in instance.libraries],
+        } for instance in config.instances]
+    return jsonify({**saved, "queue": queue, "instances": instances})
+
+
+@app.route("/api/library-refresh/run", methods=["POST"])
+@require_auth
+def api_library_refresh_run():
+    if not config.features.library_refresh:
+        return jsonify({"error": "Library Refresh is disabled"}), 409
+    data = request.get_json(silent=True) or {}
+    requested = data.get("libraries")
+    if not isinstance(requested, list):
+        requested = [{
+            "instance": data.get("instance", ""),
+            "library": data.get("library", ""),
+        }]
+    if data.get("enabled_only"):
+        with _runtime_lock:
+            requested = [
+                {"instance": instance.name, "library": library.name}
+                for instance in config.instances
+                for library in instance.libraries if library.refresh_enabled
+            ]
+    if not requested or len(requested) > 100:
+        return jsonify({"error": "Select between 1 and 100 libraries"}), 400
+
+    jobs = []
+    seen = set()
+    with _runtime_lock:
+        for item in requested:
+            key = (str(item.get("instance", "")), str(item.get("library", "")))
+            if not all(key) or key in seen:
+                return jsonify({"error": "Each selected library must be unique"}), 400
+            seen.add(key)
+            instance = next((value for value in config.instances
+                             if value.name == key[0]), None)
+            library = next((value for value in instance.libraries
+                            if value.name == key[1]), None) if instance else None
+            plex = plex_clients.get(key[0])
+            if not instance or not library or plex is None:
+                return jsonify({"error": f"Plex library not found: {key[0]} / {key[1]}"}), 404
+            jobs.append((instance, library, plex))
+
+    with _library_refresh_queue_lock:
+        if _library_refresh_queue.get("running"):
+            return jsonify({"error": "A library refresh queue is already active"}), 409
+        _library_refresh_queue.clear()
+        _library_refresh_queue.update({
+            "running": True, "state": "queued", "current": 0,
+            "total": len(jobs), "completed": 0, "failed": 0,
+            "started_at": _utc_now(), "library": "",
+        })
+
+    def run_queue():
+        completed = 0
+        failed = 0
+        try:
+            for index, (instance, library, plex) in enumerate(jobs, 1):
+                with _library_refresh_queue_lock:
+                    _library_refresh_queue.update({
+                        "state": "running", "current": index,
+                        "library": f"{instance.name} / {library.name}",
+                        "completed": completed, "failed": failed,
+                    })
+                result = library_refresh.run(
+                    instance, library, plex, source="manual",
+                )
+                if result.get("ok"):
+                    completed += 1
+                else:
+                    failed += 1
+        except Exception as exc:
+            logger.exception("Library refresh queue failed")
+            failed += 1
+            with _library_refresh_queue_lock:
+                _library_refresh_queue["error"] = type(exc).__name__
+        finally:
+            with _library_refresh_queue_lock:
+                _library_refresh_queue.update({
+                    "running": False,
+                    "state": "completed" if not failed else "completed_with_errors",
+                    "completed": completed, "failed": failed,
+                    "finished_at": _utc_now(),
+                })
+
+    threading.Thread(
+        target=run_queue, daemon=True, name="library-refresh",
+    ).start()
+    return jsonify({"status": "triggered", "libraries": len(jobs)}), 202
 
 
 @app.route("/api/metadata-audit/status", methods=["GET"])
@@ -1917,6 +2101,11 @@ def _build_library_cfg(lib: dict, env_vars_needed: list) -> dict:
         lib_cfg["cron"] = cron
     if lib.get("section_id") is not None:
         lib_cfg["section_id"] = str(lib["section_id"])
+    lib_cfg["refresh_enabled"] = bool(lib.get("refresh_enabled", False))
+    lib_cfg["refresh_cron"] = str(lib.get("refresh_cron", "0 * * * *"))
+    lib_cfg["refresh_guard_minutes"] = int(
+        lib.get("refresh_guard_minutes", 15)
+    )
     return lib_cfg
 
 
@@ -2226,7 +2415,7 @@ def api_auth_token():
     denied = _require_browser_auth()
     if denied:
         return denied
-    configured_by_env = bool(os.environ.get("EMPTYARR_API_TOKEN", ""))
+    configured_by_env = bool(get_env("EMPTYARR_API_TOKEN"))
     return jsonify({
         "ok": True,
         "configured": configured_by_env or bool(config.auth_api_token_hash),
@@ -2242,10 +2431,10 @@ def api_auth_token_generate():
     denied = _require_browser_auth()
     if denied:
         return denied
-    if os.environ.get("EMPTYARR_API_TOKEN", ""):
+    if get_env("EMPTYARR_API_TOKEN"):
         return jsonify({
             "ok": False,
-            "error": "API token is managed by EMPTYARR_API_TOKEN",
+            "error": "API token is managed by MEDIAWARDEN_API_TOKEN (EMPTYARR_API_TOKEN remains supported)",
         }), 409
     try:
         token = generate_api_token()
@@ -2267,10 +2456,10 @@ def api_auth_token_revoke():
     denied = _require_browser_auth()
     if denied:
         return denied
-    if os.environ.get("EMPTYARR_API_TOKEN", ""):
+    if get_env("EMPTYARR_API_TOKEN"):
         return jsonify({
             "ok": False,
-            "error": "Remove EMPTYARR_API_TOKEN to revoke this token",
+            "error": "Remove MEDIAWARDEN_API_TOKEN (or EMPTYARR_API_TOKEN) to revoke this token",
         }), 409
     try:
         _update_api_token_hash()

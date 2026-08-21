@@ -12,9 +12,10 @@ import requests
 from src.plex_client import PlexClient
 from src.storage import atomic_write_json
 from src.version import __version__
+from src.branding import PRODUCT_NAME, PRODUCT_SLUG
 
 
-PLEX_PRODUCT = "emptyarr"
+PLEX_PRODUCT = PRODUCT_NAME
 PLEX_VERSION = __version__
 PLEX_PLATFORM = "Web"
 _PIN_TTL_SECONDS = 15 * 60

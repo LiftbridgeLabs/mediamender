@@ -1,4 +1,4 @@
-# emptyarr configuration example
+# mediaWarden configuration example
 # Copy this to config.yml and edit to match your setup.
 # The setup wizard at http://YOUR_IP:8222 can generate this for you.
 
@@ -8,6 +8,7 @@ features:
   trash_removal: true
   metadata_health: true
   timestamp_repair: true
+  library_refresh: true
 
 discord_webhook: https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN
 
@@ -37,7 +38,7 @@ notifications:
         - health_fail
         - error
     # Other examples:
-    # ntfy://ntfy.sh/emptyarr-topic
+    # ntfy://ntfy.sh/mediawarden-topic
     # gotify://gotify.example.com/APP_TOKEN
     # mailtos://USER:PASSWORD@SMTP_HOST
     # pover://USER_KEY@APP_TOKEN
@@ -120,6 +121,10 @@ plex_instances:
       - name: Sports
         type: physical
         cron: "*/30 * * * *"  # optional per-library override
+        # Optional independent Plex library refresh schedule.
+        refresh_enabled: true
+        refresh_cron: "0 * * * *"
+        refresh_guard_minutes: 15
         paths:
           - path: /mnt/user/media/sports
             type: physical

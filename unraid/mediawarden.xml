@@ -1,0 +1,79 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <n>mediaWarden</n>
+  <Repository>liftbridgelabs/mediawarden:latest</Repository>
+  <Registry>https://hub.docker.com/r/liftbridgelabs/mediawarden</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/LiftbridgeLabs/mediawarden/issues</Support>
+  <Project>https://github.com/LiftbridgeLabs/mediawarden</Project>
+  <Overview>
+    mediaWarden protects Plex media libraries and provides metadata health,
+    timestamp repair, and scheduled library refresh workflows. Configure it
+    through the built-in web setup wizard. Existing Emptyarr deployments can
+    continue using the legacy template and image tag during migration.
+  </Overview>
+  <Category>MediaApp:Video Tools:</Category>
+  <Icon>https://raw.githubusercontent.com/LiftbridgeLabs/mediawarden/main/static/mediawarden.svg</Icon>
+  <WebUI>http://[IP]:[PORT:8222]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/LiftbridgeLabs/mediawarden/main/unraid/mediawarden.xml</TemplateURL>
+  <ExtraParams>--restart unless-stopped</ExtraParams>
+
+  <Config Name="Web UI Port" Target="8222" Default="8222" Mode="tcp"
+          Description="Port for the mediaWarden web interface and setup wizard."
+          Type="Port" Display="always" Required="true" Mask="false">8222</Config>
+
+  <Config Name="Data Directory" Target="/app/data"
+          Default="/mnt/cache/appdata/mediawarden/data" Mode="rw"
+          Description="Persistent mediaWarden configuration, state, and logs."
+          Type="Path" Display="always" Required="true" Mask="false">/mnt/cache/appdata/mediawarden/data</Config>
+
+  <Config Name="Symlink Media Root" Target="/mnt/symlink_media"
+          Default="/mnt/symlink_media" Mode="ro,slave"
+          Description="Root containing symlink media. Use slave propagation so FUSE mounts remain visible."
+          Type="Path" Display="always" Required="false" Mask="false">/mnt/symlink_media</Config>
+
+  <Config Name="Physical Media Root" Target="/mnt/user/media"
+          Default="/mnt/user/media" Mode="ro"
+          Description="Optional root containing physical media files."
+          Type="Path" Display="always" Required="false" Mask="false">/mnt/user/media</Config>
+
+  <Config Name="Plex Databases (local server 1)" Target="/plex-db/server-1"
+          Default="" Mode="ro"
+          Description="Optional read-only Plex database directory for local timestamp repair."
+          Type="Path" Display="advanced" Required="false" Mask="false"></Config>
+
+  <Config Name="Plex Databases (local server 2)" Target="/plex-db/server-2"
+          Default="" Mode="ro"
+          Description="Optional second local Plex database directory."
+          Type="Path" Display="advanced" Required="false" Mask="false"></Config>
+
+  <Config Name="Web UI Username (optional)" Target="MEDIAWARDEN_USERNAME"
+          Default="" Mode="" Description="Optional web UI username override."
+          Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Web UI Password (optional)" Target="MEDIAWARDEN_PASSWORD"
+          Default="" Mode="" Description="Optional web UI password override."
+          Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="API Token Override (optional)" Target="MEDIAWARDEN_API_TOKEN"
+          Default="" Mode="" Description="Optional deployment-managed API token."
+          Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+
+  <Config Name="Real-Debrid API Key (optional)" Target="RD_API_KEY" Default="" Mode=""
+          Description="Optional provider key override." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="AllDebrid API Key (optional)" Target="AD_API_KEY" Default="" Mode=""
+          Description="Optional provider key override." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Torbox API Key (optional)" Target="TB_API_KEY" Default="" Mode=""
+          Description="Optional provider key override." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Debrid-Link API Key (optional)" Target="DL_API_KEY" Default="" Mode=""
+          Description="Optional provider key override." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Discord Webhook URL (optional)" Target="DISCORD_WEBHOOK" Default="" Mode=""
+          Description="Optional notification override." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+
+  <Config Name="PUID" Target="PUID" Default="99" Mode=""
+          Description="User ID; use 99 on Unraid." Type="Variable" Display="always" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode=""
+          Description="Group ID; use 100 on Unraid." Type="Variable" Display="always" Required="false" Mask="false">100</Config>
+  <Config Name="Timezone" Target="TZ" Default="America/New_York" Mode=""
+          Description="Container timezone for schedules." Type="Variable" Display="always" Required="false" Mask="false">America/New_York</Config>
+</Container>

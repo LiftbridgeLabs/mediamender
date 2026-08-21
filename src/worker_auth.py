@@ -3,6 +3,7 @@ import hmac
 import secrets
 import threading
 import time
+from src.branding import PRODUCT_NAME
 
 
 _WINDOW_SECONDS = 90
@@ -19,10 +20,10 @@ def signed_headers(secret: str, worker: str, method: str, path: str,
         secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256,
     ).hexdigest()
     return {
-        "X-Emptyarr-Worker": worker,
-        "X-Emptyarr-Timestamp": timestamp,
-        "X-Emptyarr-Nonce": request_nonce,
-        "X-Emptyarr-Signature": signature,
+        f"X-{PRODUCT_NAME}-Worker": worker,
+        f"X-{PRODUCT_NAME}-Timestamp": timestamp,
+        f"X-{PRODUCT_NAME}-Nonce": request_nonce,
+        f"X-{PRODUCT_NAME}-Signature": signature,
     }
 
 
@@ -35,10 +36,10 @@ class SignatureVerifier:
     def verify(self, secret: str, worker: str, method: str, path: str,
                body: bytes, headers, now: int | None = None) -> tuple[bool, str]:
         current = int(now if now is not None else time.time())
-        timestamp = str(headers.get("X-Emptyarr-Timestamp", ""))
-        nonce = str(headers.get("X-Emptyarr-Nonce", ""))
-        signature = str(headers.get("X-Emptyarr-Signature", ""))
-        supplied_worker = str(headers.get("X-Emptyarr-Worker", ""))
+        timestamp = str(headers.get(f"X-{PRODUCT_NAME}-Timestamp", headers.get("X-Emptyarr-Timestamp", "")))
+        nonce = str(headers.get(f"X-{PRODUCT_NAME}-Nonce", headers.get("X-Emptyarr-Nonce", "")))
+        signature = str(headers.get(f"X-{PRODUCT_NAME}-Signature", headers.get("X-Emptyarr-Signature", "")))
+        supplied_worker = str(headers.get(f"X-{PRODUCT_NAME}-Worker", headers.get("X-Emptyarr-Worker", "")))
         try:
             request_time = int(timestamp)
         except ValueError:
@@ -51,7 +52,7 @@ class SignatureVerifier:
             return False, "Worker nonce is missing"
         expected = signed_headers(
             secret, worker, method, path, body, request_time, nonce,
-        )["X-Emptyarr-Signature"]
+        )[f"X-{PRODUCT_NAME}-Signature"]
         if not signature or not hmac.compare_digest(signature, expected):
             return False, "Invalid worker signature"
         with self._lock:

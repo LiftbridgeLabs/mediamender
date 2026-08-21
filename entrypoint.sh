@@ -8,11 +8,11 @@ PGID=${PGID:-100}
 
 echo ""
 echo "-------------------------------------"
-echo "      emptyarr"
+echo "      mediaWarden"
 echo "-------------------------------------"
 echo "  PUID: ${PUID}"
 echo "  PGID: ${PGID}"
-echo "  Role: ${EMPTYARR_ROLE:-controller}"
+echo "  Role: ${MEDIAWARDEN_ROLE:-${EMPTYARR_ROLE:-controller}}"
 echo "-------------------------------------"
 echo ""
 
@@ -34,7 +34,7 @@ fi
 # /app/data may be a read-only mount so we skip it
 chown -R "${PUID}:${PGID}" /app/src /app/templates /app/app.py /app/worker.py 2>/dev/null || true
 
-if [ "${EMPTYARR_ROLE:-controller}" = "repair-worker" ]; then
+if [ "${MEDIAWARDEN_ROLE:-${EMPTYARR_ROLE:-controller}}" = "repair-worker" ]; then
     mkdir -p /app/data/worker
     chown -R "${PUID}:${PGID}" /app/data/worker
     set -- gunicorn --bind 0.0.0.0:8223 --workers 1 --threads 4 --timeout 3700 worker:app

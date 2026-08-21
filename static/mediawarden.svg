@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">mediaWarden</title>
+  <desc id="desc">A shield protecting a media play symbol.</desc>
+  <defs>
+    <linearGradient id="shield" x1="72" y1="42" x2="438" y2="474" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#73d1c7"/>
+      <stop offset="1" stop-color="#2d8195"/>
+    </linearGradient>
+    <linearGradient id="core" x1="164" y1="126" x2="352" y2="380" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#182b3a"/>
+      <stop offset="1" stop-color="#0b141f"/>
+    </linearGradient>
+  </defs>
+  <path d="M256 30 448 98v143c0 119-78 201-192 241C142 442 64 360 64 241V98L256 30Z" fill="#0b131b" stroke="url(#shield)" stroke-width="22" stroke-linejoin="round"/>
+  <path d="M256 78 400 129v111c0 91-56 157-144 193-88-36-144-102-144-193V129L256 78Z" fill="url(#core)" stroke="#345263" stroke-width="7"/>
+  <path d="M183 174c22-28 48-42 73-42s51 14 73 42c-22 28-48 42-73 42s-51-14-73-42Z" fill="none" stroke="#73d1c7" stroke-width="13" stroke-linejoin="round"/>
+  <circle cx="256" cy="174" r="25" fill="#f0ba63"/>
+  <path d="m247 156 29 18-29 18v-36Z" fill="#101b25"/>
+  <path d="m169 275 87 52 87-52" fill="none" stroke="#73d1c7" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M256 327v43" stroke="#f0ba63" stroke-width="16" stroke-linecap="round"/>
+</svg>

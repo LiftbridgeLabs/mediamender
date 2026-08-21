@@ -38,7 +38,7 @@ jobs:
 
       - name: Validate configuration artifacts
         run: |
-          python -c "import pathlib, xml.etree.ElementTree as ET, yaml; yaml.safe_load(pathlib.Path('data/config.yml.example').read_text(encoding='utf-8')); ET.parse('unraid/emptyarr.xml')"
+          python -c "import pathlib, xml.etree.ElementTree as ET, yaml; yaml.safe_load(pathlib.Path('data/config.yml.example').read_text(encoding='utf-8')); ET.parse('unraid/mediawarden.xml'); ET.parse('unraid/emptyarr.xml')"
           docker compose config --quiet
 
       - name: Log in to Docker Hub
@@ -53,5 +53,7 @@ jobs:
           context: .
           push: true
           tags: |
+            liftbridgelabs/mediawarden:latest
+            liftbridgelabs/mediawarden:${{ github.sha }}
             liftbridgelabs/emptyarr:latest
             liftbridgelabs/emptyarr:${{ github.sha }}

@@ -489,7 +489,7 @@ class TimestampRepairApiTests(unittest.TestCase):
                           return_value=(instance, library, Mock())), \
              patch.object(app, "_remote_recovery_required", return_value=True), \
              patch("app.threading.Thread") as thread, \
-             self.assertLogs("emptyarr", level="WARNING") as logs:
+             self.assertLogs("mediawarden", level="WARNING") as logs:
             response = client.post(
                 "/api/timestamp-repair/run",
                 json={"instance": "Plex", "library_section_id": "2",

@@ -16,7 +16,7 @@ PROVIDERS = {
         },
     },
     "alldebrid": {
-        "url":     "https://api.alldebrid.com/v4/user?agent=emptyarr",
+        "url":     "https://api.alldebrid.com/v4/user?agent=mediawarden",
         "headers": lambda key: {"Authorization": f"Bearer {key}"},
         "parse":   lambda d: {
             "username": d.get("data", {}).get("user", {}).get("username", "?"),
@@ -67,7 +67,7 @@ def _days_left(expiration_str: str) -> int | None:
 def get_api_key(provider_type: str, configured_key: str = "", config=None) -> str:
     """
     Resolve API key — priority order:
-    1. Env var (EMPTYARR_RD_API_KEY etc)
+    1. Env var (RD_API_KEY etc)
     2. config.providers block (set via UI)
     3. configured_key (from path-level provider_checks)
     """

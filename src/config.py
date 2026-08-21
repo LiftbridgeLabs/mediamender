@@ -3,8 +3,9 @@ import yaml
 import logging
 from dataclasses import dataclass, field
 from typing import List, Optional
+from src.branding import PRODUCT_SLUG, get_env
 
-logger = logging.getLogger("emptyarr")
+logger = logging.getLogger(PRODUCT_SLUG)
 
 
 # ── Provider check ────────────────────────────────────────────────────────────
@@ -34,6 +35,9 @@ class LibraryConfig:
     paths: List[PathConfig]
     cron: str = ""                                  # blank inherits AppConfig.default_cron
     section_id: Optional[str] = None            # auto-discovered if not set
+    refresh_enabled: bool = False
+    refresh_cron: str = "0 * * * *"
+    refresh_guard_minutes: int = 15
 
 
 @dataclass
@@ -66,6 +70,7 @@ class FeatureConfig:
     trash_removal: bool = True
     metadata_health: bool = True
     timestamp_repair: bool = True
+    library_refresh: bool = True
 
 
 # ── Plex instance config ──────────────────────────────────────────────────────
@@ -149,7 +154,7 @@ def _env_keys() -> dict:
 
 def _env_override(name: str, fallback: str = "") -> str:
     """Use a non-empty environment override, otherwise keep file configuration."""
-    value = os.environ.get(name, "")
+    value = get_env(name)
     return value if value else fallback
 
 
@@ -210,6 +215,9 @@ def _load_library(raw: dict) -> LibraryConfig:
         paths      = parsed_paths,
         cron       = cron,
         section_id = raw.get("section_id", None),
+        refresh_enabled = bool(raw.get("refresh_enabled", False)),
+        refresh_cron = str(raw.get("refresh_cron", "0 * * * *")),
+        refresh_guard_minutes = int(raw.get("refresh_guard_minutes", 15)),
     )
 
 
@@ -325,6 +333,7 @@ def parse_config(raw: dict, config_missing: bool = False) -> AppConfig:
         trash_removal=features_raw.get("trash_removal", True) is not False,
         metadata_health=features_raw.get("metadata_health", True) is not False,
         timestamp_repair=features_raw.get("timestamp_repair", True) is not False,
+        library_refresh=features_raw.get("library_refresh", True) is not False,
     )
     clean_bundles_before_empty = bool(raw.get("clean_bundles_before_empty", False))
     max_trash_items = int(raw.get("max_trash_items", 1000))
@@ -353,7 +362,7 @@ def parse_config(raw: dict, config_missing: bool = False) -> AppConfig:
             name=name,
             url=str(item.get("url", "")).strip(),
             token=_env_override(
-                f"EMPTYARR_WORKER_TOKEN_{safe}", str(item.get("token", "")),
+                f"MEDIAWARDEN_WORKER_TOKEN_{safe}", str(item.get("token", "")),
             ),
             controller_url=str(item.get("controller_url", "")).strip(),
         ))

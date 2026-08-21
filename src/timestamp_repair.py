@@ -13,9 +13,10 @@ from typing import Callable, Optional
 
 from src.maintenance import lease, set_recovery_check
 from src.storage import atomic_write_json
+from src.branding import PRODUCT_NAME, PRODUCT_SLUG
 
 
-logger = logging.getLogger("emptyarr.timestamp_repair")
+logger = logging.getLogger(f"{PRODUCT_SLUG}.timestamp_repair")
 
 
 @dataclass
@@ -141,7 +142,7 @@ class TimestampRepairManager:
         if not repair_config.database_path:
             raise ValueError("A read-only Plex database path is required")
         if not repair_config.allowed_prefixes:
-            raise ValueError("At least one folder Emptyarr may repair is required")
+            raise ValueError(f"At least one folder {PRODUCT_NAME} may repair is required")
         query = """
             SELECT md.library_section_id, md.id, mi.id, mp.id, mp.file,
                    mp.updated_at, COALESCE(md.title, ''),

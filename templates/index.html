@@ -2,17 +2,18 @@
 <html lang="en">
 <head>
 <script>
+  const PRODUCT_NAME = {{ product_name|tojson }};
   // Apply theme before page renders to avoid flash
   (function(){
-    var t = localStorage.getItem('emptyarr-theme') || 'dark';
+    var t = localStorage.getItem('mediawarden-theme') || localStorage.getItem('emptyarr-theme') || 'dark';
     document.documentElement.setAttribute('data-theme', t);
   })();
 </script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>emptyarr</title>
-<link rel="icon" type="image/png" href="/static/favicon.png">
-<link rel="apple-touch-icon" href="/static/icon-192.png">
+<title>{{ product_name }}</title>
+<link rel="icon" type="image/svg+xml" href="/static/mediawarden.svg">
+<link rel="apple-touch-icon" href="/static/mediawarden.svg">
 <style>
 :root {
   --bg:        #0d1012;
@@ -783,6 +784,7 @@ dialog.overlay::backdrop{background:transparent;}
 .repair-select{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:700;color:var(--bright);cursor:pointer;}
 .repair-select input{width:20px;height:20px;accent-color:var(--accent);cursor:pointer;}
 .repair-batch-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+#library-refresh-grid{grid-template-columns:repeat(auto-fit,minmax(min(560px,100%),1fr));}
 .repair-progress{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;margin-top:16px;}
 .repair-progress-step{padding:9px 6px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--muted);font-size:12px;text-align:center;}
 .repair-progress-step.done{border-color:var(--pass-line);color:var(--pass2);background:var(--pass-soft);}
@@ -851,6 +853,8 @@ dialog.overlay::backdrop{background:transparent;}
   .repair-change{grid-template-columns:1fr;}.repair-change-arrow{transform:rotate(90deg);justify-self:center;}
   .repair-progress{grid-template-columns:1fr;}.repair-progress-step{text-align:left;}
   .repair-history-list{grid-template-columns:1fr;}
+  #library-refresh-settings .metadata-setting-row>div:last-child{grid-template-columns:1fr!important;min-width:0!important;width:100%;}
+  #library-refresh-settings .metadata-setting-row>div:last-child label{grid-column:auto!important;}
 }
 </style>
 </head>
@@ -859,15 +863,18 @@ dialog.overlay::backdrop{background:transparent;}
 <!-- ── NAV ── -->
 <nav>
   <a class="nav-brand" href="#dashboard" onclick="showPage('dashboard',document.getElementById('nav-dashboard'))">
-    <img class="nav-brand-logo" src="/static/icon.png" alt="">
-    <span class="nav-brand-name">emptyarr</span>
+    <img class="nav-brand-logo" src="/static/mediawarden.svg" alt="{{ product_name }}">
+    <span class="nav-brand-name">{{ product_name }}</span>
   </a>
   <div class="nav-links">
     <button class="nav-link active" onclick="showPage('dashboard',this)" id="nav-dashboard">
       Dashboard
     </button>
     <button class="nav-link" data-feature="trash_removal" onclick="showPage('emptyarr',this)" id="nav-emptyarr">
-      Emptyarr
+      {{ product_name }}
+    </button>
+    <button class="nav-link" data-feature="library_refresh" onclick="showPage('library-refresh',this)" id="nav-library-refresh">
+      Library Refresh
     </button>
     <button class="nav-link" data-feature="metadata_health" onclick="showPage('metadata-audit',this)" id="nav-metadata-health">
       Metadata Health
@@ -902,8 +909,8 @@ dialog.overlay::backdrop{background:transparent;}
 <div class="page active" id="page-dashboard">
   {% if config_missing %}
   <div class="welcome-wrap">
-    <div class="welcome-icon"><img src="/static/icon.png" alt="emptyarr" style="width:80px;height:80px;object-fit:contain;"></div>
-    <div class="welcome-title">Welcome to emptyarr</div>
+    <div class="welcome-icon"><img src="/static/mediawarden.svg" alt="{{ product_name }}" style="width:80px;height:80px;object-fit:contain;"></div>
+    <div class="welcome-title">Welcome to {{ product_name }}</div>
     <div class="welcome-desc">No configuration found. Use the setup wizard to add your Plex instances and configure your libraries.</div>
     <button class="btn btn-primary" onclick="openWizard()">Open Setup Wizard</button>
   </div>
@@ -914,11 +921,11 @@ dialog.overlay::backdrop{background:transparent;}
   <div class="startup-progress" data-feature="trash_removal" id="dashboard-startup-progress"><span class="spin"></span><span>Starting read-only safety checks…</span></div>
   <div class="rollup-grid">
     <section class="rollup-card" data-feature="trash_removal" id="rollup-emptyarr">
-      <div class="rollup-kicker">Automated protection</div><div class="rollup-title">Emptyarr</div>
+      <div class="rollup-kicker">Automated protection</div><div class="rollup-title">{{ product_name }}</div>
       <div class="rollup-status" id="rollup-emptyarr-status">Checking libraries…</div>
       <div class="rollup-copy" id="rollup-emptyarr-copy">Loading current Plex, mount, provider, and file-threshold health.</div>
       <div class="rollup-metrics"><div class="rollup-metric"><strong id="rollup-protected">0</strong><span>Healthy</span></div><div class="rollup-metric"><strong id="rollup-protection-attention">0</strong><span>Attention</span></div></div>
-      <button class="btn btn-primary" onclick="showPage('emptyarr',document.getElementById('nav-emptyarr'))">Open Emptyarr</button>
+      <button class="btn btn-primary" onclick="showPage('emptyarr',document.getElementById('nav-emptyarr'))">Open {{ product_name }}</button>
     </section>
     <section class="rollup-card" data-feature="metadata_health" id="rollup-metadata">
       <div class="rollup-kicker">Plex matching</div><div class="rollup-title">Metadata Health</div>
@@ -926,6 +933,13 @@ dialog.overlay::backdrop{background:transparent;}
       <div class="rollup-copy" id="rollup-metadata-copy">Find movies and shows that still need a Plex metadata match.</div>
       <div class="rollup-metrics"><div class="rollup-metric"><strong id="rollup-unmatched">0</strong><span>Unmatched</span></div><div class="rollup-metric"><strong id="rollup-scanned">0</strong><span>Items scanned</span></div></div>
       <button class="btn btn-primary" onclick="showPage('metadata-audit',document.getElementById('nav-metadata-health'))">Open Metadata Health</button>
+    </section>
+    <section class="rollup-card" data-feature="library_refresh" id="rollup-library-refresh">
+      <div class="rollup-kicker">Plex discovery</div><div class="rollup-title">Library Refresh</div>
+      <div class="rollup-status" id="rollup-library-refresh-status">Loading refresh status&hellip;</div>
+      <div class="rollup-copy" id="rollup-library-refresh-copy">Schedule Plex library scans where no external trigger is available.</div>
+      <div class="rollup-metrics"><div class="rollup-metric"><strong id="rollup-refresh-enabled">0</strong><span>Scheduled</span></div><div class="rollup-metric"><strong id="rollup-refresh-failed">0</strong><span>Last failures</span></div></div>
+      <button class="btn btn-primary" onclick="showPage('library-refresh',document.getElementById('nav-library-refresh'))">Open Library Refresh</button>
     </section>
     <section class="rollup-card" data-feature="timestamp_repair" id="rollup-repair">
       <div class="rollup-kicker">Manual maintenance</div><div class="rollup-title">Timestamp Repair</div>
@@ -943,7 +957,7 @@ dialog.overlay::backdrop{background:transparent;}
   {% if not config_missing %}
   <div class="dashboard-intro">
     <div>
-      <div class="eyebrow">Emptyarr protection</div>
+      <div class="eyebrow">{{ product_name }} protection</div>
       <h1 class="dashboard-title">Library protection</h1>
       <div class="dashboard-subtitle">
         <strong>{{ instance_count }}</strong> Plex server{{ '' if instance_count == 1 else 's' }}
@@ -982,7 +996,7 @@ dialog.overlay::backdrop{background:transparent;}
       <div class="protection-summary">
         <div class="overview-label">Protection status</div>
         <div class="protection-main">
-          <div class="protection-mark"><img src="/static/icon.png" alt=""></div>
+          <div class="protection-mark"><img src="/static/mediawarden.svg" alt="{{ product_name }}"></div>
           <div>
             <h2 class="protection-title" id="protection-title">Checking your libraries…</h2>
             <div class="protection-copy" id="protection-copy">Loading the latest health and run state.</div>
@@ -1021,8 +1035,8 @@ dialog.overlay::backdrop{background:transparent;}
   {% endif %}
   {% if config_missing %}
   <div class="welcome-wrap">
-    <div class="welcome-icon"><img src="/static/icon.png" alt="emptyarr" style="width:80px;height:80px;object-fit:contain;"></div>
-    <div class="welcome-title">Welcome to emptyarr</div>
+    <div class="welcome-icon"><img src="/static/mediawarden.svg" alt="{{ product_name }}" style="width:80px;height:80px;object-fit:contain;"></div>
+    <div class="welcome-title">Welcome to {{ product_name }}</div>
     <div class="welcome-desc">No configuration found. Use the setup wizard to add your Plex instances and configure your libraries.</div>
     <button class="btn btn-primary" style="font-size:14px;padding:10px 28px;" onclick="openWizard()">Open Setup Wizard</button>
   </div>
@@ -1092,6 +1106,20 @@ dialog.overlay::backdrop{background:transparent;}
   </div>
   {% endfor %}
   {% endif %}
+</div>
+
+<!-- LIBRARY REFRESH PAGE -->
+<div class="page" data-feature="library_refresh" id="page-library-refresh">
+  <div class="repair-page-head">
+    <div><div class="eyebrow">Scheduled Plex discovery</div><h1 class="dashboard-title">Library Refresh</h1><div class="dashboard-subtitle">Request full Plex scans for libraries that do not have an external scan trigger.</div></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;"><button class="btn btn-secondary" onclick="openLibraryRefreshSettings()">Settings</button><button class="btn btn-secondary" onclick="loadLibraryRefreshStatus()">&#8635;&nbsp; Refresh status</button><button class="btn btn-primary" id="refresh-run-enabled" onclick="runEnabledLibraryRefreshes()">Refresh all scheduled</button></div>
+  </div>
+  <div class="repair-warning" style="border-color:var(--accent-line);background:var(--accent-faint);color:var(--text2);">Plex performs refresh requests asynchronously. {{ product_name }} reports when Plex accepts a request, then holds Empty Trash for that library for the configured safety period.</div>
+  <div id="library-refresh-queue"></div>
+  <div class="repair-section-heading"><h2 class="repair-section-title">Plex libraries</h2><div class="repair-section-line"></div></div>
+  <div class="repair-instance-grid" id="library-refresh-grid"><div class="empty-msg">Loading library refresh status&hellip;</div></div>
+  <div class="repair-section-heading"><h2 class="repair-section-title">Recent refresh requests</h2><div class="repair-section-line"></div></div>
+  <div class="repair-history-list" id="library-refresh-history"><div class="empty-msg">No refresh requests yet</div></div>
 </div>
 
 <!-- ── METADATA HEALTH PAGE ── -->
@@ -1178,6 +1206,9 @@ dialog.overlay::backdrop{background:transparent;}
         </button>
         <button class="settings-nav-item" data-feature="trash_removal" onclick="showSettingsSection('trash-removal',this)">
           🗑️ Trash Removal
+        </button>
+        <button class="settings-nav-item" data-feature="library_refresh" onclick="showSettingsSection('library-refresh',this)">
+          &#8635;&#65039; Library Refresh
         </button>
         <button class="settings-nav-item" onclick="showSettingsSection('features',this)">
           🎛️ Features
@@ -1282,8 +1313,18 @@ dialog.overlay::backdrop{background:transparent;}
           <div class="metadata-setting-row"><div><strong>Trash Removal</strong><br><span>Protected Plex Empty Trash scheduling and manual runs.</span></div><button type="button" class="metadata-setting-toggle" id="feature-trash-removal" onclick="toggleFeatureSetting('trash_removal')"></button></div>
           <div class="metadata-setting-row"><div><strong>Metadata Health</strong><br><span>Manual checks for unmatched Plex movies and shows.</span></div><button type="button" class="metadata-setting-toggle" id="feature-metadata-health" onclick="toggleFeatureSetting('metadata_health')"></button></div>
           <div class="metadata-setting-row"><div><strong>Timestamp Repair</strong><br><span>Manual repair of invalid Plex media-part timestamps.</span></div><button type="button" class="metadata-setting-toggle" id="feature-timestamp-repair" onclick="toggleFeatureSetting('timestamp_repair')"></button></div>
+          <div class="metadata-setting-row"><div><strong>Library Refresh</strong><br><span>Manual and scheduled full-library Plex refresh requests.</span></div><button type="button" class="metadata-setting-toggle" id="feature-library-refresh" onclick="toggleFeatureSetting('library_refresh')"></button></div>
         </div>
         <div style="margin-top:18px;"><button class="btn btn-primary" onclick="settingsSave('features')" id="settings-save-btn-features">Save Feature Settings</button><span id="settings-save-result-features" style="margin-left:12px;"></span></div>
+      </div>
+
+      <!-- Library Refresh -->
+      <div class="settings-section" id="ss-library-refresh">
+        <div class="settings-section-title">Library Refresh</div>
+        <div class="settings-section-desc">Choose exactly which Plex libraries receive scheduled refresh requests. Every configured library remains available for a manual refresh.</div>
+        <div class="repair-warning" style="border-color:var(--accent-line);background:var(--accent-faint);color:var(--text2);">The safety hold delays Empty Trash only for the refreshed library. It does not claim Plex has finished scanning.</div>
+        <div id="library-refresh-settings"></div>
+        <div style="margin-top:18px;"><button class="btn btn-primary" onclick="settingsSave('library-refresh')" id="settings-save-btn-library-refresh">Save Library Refresh Settings</button><span id="settings-save-result-library-refresh" style="margin-left:12px;font-size:14px;"></span></div>
       </div>
 
       <!-- Metadata Health -->
@@ -1298,9 +1339,9 @@ dialog.overlay::backdrop{background:transparent;}
       <!-- Timestamp Repair -->
       <div class="settings-section" id="ss-timestamp-repair">
         <div class="settings-section-title">Timestamp Repair</div>
-        <div class="settings-section-desc">Configure local Plex databases or pair one repair-only worker. Empty Trash remains controlled by this main Emptyarr instance.</div>
+        <div class="settings-section-desc">Configure local Plex databases or pair one repair-only worker. Empty Trash remains controlled by this main {{ product_name }} instance.</div>
         <div class="repair-warning">
-          Docker mounts cannot be created from inside Emptyarr. Add each Plex database directory read-only and only the specific symlink folders you approve read/write, then use Discover databases below.
+          Docker mounts cannot be created from inside {{ product_name }}. Add each Plex database directory read-only and only the specific symlink folders you approve read/write, then use Discover databases below.
           <details style="margin-top:10px;color:var(--text2);"><summary style="cursor:pointer;color:var(--warn2);font-weight:650;">How do I find the Plex database directory on Unraid?</summary><div style="margin-top:8px;line-height:1.6;">Open the Plex container&rsquo;s edit screen and note its host appdata path. Inside that appdata directory, the required folder ends with <code>Library/Application Support/Plex Media Server/Plug-in Support/Databases</code>. Map that exact directory read-only to a distinct path such as <code>/plex-db/streamstead</code>. The Discover button finds the database file after the container is recreated.</div></details>
         </div>
         <div class="card" style="margin-bottom:18px;">
@@ -1395,7 +1436,7 @@ dialog.overlay::backdrop{background:transparent;}
       <!-- Notifications -->
       <div class="settings-section" id="ss-notifications">
         <div class="settings-section-title">Notifications</div>
-        <div class="settings-section-desc">Send emptyarr events to native Discord embeds and Apprise-powered services.</div>
+        <div class="settings-section-desc">Send {{ product_name }} events to native Discord embeds and Apprise-powered services.</div>
         <div class="card" style="margin-bottom:16px;">
           <div class="card-header"><span class="card-title">Discord</span><span class="badge">native</span></div>
           <div class="card-body">
@@ -1472,7 +1513,7 @@ dialog.overlay::backdrop{background:transparent;}
       <!-- Security -->
       <div class="settings-section" id="ss-security">
         <div class="settings-section-title">Security</div>
-        <div class="settings-section-desc">Set a username and password to protect the emptyarr UI. Leave blank to disable authentication.</div>
+        <div class="settings-section-desc">Set a username and password to protect the {{ product_name }} UI. Leave blank to disable authentication.</div>
 
         <div id="auth-status-banner" style="margin-bottom:16px;"></div>
 
@@ -1495,8 +1536,9 @@ dialog.overlay::backdrop{background:transparent;}
             </div>
             <div class="form-hint" style="margin-bottom:16px;">
               Password is stored as a bcrypt hash in config.yml — never in plaintext.
-              You can also set <code style="color:var(--accent2);">EMPTYARR_USERNAME</code> /
-              <code style="color:var(--accent2);">EMPTYARR_PASSWORD</code> env vars instead.
+              You can also set <code style="color:var(--accent2);">MEDIAWARDEN_USERNAME</code> /
+              <code style="color:var(--accent2);">MEDIAWARDEN_PASSWORD</code> env vars instead.
+              The legacy <code style="color:var(--accent2);">EMPTYARR_*</code> names remain supported.
             </div>
             <div style="display:flex;gap:8px;align-items:center;">
               <button class="btn btn-primary" onclick="saveAuth()">Set Credentials</button>
@@ -1562,7 +1604,7 @@ dialog.overlay::backdrop{background:transparent;}
             <div style="font-size:14px;color:var(--text2);line-height:1.75;margin-bottom:18px;">
               Settings changed here are written to the persistent configuration file. A Compose
               <code style="color:var(--accent2);">.env</code> file is optional and only supplies
-              environment overrides—it is not required for normal emptyarr configuration.
+              environment overrides—it is not required for normal mediaWarden configuration.
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
               <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px;">
@@ -1662,7 +1704,7 @@ dialog.overlay::backdrop{background:transparent;}
                 <div id="log-view-status" class="form-hint" style="margin:0 0 6px;"></div>
                 <pre id="log-viewer"
                      tabindex="0"
-                     aria-label="emptyarr log output"
+                     aria-label="mediaWarden log output"
                      style="height:400px;margin:0;overflow:auto;white-space:pre;background:#0a0f16;color:#d7e2ef;border:1px solid var(--border2);border-radius:8px;padding:12px;font:11px/1.55 var(--mono);"></pre>
               </div>
             </div>
@@ -1672,12 +1714,12 @@ dialog.overlay::backdrop{background:transparent;}
 
       <!-- About -->
       <div class="settings-section" id="ss-about">
-        <div class="settings-section-title">About emptyarr</div>
+        <div class="settings-section-title">About {{ product_name }}</div>
         <div class="settings-section-desc">A safety layer between your media storage and Plex's empty-trash command.</div>
         <div class="card" style="margin-bottom:16px;">
           <div class="card-body">
             <div style="display:grid;grid-template-columns:auto 1fr;gap:20px;align-items:center;">
-              <img src="/static/icon.png" alt="" style="width:76px;height:76px;object-fit:contain;">
+              <img src="/static/mediawarden.svg" alt="{{ product_name }}" style="width:76px;height:76px;object-fit:contain;">
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
                 <div>
                   <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Version</div>
@@ -1685,7 +1727,7 @@ dialog.overlay::backdrop{background:transparent;}
                 </div>
                 <div>
                   <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Project</div>
-                  <a href="https://github.com/LiftbridgeLabs/emptyarr" target="_blank" rel="noreferrer" style="color:var(--accent2);font-size:14px;">GitHub repository ↗</a>
+                  <a href="https://github.com/LiftbridgeLabs/mediawarden" target="_blank" rel="noreferrer" style="color:var(--accent2);font-size:14px;">GitHub repository ↗</a>
                 </div>
               </div>
             </div>
@@ -1694,10 +1736,10 @@ dialog.overlay::backdrop{background:transparent;}
         <div class="card">
           <div class="card-header"><span class="card-title">🔒 Privacy</span></div>
           <div class="card-body" style="font-size:12px;color:var(--text2);line-height:1.7;">
-            emptyarr makes network requests <strong style="color:var(--bright);">only</strong> to services you configure:
+            {{ product_name }} makes network requests <strong style="color:var(--bright);">only</strong> to services you configure:
             your Plex server, debrid provider APIs (if you set an API key), and your Discord webhook.
             No telemetry. No analytics. No phone-home. Fully open source —
-            <a href="https://github.com/LiftbridgeLabs/emptyarr/blob/main/PRIVACY.md" target="_blank" rel="noreferrer" style="color:var(--accent2);">read PRIVACY.md</a>
+            <a href="https://github.com/LiftbridgeLabs/mediawarden/blob/main/PRIVACY.md" target="_blank" rel="noreferrer" style="color:var(--accent2);">read PRIVACY.md</a>
           </div>
         </div>
       </div>
@@ -1708,18 +1750,18 @@ dialog.overlay::backdrop{background:transparent;}
 
 <footer class="app-footer">
   <div class="footer-brand">
-    <img class="footer-logo" src="/static/icon.png" alt="">
+    <img class="footer-logo" src="/static/mediawarden.svg" alt="{{ product_name }}">
     <div>
-      <span class="footer-product">emptyarr</span>
+      <span class="footer-product">{{ product_name }}</span>
       <span class="footer-version">v{{ app_version }}</span>
       <div>Plex trash safety monitor</div>
     </div>
   </div>
   <div class="footer-links">
-    <a href="https://github.com/LiftbridgeLabs/emptyarr" target="_blank" rel="noreferrer">GitHub</a>
-    <a href="https://github.com/LiftbridgeLabs/emptyarr/issues" target="_blank" rel="noreferrer">Report an issue</a>
-    <a href="https://github.com/LiftbridgeLabs/emptyarr/blob/main/README.md" target="_blank" rel="noreferrer">Documentation</a>
-    <a href="https://github.com/LiftbridgeLabs/emptyarr/blob/main/PRIVACY.md" target="_blank" rel="noreferrer">Privacy</a>
+    <a href="https://github.com/LiftbridgeLabs/mediawarden" target="_blank" rel="noreferrer">GitHub</a>
+    <a href="https://github.com/LiftbridgeLabs/mediawarden/issues" target="_blank" rel="noreferrer">Report an issue</a>
+    <a href="https://github.com/LiftbridgeLabs/mediawarden/blob/main/README.md" target="_blank" rel="noreferrer">Documentation</a>
+    <a href="https://github.com/LiftbridgeLabs/mediawarden/blob/main/PRIVACY.md" target="_blank" rel="noreferrer">Privacy</a>
   </div>
 </footer>
 
@@ -1779,6 +1821,7 @@ let _activeFeatures = {
   trash_removal: {{ 'true' if config.features.trash_removal else 'false' }},
   metadata_health: {{ 'true' if config.features.metadata_health else 'false' }},
   timestamp_repair: {{ 'true' if config.features.timestamp_repair else 'false' }},
+  library_refresh: {{ 'true' if config.features.library_refresh else 'false' }},
 };
 let _history = [], _filter = 'all', _expanded = new Set();
 
@@ -1803,13 +1846,79 @@ function showPage(name, btn) {
   if (name === 'history') { fetchHistory(); }
   if (name === 'timestamp-repair' && _activeFeatures.timestamp_repair) { loadRepairStatus(); }
   if (name === 'metadata-audit' && _activeFeatures.metadata_health) { loadMetadataAuditStatus(); }
+  if (name === 'library-refresh' && _activeFeatures.library_refresh) { loadLibraryRefreshStatus(); }
   if (name === 'dashboard') {
     if (_activeFeatures.metadata_health) loadMetadataAuditStatus();
     if (_activeFeatures.timestamp_repair) loadRepairStatus();
+    if (_activeFeatures.library_refresh) loadLibraryRefreshStatus();
     if (_activeFeatures.trash_removal) fetchStatus();
   }
   if (name === 'settings') { loadSettings(); }
   if (name !== 'settings') { stopLogViewer(); }
+}
+
+// Plex library refresh
+let _libraryRefreshStatus = null;
+
+async function loadLibraryRefreshStatus() {
+  const grid=document.getElementById('library-refresh-grid');
+  try {
+    const response=await fetch('/api/library-refresh/status');
+    _libraryRefreshStatus=await response.json();
+    renderLibraryRefreshStatus(_libraryRefreshStatus);
+  } catch (error) {
+    if (grid) grid.innerHTML='<div class="empty-msg">Could not load library refresh status.</div>';
+  }
+}
+
+function renderLibraryRefreshStatus(status) {
+  const records=status.records||{};
+  const queue=status.queue||{};
+  const instances=status.instances||[];
+  const enabled=instances.reduce((count,instance)=>count+instance.libraries.filter(library=>library.enabled).length,0);
+  const failed=Object.values(records).filter(record=>record.status==='failed').length;
+  const rollup=document.getElementById('rollup-library-refresh');
+  if (rollup) rollup.className=`rollup-card ${queue.running?'warn':failed?'warn':enabled?'pass':''}`;
+  const rollupStatus=document.getElementById('rollup-library-refresh-status');
+  const rollupCopy=document.getElementById('rollup-library-refresh-copy');
+  if (rollupStatus) rollupStatus.textContent=queue.running?`Refreshing ${queue.current||0} of ${queue.total}`:enabled?`${enabled} scheduled ${enabled===1?'library':'libraries'}`:'No scheduled libraries';
+  if (rollupCopy) rollupCopy.textContent=queue.running?(queue.library||'Preparing refresh queue'):'Manual refresh remains available for every configured library.';
+  if (document.getElementById('rollup-refresh-enabled')) document.getElementById('rollup-refresh-enabled').textContent=enabled;
+  if (document.getElementById('rollup-refresh-failed')) document.getElementById('rollup-refresh-failed').textContent=failed;
+  const queueEl=document.getElementById('library-refresh-queue');
+  if (queueEl) queueEl.innerHTML=queue.running?`<div class="repair-active-card"><div class="repair-active-title">Refreshing library ${Number(queue.current||0)} of ${Number(queue.total||0)}</div><div class="repair-active-meta">${h(queue.library||'Preparing queue')} &middot; ${Number(queue.completed||0)} accepted &middot; ${Number(queue.failed||0)} failed</div></div>`:queue.state==='completed_with_errors'?`<div class="repair-warning" style="border-color:var(--fail-line);color:var(--fail2);">Last queue completed with ${Number(queue.failed||0)} failed request(s). Review the history below.</div>`:'';
+  const button=document.getElementById('refresh-run-enabled');
+  if (button) { button.disabled=queue.running||enabled===0; button.textContent=instances.length===1?'Refresh scheduled libraries':'Refresh all scheduled'; }
+  const grid=document.getElementById('library-refresh-grid');
+  if (grid) grid.innerHTML=instances.map(instance=>`<section class="repair-instance-card"><div class="repair-instance-top"><div><div class="eyebrow">Plex server</div><h2 class="repair-instance-name">${h(instance.name)}</h2></div><span class="repair-status-pill ${instance.libraries.some(library=>library.enabled)?'ready':'setup'}">${instance.libraries.filter(library=>library.enabled).length} scheduled</span></div><div class="repair-library-panel">${instance.libraries.map(library=>{
+    const record=records[`${instance.name}::${library.name}`]||{};
+    const statusLabel=record.status==='accepted'?'Accepted by Plex':record.status==='failed'?'Request failed':'Never requested';
+    return `<div class="repair-library-row"><div><div class="repair-library-name">${h(library.name)}</div><div class="repair-library-meta">${library.enabled?`${h(cronDescription(library.cron))} &middot; next ${h(library.next_run?fmtTime(library.next_run):'not scheduled')} &middot; `:'Manual only &middot; '}${h(statusLabel)}${record.requested_at?` &middot; ${h(fmtAgo(record.requested_at))}`:''}</div></div><div class="repair-library-action"><span class="badge ${record.status==='failed'?'error':record.status==='accepted'?'success':'skipped'}">${library.enabled?'scheduled':'manual'}</span><button class="btn btn-primary" onclick="runLibraryRefresh(${h(JSON.stringify(instance.name))},${h(JSON.stringify(library.name))})" ${queue.running?'disabled':''}>Refresh now</button></div></div>`;
+  }).join('')}</div></section>`).join('')||'<div class="empty-msg">No Plex libraries are configured.</div>';
+  const history=document.getElementById('library-refresh-history');
+  if (history) history.innerHTML=(status.history||[]).length?(status.history||[]).slice(0,20).map(item=>`<div class="repair-history-item"><span class="badge ${item.status==='accepted'?'success':'error'}">${h(item.status)}</span><div><div class="repair-history-title">${h(item.instance)} / ${h(item.library)}</div><div class="repair-history-meta">${h(fmtTime(item.requested_at))} &middot; ${h(item.source||'manual')}${item.status==='accepted'?` &middot; Plex accepted HTTP ${h(item.http||'success')}`:` &middot; ${h(item.error||`HTTP ${item.http||'error'}`)}`}</div></div></div>`).join(''):'<div class="empty-msg">No refresh requests yet</div>';
+  if (queue.running) setTimeout(loadLibraryRefreshStatus,1500);
+}
+
+async function runLibraryRefresh(instance,library) {
+  if (!confirm(`Request a full Plex refresh for ${instance} / ${library}?\n\nPlex performs the scan asynchronously. Empty Trash will be held for this library during its configured safety period.`)) return;
+  const response=await fetch('/api/library-refresh/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance,library})});
+  const data=await response.json();
+  if (!response.ok) return toast(data.error||'Refresh could not start','fail');
+  toast('Library refresh request queued','warn'); setTimeout(loadLibraryRefreshStatus,400);
+}
+
+async function runEnabledLibraryRefreshes() {
+  if (!confirm('Refresh every scheduled library now?\n\nRequests are sent sequentially and each library receives its configured Empty Trash safety hold.')) return;
+  const response=await fetch('/api/library-refresh/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled_only:true})});
+  const data=await response.json();
+  if (!response.ok) return toast(data.error||'Refresh queue could not start','fail');
+  toast(`Queued ${data.libraries} library refresh request(s)`,'warn'); setTimeout(loadLibraryRefreshStatus,400);
+}
+
+function openLibraryRefreshSettings() {
+  showPage('settings',document.getElementById('nav-settings'));
+  setTimeout(()=>{ const button=[...document.querySelectorAll('.settings-nav-item')].find(item=>(item.getAttribute('onclick')||'').includes("'library-refresh'")); showSettingsSection('library-refresh',button); },100);
 }
 
 // Plex unmatched metadata audit
@@ -2109,7 +2218,7 @@ function renderRepairOverview(status) {
         <button class="btn btn-ghost" data-repair-instance="${h(instance.name)}" data-repair-section="${h(group.section)}" data-repair-library="${h(group.library)}" ${count||issueCount?'':'disabled'}>View issues</button>
       </div>`;
     }).join('');
-    const workerLabel = instance.worker === 'local' ? 'Main Emptyarr container' : `Worker: ${h(instance.worker)}`;
+    const workerLabel = instance.worker === 'local' ? `Main ${PRODUCT_NAME} container` : `Worker: ${h(instance.worker)}`;
     const readinessLabel = instance.blocked ? 'Recovery blocked' : instance.ready ? 'Ready' : instance.enabled ? 'Setup required' : 'Disabled';
     const available = instance.ready && !instance.blocked;
     const expanded = _repairExpanded.has(instance.name);
@@ -2191,7 +2300,7 @@ function closeRepairLibrary() { document.getElementById('repair-detail').style.d
 async function runRepairFolder(instance, section, folder, files, libraryType) {
   const scope = libraryType === 'movie' ? 'movie folder' : libraryType === 'show' ? 'season folder' : 'folder';
   const exact = files.map(file => `  • ${file.file_path}\n    Plex timestamp: ${file.stored_timestamp} → positive value assigned and verified by Plex`).join('\n');
-  if (!confirm(`Repair this ${scope}?\n\nEmptyarr will temporarily rename ${files.length} symlink${files.length===1?'':'s'} in this ${scope}, scan the folder, restore the original filename${files.length===1?'':'s'}, scan again, and verify that Plex stored a valid positive timestamp.\n\nThe underlying provider/NZBDAV object${files.length===1?'':'s'} will not be renamed or modified.\n\n${folder}\n\nAffected symlinks (${files.length}):\n${exact}\n\nEmpty Trash remains locked until restoration and verification complete.`)) return;
+  if (!confirm(`Repair this ${scope}?\n\n${PRODUCT_NAME} will temporarily rename ${files.length} symlink${files.length===1?'':'s'} in this ${scope}, scan the folder, restore the original filename${files.length===1?'':'s'}, scan again, and verify that Plex stored a valid positive timestamp.\n\nThe underlying provider/NZBDAV object${files.length===1?'':'s'} will not be renamed or modified.\n\n${folder}\n\nAffected symlinks (${files.length}):\n${exact}\n\nEmpty Trash remains locked until restoration and verification complete.`)) return;
   const response = await fetch('/api/timestamp-repair/run', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance,library_section_id:section,folder})});
   const data = await response.json();
   if (!response.ok) return toast(data.error || 'Repair could not start', 'fail');
@@ -2219,7 +2328,7 @@ async function runSelectedRepairFolders() {
   if (!selected.length) return;
   const files=selected.reduce((total,item)=>total+item.files.length,0);
   const list=selected.map((item,index)=>`${index+1}. ${item.title || item.folder} (${item.files.length} file${item.files.length===1?'':'s'})`).join('\n');
-  if (!confirm(`Repair ${selected.length} reviewed folders sequentially?\n\n${list}\n\nEach folder will receive a fresh safety check and exact affected-file comparison immediately before repair. Emptyarr stops the queue on the first changed or unsafe folder. Completed folders will not require another audit before the remaining reviewed folders continue.\n\nTotal affected symlinks: ${files}\nThe underlying provider objects will not be modified.`)) return;
+  if (!confirm(`Repair ${selected.length} reviewed folders sequentially?\n\n${list}\n\nEach folder will receive a fresh safety check and exact affected-file comparison immediately before repair. ${PRODUCT_NAME} stops the queue on the first changed or unsafe folder. Completed folders will not require another audit before the remaining reviewed folders continue.\n\nTotal affected symlinks: ${files}\nThe underlying provider objects will not be modified.`)) return;
   const response=await fetch('/api/timestamp-repair/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:selected[0].instance,folders:selected.map(item=>({library_section_id:item.section,folder:item.folder}))})});
   const data=await response.json();
   if (!response.ok) return toast(data.error||'Repair queue could not start','fail');
@@ -2241,6 +2350,7 @@ function showSettingsSection(name, btn) {
   if (name === 'security')  loadApiToken();
   if (name === 'timestamp-repair') renderRepairSettings();
   if (name === 'trash-removal') { renderTrashRemovalSettings(); loadGlobalScheduleControls(); }
+  if (name === 'library-refresh') renderLibraryRefreshSettings();
   if (name === 'features') renderFeatureSettings();
   if (name === 'metadata-health') renderMetadataHealthSettings();
   if (name === 'general') startLogViewer();
@@ -2676,7 +2786,7 @@ async function refreshLogView() {
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
-let _settingsData = { instances: [], repair_workers: [], features: {trash_removal:true,metadata_health:true,timestamp_repair:true}, default_cron: '0 * * * *', discord_webhook: '', notification_destinations: [], log_level: 'INFO', log_max_file_size_mb: 5, log_max_total_size_mb: 50, log_retention_days: 14, max_trash_items: 1000, max_trash_percent: 25, notify_emptied: true, notify_health_fail: true, notify_error: true, notify_clean: false, notify_skip: false };
+let _settingsData = { instances: [], repair_workers: [], features: {trash_removal:true,metadata_health:true,timestamp_repair:true,library_refresh:true}, default_cron: '0 * * * *', discord_webhook: '', notification_destinations: [], log_level: 'INFO', log_max_file_size_mb: 5, log_max_total_size_mb: 50, log_retention_days: 14, max_trash_items: 1000, max_trash_percent: 25, notify_emptied: true, notify_health_fail: true, notify_error: true, notify_clean: false, notify_skip: false };
 let _trashSettingsInstance = 0;
 
 async function loadSettings() {
@@ -2702,6 +2812,7 @@ async function loadSettings() {
       trash_removal: cfg.features?.trash_removal !== false,
       metadata_health: cfg.features?.metadata_health !== false,
       timestamp_repair: cfg.features?.timestamp_repair !== false,
+      library_refresh: cfg.features?.library_refresh !== false,
     };
     _settingsData.max_trash_items    = cfg.max_trash_items ?? 1000;
     _settingsData.max_trash_percent  = cfg.max_trash_percent ?? 25;
@@ -2739,6 +2850,9 @@ async function loadSettings() {
         type:  lib.type  || 'physical',
         cron:  lib.cron  || '',
         section_id: lib.section_id ?? null,
+        refresh_enabled: lib.refresh_enabled === true,
+        refresh_cron: lib.refresh_cron || '0 * * * *',
+        refresh_guard_minutes: lib.refresh_guard_minutes ?? 15,
         paths: (lib.paths || []).map(p => ({
           path:            p.path          || '',
           type:            p.type          || 'physical',
@@ -2751,6 +2865,7 @@ async function loadSettings() {
     renderTrashRemovalSettings(_trashSettingsInstance);
     renderRepairSettings();
     renderMetadataHealthSettings();
+    renderLibraryRefreshSettings();
     renderFeatureSettings();
     applyFeatureVisibility(_settingsData.features);
     loadGlobalScheduleControls();
@@ -2901,7 +3016,7 @@ function renameRepairWorker(index, name) {
 }
 
 function repairWorkerOptions(selected) {
-  return [`<option value="local" ${selected==='local'?'selected':''}>This Emptyarr container</option>`,
+  return [`<option value="local" ${selected==='local'?'selected':''}>This ${PRODUCT_NAME} container</option>`,
     ..._settingsData.repair_workers.map(worker => `<option value="${h(worker.name)}" ${selected===worker.name?'selected':''}>Remote: ${h(worker.name)}</option>`)
   ].join('');
 }
@@ -2948,10 +3063,10 @@ function workerCompose(index) {
   const databaseDirs = [...new Set(assigned.map(instance => repairConfig(instance).database_path.replace(/[\\/][^\\/]+$/, '')).filter(Boolean))];
   const prefixes = [...new Set(assigned.flatMap(instance => repairConfig(instance).allowed_prefixes).filter(Boolean))];
   const volumes = [
-    ...databaseDirs.map((path,i) => `      - \${EMPTYARR_PLEX_DATABASE_DIR_${i+1}:?Set an absolute Plex database host path in Dockge .env}:${path}:ro`),
-    ...prefixes.map((path,i) => `      - \${EMPTYARR_REPAIR_FOLDER_${i+1}:?Set an absolute repair-folder host path in Dockge .env}:${path}:rw,slave`),
+    ...databaseDirs.map((path,i) => `      - \${MEDIAWARDEN_PLEX_DATABASE_DIR_${i+1}:?Set an absolute Plex database host path in Dockge .env}:${path}:ro`),
+    ...prefixes.map((path,i) => `      - \${MEDIAWARDEN_REPAIR_FOLDER_${i+1}:?Set an absolute repair-folder host path in Dockge .env}:${path}:rw,slave`),
   ];
-  return `services:\n  emptyarr-repair-worker:\n    image: liftbridgelabs/emptyarr:latest\n    container_name: emptyarr-repair-worker\n    restart: unless-stopped\n    ports:\n      - "8223:8223"\n    environment:\n      - EMPTYARR_ROLE=repair-worker\n      - EMPTYARR_WORKER_NAME=${worker.name}\n      - EMPTYARR_WORKER_TOKEN=\${EMPTYARR_WORKER_TOKEN:?Paste the pairing secret into Dockge .env}\n      - EMPTYARR_WORKER_DATABASE_ROOTS=${databaseDirs.join(',') || '/plex-db'}\n      - EMPTYARR_WORKER_MEDIA_ROOTS=${prefixes.join(',') || '/repair-media'}\n      - PUID=99\n      - PGID=100\n    volumes:\n      - \${EMPTYARR_WORKER_DATA_DIR:?Set an absolute worker-data host path in Dockge .env}:/app/data\n${volumes.join('\n')}`;
+  return `services:\n  mediawarden-repair-worker:\n    image: liftbridgelabs/mediawarden:latest\n    container_name: mediawarden-repair-worker\n    restart: unless-stopped\n    ports:\n      - "8223:8223"\n    environment:\n      - MEDIAWARDEN_ROLE=repair-worker\n      - MEDIAWARDEN_WORKER_NAME=${worker.name}\n      - MEDIAWARDEN_WORKER_TOKEN=\${MEDIAWARDEN_WORKER_TOKEN:?Paste the pairing secret into Dockge .env}\n      - MEDIAWARDEN_WORKER_DATABASE_ROOTS=${databaseDirs.join(',') || '/plex-db'}\n      - MEDIAWARDEN_WORKER_MEDIA_ROOTS=${prefixes.join(',') || '/repair-media'}\n      - PUID=99\n      - PGID=100\n    volumes:\n      - \${MEDIAWARDEN_WORKER_DATA_DIR:?Set an absolute worker-data host path in Dockge .env}:/app/data\n${volumes.join('\n')}`;
 }
 
 async function copyWorkerCompose(index) {
@@ -3020,6 +3135,26 @@ function setMetadataLibraryIgnored(instanceIndex, libraryName, ignored) {
   renderMetadataHealthSettings();
 }
 
+function refreshScheduleValue(cron) {
+  return ['*/30 * * * *','0 * * * *','0 */2 * * *','0 */6 * * *','0 2 * * *'].includes(cron) ? cron : 'custom';
+}
+
+function setLibraryRefreshSchedule(instanceIndex,libraryIndex,value) {
+  const library=_settingsData.instances[instanceIndex].libraries[libraryIndex];
+  if (value!=='custom') library.refresh_cron=value;
+  else if (refreshScheduleValue(library.refresh_cron)!=='custom') library.refresh_cron='0 3 * * *';
+  renderLibraryRefreshSettings();
+}
+
+function renderLibraryRefreshSettings() {
+  const target=document.getElementById('library-refresh-settings');
+  if (!target) return;
+  target.innerHTML=(_settingsData.instances||[]).map((instance,instanceIndex)=>`<section class="card" style="margin-top:18px;"><div class="card-header"><div><div class="card-title">${h(instance.name)}</div><div class="form-hint">Enable schedules only for libraries that need ${PRODUCT_NAME} to trigger Plex discovery.</div></div></div><div class="card-body"><div class="metadata-settings-list">${(instance.libraries||[]).map((library,libraryIndex)=>{
+    const selected=refreshScheduleValue(library.refresh_cron);
+    return `<div class="metadata-setting-row" style="align-items:center;"><div><strong>${h(library.name)}</strong><br><span>${library.refresh_enabled?`${h(cronDescription(library.refresh_cron))} &middot; ${Number(library.refresh_guard_minutes)} minute trash hold`:'Manual refresh only'}</span></div><div style="display:grid;grid-template-columns:minmax(170px,1fr) 130px auto;gap:10px;align-items:end;min-width:min(100%,560px);"><label><span class="form-label">Refresh schedule</span><select class="form-input" onchange="setLibraryRefreshSchedule(${instanceIndex},${libraryIndex},this.value)"><option value="*/30 * * * *" ${selected==='*/30 * * * *'?'selected':''}>Every 30 minutes</option><option value="0 * * * *" ${selected==='0 * * * *'?'selected':''}>Every hour</option><option value="0 */2 * * *" ${selected==='0 */2 * * *'?'selected':''}>Every 2 hours</option><option value="0 */6 * * *" ${selected==='0 */6 * * *'?'selected':''}>Every 6 hours</option><option value="0 2 * * *" ${selected==='0 2 * * *'?'selected':''}>Daily at 2 AM</option><option value="custom" ${selected==='custom'?'selected':''}>Custom schedule</option></select></label><label><span class="form-label">Trash hold (minutes)</span><input class="form-input" type="number" min="1" max="240" value="${Number(library.refresh_guard_minutes)}" onchange="_settingsData.instances[${instanceIndex}].libraries[${libraryIndex}].refresh_guard_minutes=Number(this.value)"></label><button type="button" class="metadata-setting-toggle ${library.refresh_enabled?'':'ignored'}" onclick="_settingsData.instances[${instanceIndex}].libraries[${libraryIndex}].refresh_enabled=!_settingsData.instances[${instanceIndex}].libraries[${libraryIndex}].refresh_enabled;renderLibraryRefreshSettings()"><span>${library.refresh_enabled?'Scheduled':'Manual only'}</span><span>${library.refresh_enabled?'Automatic refresh on':'Automatic refresh off'}</span></button>${selected==='custom'?`<label style="grid-column:1 / 3;"><span class="form-label">Custom cron expression</span><input class="form-input" value="${h(library.refresh_cron)}" placeholder="0 3 * * *" onchange="_settingsData.instances[${instanceIndex}].libraries[${libraryIndex}].refresh_cron=this.value.trim()"></label><span class="form-hint">minute hour day month weekday</span>`:''}</div></div>`;
+  }).join('')||'<div class="empty-msg">No libraries configured.</div>'}</div></div></section>`).join('')||'<div class="empty-msg">No Plex instances configured.</div>';
+}
+
 function renderRepairSettings() {
   const workers = document.getElementById('repair-workers-settings');
   const instances = document.getElementById('repair-instances-settings');
@@ -3065,8 +3200,8 @@ function renderRepairSettings() {
           <div class="form-group"><label class="form-label">Runs on</label><select class="form-input" onchange="repairConfig(_settingsData.instances[${index}]).worker=this.value;renderRepairSettings()">${repairWorkerOptions(repair.worker)}</select></div>
           <div class="form-group"><label class="form-label">Maximum affected files per folder</label><input class="form-input" type="number" min="1" max="100" value="${repair.max_files_per_folder}" onchange="repairConfig(_settingsData.instances[${index}]).max_files_per_folder=Number(this.value)"></div>
         </div>
-        <div class="form-group"><label class="form-label">Plex database used by this server</label><div style="display:flex;gap:8px;"><input class="form-input" value="${h(repair.database_path)}" placeholder="/plex-db/server/com.plexapp.plugins.library.db" onchange="repairConfig(_settingsData.instances[${index}]).database_path=this.value.trim();renderRepairSettings();requestAnimationFrame(()=>scrollToRepairInstance(${index}))"><button class="btn btn-secondary" onclick="discoverRepairDatabases(${index})">Discover</button></div><div class="form-hint" id="repair-db-result-${index}">Click Discover, then choose this Plex server's database from the list. Every displayed value is a path inside the Emptyarr container.</div></div>
-        <div class="form-group"><label class="form-label">Folders Emptyarr may repair</label><textarea class="form-input" rows="3" placeholder="/mnt/symlink_media/symlinks/nzbdav" onchange="repairConfig(_settingsData.instances[${index}]).allowed_prefixes=this.value.split(/\\r?\\n/).map(v=>v.trim()).filter(Boolean);renderRepairSettings();requestAnimationFrame(()=>scrollToRepairInstance(${index}))">${h(repair.allowed_prefixes.join('\n'))}</textarea><div class="form-hint">Enter the <strong>Container Path</strong> from each narrow read/write Unraid mapping, one per line. For your nzbdav mapping, enter <code>/mnt/symlink_media/symlinks/nzbdav</code>. Emptyarr refuses to rename anything outside the folders listed here.</div></div>
+        <div class="form-group"><label class="form-label">Plex database used by this server</label><div style="display:flex;gap:8px;"><input class="form-input" value="${h(repair.database_path)}" placeholder="/plex-db/server/com.plexapp.plugins.library.db" onchange="repairConfig(_settingsData.instances[${index}]).database_path=this.value.trim();renderRepairSettings();requestAnimationFrame(()=>scrollToRepairInstance(${index}))"><button class="btn btn-secondary" onclick="discoverRepairDatabases(${index})">Discover</button></div><div class="form-hint" id="repair-db-result-${index}">Click Discover, then choose this Plex server's database from the list. Every displayed value is a path inside the ${PRODUCT_NAME} container.</div></div>
+        <div class="form-group"><label class="form-label">Folders ${PRODUCT_NAME} may repair</label><textarea class="form-input" rows="3" placeholder="/mnt/symlink_media/symlinks/nzbdav" onchange="repairConfig(_settingsData.instances[${index}]).allowed_prefixes=this.value.split(/\\r?\\n/).map(v=>v.trim()).filter(Boolean);renderRepairSettings();requestAnimationFrame(()=>scrollToRepairInstance(${index}))">${h(repair.allowed_prefixes.join('\n'))}</textarea><div class="form-hint">Enter the <strong>Container Path</strong> from each narrow read/write Unraid mapping, one per line. For your nzbdav mapping, enter <code>/mnt/symlink_media/symlinks/nzbdav</code>. ${PRODUCT_NAME} refuses to rename anything outside the folders listed here.</div></div>
         ${remoteWorkerIndex >= 0 ? `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--border);"><span class="form-hint">3. ${remoteReady?'Setup complete. Copy the worker deployment now.':'Complete both path fields to unlock Compose.'}</span><div style="display:flex;gap:8px;"><button class="btn btn-secondary" type="button" onclick="scrollToRepairWorker(${remoteWorkerIndex})">Back to worker</button><button class="btn btn-primary" type="button" onclick="copyWorkerCompose(${remoteWorkerIndex})" ${remoteReady?'':'disabled'}>Copy worker Compose</button></div></div>` : ''}
       </div>
     </div>`;
@@ -3156,7 +3291,7 @@ function updateGlobalScheduleControls() {
   const overrides = overrideCount
     ? ` ${overrideCount} ${overrideCount === 1 ? 'library currently has' : 'libraries currently have'} a per-library override.`
     : ' Every library currently inherits this schedule.';
-  summary.textContent = `${cronDescription(_settingsData.default_cron)} in the container timezone (${timezone}). The first automatic run is the next matching clock time after emptyarr starts.${overrides}`;
+  summary.textContent = `${cronDescription(_settingsData.default_cron)} in the container timezone (${timezone}). The first automatic run is the next matching clock time after ${PRODUCT_NAME} starts.${overrides}`;
 }
 
 function globalScheduleChanged() {
@@ -3387,7 +3522,7 @@ function settingsRemoveInstance(ii) {
 }
 
 function settingsAddLibrary(ii) {
-  _settingsData.instances[ii].libraries.push({ name:'', type:'physical', cron:'', paths:[] });
+  _settingsData.instances[ii].libraries.push({ name:'', type:'physical', cron:'', refresh_enabled:false, refresh_cron:'0 * * * *', refresh_guard_minutes:15, paths:[] });
   renderTrashRemovalSettings(ii);
   // Auto-open the new library
   const newLi = _settingsData.instances[ii].libraries.length - 1;
@@ -3572,7 +3707,7 @@ async function settingsSave(stayOnSection = '') {
   _settingsData.notify_skip       = document.getElementById('s-notify-skip').checked;
   _settingsData.notification_destinations.forEach((_, index) => syncNotificationDestination(index));
 
-  ['settings-save-btn','settings-save-btn2','settings-save-btn-repair','settings-save-btn-metadata','settings-save-btn-trash','settings-save-btn-features'].forEach(id => {
+  ['settings-save-btn','settings-save-btn2','settings-save-btn-repair','settings-save-btn-metadata','settings-save-btn-trash','settings-save-btn-features','settings-save-btn-library-refresh'].forEach(id => {
     const b = document.getElementById(id);
     if (b) { b.dataset.saveLabel ||= b.innerHTML; b.disabled = true; b.innerHTML = `<span class="spin"></span> saving…`; }
   });
@@ -3584,7 +3719,7 @@ async function settingsSave(stayOnSection = '') {
       body: JSON.stringify({ ..._settingsData, store_tokens: true })
     });
     const d = await r.json();
-    ['settings-save-result','settings-save-result2','settings-save-result-general','settings-save-result-repair','settings-save-result-metadata','settings-save-result-trash','settings-save-result-features'].forEach(id => {
+    ['settings-save-result','settings-save-result2','settings-save-result-general','settings-save-result-repair','settings-save-result-metadata','settings-save-result-trash','settings-save-result-features','settings-save-result-library-refresh'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.innerHTML = d.ok
         ? `<span style="color:var(--pass);">✓ Saved and applied</span>`
@@ -3607,7 +3742,7 @@ async function settingsSave(stayOnSection = '') {
   } catch(e) {
     toast('Save failed', 'fail');
   } finally {
-    ['settings-save-btn','settings-save-btn2','settings-save-btn-repair','settings-save-btn-metadata','settings-save-btn-trash','settings-save-btn-features'].forEach(id => {
+    ['settings-save-btn','settings-save-btn2','settings-save-btn-repair','settings-save-btn-metadata','settings-save-btn-trash','settings-save-btn-features','settings-save-btn-library-refresh'].forEach(id => {
       const b = document.getElementById(id);
       if (b) { b.disabled = false; b.innerHTML = b.dataset.saveLabel || 'Save Configuration'; }
     });
@@ -3825,7 +3960,7 @@ async function connectPlexAccount(target) {
   cancelPlexAccountConnect(target, false);
   const popup = window.open(
     'about:blank',
-    `emptyarr-plex-auth-${target}`,
+    `mediawarden-plex-auth-${target}`,
     'popup=yes,width=720,height=760,resizable=yes,scrollbars=yes'
   );
   if (popup) popup.opener = null;
@@ -3842,7 +3977,7 @@ async function connectPlexAccount(target) {
       return;
     }
     if (popup && !popup.closed) popup.location.replace(started.auth_url);
-    box.innerHTML = `<span class="spin"></span> Approve emptyarr in the Plex window. Waiting for authorization…
+    box.innerHTML = `<span class="spin"></span> Approve ${PRODUCT_NAME} in the Plex window. Waiting for authorization…
       <a href="${h(started.auth_url)}" target="_blank" rel="noopener noreferrer" style="color:var(--info2);margin-left:8px;">Open Plex sign-in</a>
       <button class="btn btn-secondary btn-sm" style="margin-left:8px;" onclick="cancelPlexAccountConnect('${h(target)}')">Cancel</button>`;
     const deadline = Date.now() + (started.expires_in * 1000);
@@ -3990,6 +4125,9 @@ function importDiscoveredPlex(target) {
         section_id: library.id,
         type: 'physical',
         cron: '',
+        refresh_enabled: false,
+        refresh_cron: '0 * * * *',
+        refresh_guard_minutes: 15,
         paths: [],
       });
       addedLibraries++;
@@ -4438,6 +4576,7 @@ function applyTheme(theme) {
   const sun  = document.getElementById('theme-icon-sun');
   if (moon) moon.style.display = theme === 'light' ? 'none' : 'block';
   if (sun)  sun.style.display  = theme === 'light' ? 'block' : 'none';
+  localStorage.setItem('mediawarden-theme', theme);
   localStorage.setItem('emptyarr-theme', theme);
 }
 function toggleTheme() {
@@ -4446,7 +4585,7 @@ function toggleTheme() {
 }
 // Apply saved theme immediately
 (function() {
-  const saved = localStorage.getItem('emptyarr-theme') || 'dark';
+  const saved = localStorage.getItem('mediawarden-theme') || localStorage.getItem('emptyarr-theme') || 'dark';
   applyTheme(saved);
 })();
 
@@ -4481,6 +4620,7 @@ if (!_configMissing) {
   }
   if (_activeFeatures.metadata_health) loadMetadataAuditStatus();
   if (_activeFeatures.timestamp_repair) loadRepairStatus();
+  if (_activeFeatures.library_refresh) loadLibraryRefreshStatus();
   initAuthBanner();
 }
 </script>

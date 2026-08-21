@@ -6,6 +6,7 @@ import threading
 import time
 from functools import wraps
 from flask import request, session, redirect, url_for, jsonify
+from src.branding import PRODUCT_SLUG, get_env
 
 _BCRYPT_ROUNDS = 12
 
@@ -17,7 +18,7 @@ def hash_password(password: str) -> str:
 
 def generate_api_token() -> str:
     """Generate a high-entropy bearer token that is independent of login auth."""
-    return f"emptyarr_{secrets.token_urlsafe(32)}"
+    return f"{PRODUCT_SLUG}_{secrets.token_urlsafe(32)}"
 
 
 def hash_api_token(token: str) -> str:
@@ -44,8 +45,8 @@ def _verify_password(plain: str, stored: str) -> bool:
 
 
 def _get_credentials(config=None):
-    env_user = os.environ.get("EMPTYARR_USERNAME", "")
-    env_pass = os.environ.get("EMPTYARR_PASSWORD", "")
+    env_user = get_env("EMPTYARR_USERNAME")
+    env_pass = get_env("EMPTYARR_PASSWORD")
     if env_user and env_pass:
         # Keep SHA-256 for compatibility with the environment login path.
         return env_user, _legacy_hash(env_pass)
@@ -119,7 +120,7 @@ def has_valid_api_token(config=None) -> bool:
     token = request.headers.get("X-API-Token", "")
     if not token:
         return False
-    configured_token = os.environ.get("EMPTYARR_API_TOKEN", "")
+    configured_token = get_env("EMPTYARR_API_TOKEN")
     expected_hash = (
         hash_api_token(configured_token)
         if configured_token

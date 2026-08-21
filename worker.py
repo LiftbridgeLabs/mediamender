@@ -10,15 +10,16 @@ from flask import Flask, jsonify, request
 
 from src.timestamp_repair import TimestampRepairManager, _inside
 from src.worker_auth import SignatureVerifier, signed_headers
+from src.branding import PRODUCT_SLUG, get_env
 
 
-logger = logging.getLogger("emptyarr.repair_worker")
+logger = logging.getLogger(f"{PRODUCT_SLUG}.repair_worker")
 
 
 def _roots(name: str, default: str) -> list[str]:
     return [
         os.path.abspath(value.strip())
-        for value in os.environ.get(name, default).split(",")
+        for value in get_env(name, default).split(",")
         if value.strip()
     ]
 
@@ -93,10 +94,10 @@ def create_worker_app(secret: str | None = None, worker_name: str | None = None,
                       data_dir: str | None = None,
                       register_recovery_check: bool = True) -> Flask:
     app = Flask(__name__)
-    configured_secret = secret if secret is not None else os.environ.get("EMPTYARR_WORKER_TOKEN", "")
-    configured_name = worker_name or os.environ.get("EMPTYARR_WORKER_NAME", "repair-worker")
-    database_roots = _roots("EMPTYARR_WORKER_DATABASE_ROOTS", "/plex-db")
-    media_roots = _roots("EMPTYARR_WORKER_MEDIA_ROOTS", "/repair-media")
+    configured_secret = secret if secret is not None else get_env("EMPTYARR_WORKER_TOKEN")
+    configured_name = worker_name or get_env("EMPTYARR_WORKER_NAME", "repair-worker")
+    database_roots = _roots("MEDIAWARDEN_WORKER_DATABASE_ROOTS", "/plex-db")
+    media_roots = _roots("MEDIAWARDEN_WORKER_MEDIA_ROOTS", "/repair-media")
     manager = TimestampRepairManager(
         data_dir or os.environ.get("WORKER_DATA_DIR", "data/worker"),
         register_recovery_check=register_recovery_check,
@@ -203,5 +204,5 @@ def create_worker_app(secret: str | None = None, worker_name: str | None = None,
 
 
 app = create_worker_app(
-    register_recovery_check=os.environ.get("EMPTYARR_ROLE") == "repair-worker",
+    register_recovery_check=get_env("EMPTYARR_ROLE") == "repair-worker",
 )

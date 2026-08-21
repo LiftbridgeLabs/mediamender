@@ -2,9 +2,24 @@ import requests
 import logging
 import threading
 from typing import List, Dict
+from src.branding import PRODUCT_NAME, PRODUCT_SLUG
 
 
-logger = logging.getLogger("emptyarr.notifications")
+logger = logging.getLogger(f"{PRODUCT_SLUG}.notifications")
+
+
+def _brand_text(value: str) -> str:
+    return value.replace("Emptyarr", PRODUCT_NAME).replace("emptyarr", PRODUCT_NAME)
+
+
+def _brand_payload(value):
+    if isinstance(value, str):
+        return _brand_text(value)
+    if isinstance(value, list):
+        return [_brand_payload(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _brand_payload(item) for key, item in value.items()}
+    return value
 
 
 def is_valid_apprise_url(url: str) -> bool:
@@ -26,7 +41,7 @@ def _post(webhook_url: str, payload: dict):
         logger.warning("Discord delivery skipped: invalid webhook URL")
         return
     try:
-        response = requests.post(webhook_url, json=payload, timeout=10)
+        response = requests.post(webhook_url, json=_brand_payload(payload), timeout=10)
         logger.info("Discord delivery completed with HTTP %s",
                     response.status_code)
     except Exception as exc:
@@ -136,7 +151,7 @@ def notify_emptied(webhook_url: str, instance_name: str, library_name: str,
     )
 
     _post(webhook_url, {"embeds": [{
-        "title":       f"✅ emptyarr — {instance_name} / {library_name}",
+        "title":       f"✅ {PRODUCT_NAME} — {instance_name} / {library_name}",
         "description": description,
         "color":       0x3ecf8e,
         "fields":      _check_fields(checks),
@@ -149,7 +164,7 @@ def notify_clean(webhook_url: str, instance_name: str, library_name: str,
     if not webhook_url:
         return
     _post(webhook_url, {"embeds": [{
-        "title":       f"✅ emptyarr — {instance_name} / {library_name}",
+        "title":       f"✅ {PRODUCT_NAME} — {instance_name} / {library_name}",
         "description": "Trash was already empty — nothing to remove.",
         "color":       0x3ecf8e,
         "fields":      _check_fields(checks),
@@ -165,7 +180,7 @@ def notify_health_fail(webhook_url: str, instance_name: str, library_name: str,
         f"• **{n}**: {c['detail']}" for n, c in failed_checks.items()
     )
     _post(webhook_url, {"embeds": [{
-        "title":       f"⚠️ emptyarr — {instance_name} / {library_name}",
+        "title":       f"⚠️ {PRODUCT_NAME} — {instance_name} / {library_name}",
         "description": f"Health checks failed — trash empty skipped.\n\n**Failed:**\n{failed_list}",
         "color":       0xf06565,
         "fields":      _check_fields(all_checks),
@@ -178,7 +193,7 @@ def notify_error(webhook_url: str, instance_name: str, library_name: str,
     if not webhook_url:
         return
     _post(webhook_url, {"embeds": [{
-        "title":       f"🔴 emptyarr — {instance_name} / {library_name} error",
+        "title":       f"🔴 {PRODUCT_NAME} — {instance_name} / {library_name} error",
         "description": f"emptyTrash failed:\n```{error}```",
         "color":       0xe74c3c,
         "fields":      _check_fields(checks),
@@ -191,7 +206,7 @@ def notify_skip(webhook_url: str, instance_name: str,
     if not webhook_url:
         return
     _post(webhook_url, {"embeds": [{
-        "title":       f"⏭️ emptyarr — {instance_name} / {library_name} skipped",
+        "title":       f"⏭️ {PRODUCT_NAME} — {instance_name} / {library_name} skipped",
         "description": f"**Reason:** {reason}",
         "color":       0xe8a045,
     }]})
@@ -227,8 +242,8 @@ def _apprise_delivery(destination, title: str, body: str,
             "info": apprise.NotifyType.INFO,
         }
         return bool(client.notify(
-            title=title,
-            body=body,
+            title=_brand_text(title),
+            body=_brand_text(body),
             notify_type=type_map.get(notify_type, apprise.NotifyType.INFO),
         ))
     except Exception as exc:
@@ -269,7 +284,7 @@ def test_destination(destination) -> bool:
     """Synchronously send a harmless test message for Settings feedback."""
     return _apprise_delivery(
         destination,
-        "emptyarr notification test",
+        f"{PRODUCT_NAME} notification test",
         "This destination is configured correctly.",
         "info",
     )
@@ -295,7 +310,7 @@ def dispatch_emptied(config, instance_name: str, library_name: str,
         body += "\n\nChecks:\n" + checks_text
     _apprise_fanout(
         config, "emptied",
-        f"emptyarr — {instance_name} / {library_name}",
+        f"{PRODUCT_NAME} — {instance_name} / {library_name}",
         body, "success",
     )
 
@@ -312,7 +327,7 @@ def dispatch_clean(config, instance_name: str, library_name: str,
         body += "\n\nChecks:\n" + checks_text
     _apprise_fanout(
         config, "clean",
-        f"emptyarr — {instance_name} / {library_name}",
+        f"{PRODUCT_NAME} — {instance_name} / {library_name}",
         body, "success",
     )
 
@@ -337,7 +352,7 @@ def dispatch_health_fail(config, instance_name: str, library_name: str,
         body += "\n\nAll checks:\n" + checks_text
     _apprise_fanout(
         config, "health_fail",
-        f"emptyarr warning — {instance_name} / {library_name}",
+        f"{PRODUCT_NAME} warning — {instance_name} / {library_name}",
         body, "failure",
     )
 
@@ -355,7 +370,7 @@ def dispatch_error(config, instance_name: str, library_name: str,
         body += "\n\nChecks:\n" + checks_text
     _apprise_fanout(
         config, "error",
-        f"emptyarr error — {instance_name} / {library_name}",
+        f"{PRODUCT_NAME} error — {instance_name} / {library_name}",
         body, "failure",
     )
 
@@ -368,6 +383,6 @@ def dispatch_skip(config, instance_name: str, library_name: str,
         )
     _apprise_fanout(
         config, "skip",
-        f"emptyarr skipped — {instance_name} / {library_name}",
+        f"{PRODUCT_NAME} skipped — {instance_name} / {library_name}",
         f"Reason: {reason}", "warning",
     )
