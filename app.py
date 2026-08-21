@@ -593,7 +593,7 @@ def _validate_notifications(raw: dict) -> None:
             )
 
 
-def _validate_raw_config(raw: dict) -> AppConfig:
+def _validate_raw_config(raw: dict, require_paths: bool | None = None) -> AppConfig:
     if not isinstance(raw, dict):
         raise ValueError("Configuration must be an object")
     instances = raw.get("plex_instances", [])
@@ -623,9 +623,10 @@ def _validate_raw_config(raw: dict) -> AppConfig:
     instance_names = set()
     machine_ids = set()
     features = raw.get("features", {})
-    require_paths = not isinstance(features, dict) or features.get(
-        "trash_removal", True,
-    ) is not False
+    if require_paths is None:
+        require_paths = not isinstance(features, dict) or features.get(
+            "trash_removal", True,
+        ) is not False
     for instance in instances:
         _validate_instance(
             instance, instance_names, machine_ids, worker_names, require_paths,
@@ -667,8 +668,9 @@ def _apply_runtime_config(new_config: AppConfig) -> None:
     CONFIG_LOAD_ERROR = ""
 
 
-def _save_and_apply(raw: dict, runtime_tokens: dict = None) -> AppConfig:
-    parsed = _validate_raw_config(raw)
+def _save_and_apply(raw: dict, runtime_tokens: dict = None,
+                    require_paths: bool | None = None) -> AppConfig:
+    parsed = _validate_raw_config(raw, require_paths=require_paths)
     for instance in parsed.instances:
         if not instance.token and runtime_tokens:
             instance.token = runtime_tokens.get(instance.name, "")
@@ -2184,6 +2186,7 @@ def api_wizard_save():
             "error": "Configuration cannot change during timestamp repair or recovery",
         }), 409
     data         = request.get_json(silent=True) or {}
+    save_scope   = str(data.get("save_scope", "")).strip().lower()
     store_tokens = bool(data.get("store_tokens", False))
 
     # Load existing config to preserve auth, providers and other blocks
@@ -2287,7 +2290,13 @@ def api_wizard_save():
             str(instance.get("name", "")): str(instance.get("token", ""))
             for instance in data.get("instances", [])
         }
-        _save_and_apply(cfg, runtime_tokens=runtime_tokens)
+        # Plex settings can be staged before Trash Removal paths are known.
+        # Pathless libraries remain fail-closed in the runner until configured.
+        _save_and_apply(
+            cfg,
+            runtime_tokens=runtime_tokens,
+            require_paths=False if save_scope == "plex" else None,
+        )
         return jsonify({
             "ok":              True,
             "store_tokens":    store_tokens,

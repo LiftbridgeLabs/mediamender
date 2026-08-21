@@ -778,6 +778,18 @@ class SafetyTests(unittest.TestCase):
              patch("src.runner.time.sleep"):
             runner.run_library(instance, library, config, plex, **kwargs)
 
+    def test_missing_library_path_fails_closed(self):
+        library = LibraryConfig("Movies", "physical", [], section_id="1")
+        instance = PlexInstanceConfig("Plex", "http://plex", "token", [library])
+        config = AppConfig(instances=[instance])
+        plex = Mock()
+        plex.get_library_item_count.return_value = 100
+        checks, count = runner._collect_library_checks(
+            instance, library, config, plex, section_id="1",
+        )
+        self.assertEqual(count, 100)
+        self.assertFalse(checks["Files (paths)"]["pass"])
+
     def test_missing_plex_count_fails_closed(self):
         with patch("src.checks.count_files", return_value=1):
             directory = "/media"
@@ -1299,6 +1311,17 @@ class LiveConfigTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "at least one"):
             app._validate_raw_config(raw)
+
+    def test_plex_settings_can_stage_library_without_path(self):
+        raw = {
+            "plex_instances": [{
+                "name": "Plex",
+                "url": "http://plex:32400",
+                "libraries": [{"name": "Movies", "paths": []}],
+            }],
+        }
+        parsed = app._validate_raw_config(raw, require_paths=False)
+        self.assertEqual(parsed.instances[0].libraries[0].paths, [])
 
     def test_duplicate_plex_machine_identifier_is_rejected(self):
         raw = {

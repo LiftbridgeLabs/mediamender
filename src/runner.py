@@ -419,6 +419,11 @@ def _collect_library_checks(instance: PlexInstanceConfig,
     plex_count = plex.get_library_item_count(
         section_id or library.section_id or plex.find_section_id(library.name)
     )
+    if not library.paths:
+        all_checks["Files (paths)"] = {
+            "pass": False,
+            "detail": "No filesystem path configured; trash empty skipped",
+        }
     is_mixed = library.type == "mixed"
     for path_cfg in library.paths:
         all_checks.update(_run_path_checks(

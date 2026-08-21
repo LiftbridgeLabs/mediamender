@@ -3715,7 +3715,7 @@ async function settingsSave(stayOnSection = '') {
     const r = await fetch('/api/wizard/save', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ ..._settingsData, store_tokens: true })
+      body: JSON.stringify({ ..._settingsData, store_tokens: true, save_scope: stayOnSection })
     });
     const d = await r.json();
     ['settings-save-result','settings-save-result2','settings-save-result-general','settings-save-result-repair','settings-save-result-metadata','settings-save-result-trash','settings-save-result-features','settings-save-result-library-refresh'].forEach(id => {
