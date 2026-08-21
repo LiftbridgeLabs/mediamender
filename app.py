@@ -802,7 +802,10 @@ def login():
         return redirect(url_for("index"))
     if is_authenticated():
         return redirect(url_for("index"))
-    error = None
+    # Keep the login endpoint on GET after a failed submission.  Rendering the
+    # error directly from POST leaves browsers on a form-resubmission page, so
+    # Ctrl+F5 prompts users to resend their credentials.
+    error = session.pop("_login_error", None)
     if request.method == "POST":
         username = request.form.get("username", "")
         password = request.form.get("password", "")
@@ -814,6 +817,8 @@ def login():
             return redirect(url_for("index"))
         else:
             error = "Invalid username or password"
+        session["_login_error"] = error
+        return redirect(url_for("login"))
     return render_template("login.html", error=error, app_version=__version__, product_name=PRODUCT_NAME)
 
 

@@ -101,6 +101,23 @@ class LoggingTests(unittest.TestCase):
 
 
 class WebSecurityTests(unittest.TestCase):
+    def test_failed_login_redirects_before_rendering_error(self):
+        client = app.app.test_client()
+        with patch.object(app, "auth_enabled", return_value=True), \
+             patch.object(app, "is_authenticated", return_value=False), \
+             patch.object(app, "check_credentials", return_value=False):
+            response = client.post(
+                "/login",
+                data={"username": "admin", "password": "wrong"},
+            )
+            self.assertEqual(response.status_code, 302)
+            self.assertEqual(response.headers["Location"], "/login")
+
+            rendered = client.get("/login")
+            self.assertIn("Invalid username or password", rendered.get_data(as_text=True))
+            refreshed = client.get("/login")
+            self.assertNotIn("Invalid username or password", refreshed.get_data(as_text=True))
+
     def test_ui_renders_with_security_headers(self):
         response = app.app.test_client().get("/")
         self.assertEqual(response.status_code, 200)
