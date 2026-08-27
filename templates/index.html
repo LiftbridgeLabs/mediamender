@@ -2228,10 +2228,11 @@ async function loadLibraryRefreshStatus() {
   const grid=document.getElementById('library-refresh-grid');
   try {
     const response=await fetch('/api/library-refresh/status');
-    _libraryRefreshStatus=await response.json();
+    _libraryRefreshStatus=await readJsonResponse(response, 'Library Refresh');
+    if (!response.ok) throw new Error(_libraryRefreshStatus.error || 'Could not load Library Refresh status');
     renderLibraryRefreshStatus(_libraryRefreshStatus);
   } catch (error) {
-    if (grid) grid.innerHTML='<div class="empty-msg">Could not load library refresh status.</div>';
+    if (grid) grid.innerHTML=`<div class="repair-warning">${h(error.message || 'Could not load library refresh status.')}</div>`;
   }
 }
 
@@ -2726,6 +2727,15 @@ function showSettingsSection(name, btn) {
 function h(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+async function readJsonResponse(response, label = 'Request') {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    const summary = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 180);
+    throw new Error(`${label} returned HTTP ${response.status}${summary?`: ${summary}`:''}`);
+  }
+}
 function toast(msg, type = '') {
   const el = document.getElementById('toast');
   el.textContent = msg;
@@ -3157,11 +3167,12 @@ let _trashSettingsInstance = 0;
 async function loadSettings() {
   try {
     const r = await fetch('/api/config/load');
-    const d = await r.json();
-    if (!d.ok) { toast('Could not load config', 'fail'); return; }
+    const d = await readJsonResponse(r, 'Settings');
+    if (!r.ok || !d.ok) throw new Error(d.error || 'Could not load config');
     const cfg = d.config || {};
     _settingsData.discord_webhook    = cfg.discord_webhook || '';
-    _settingsData.notification_destinations = (cfg.notifications?.destinations || []).map(destination => ({
+    const destinations = Array.isArray(cfg.notifications?.destinations) ? cfg.notifications.destinations : [];
+    _settingsData.notification_destinations = destinations.map(destination => ({
       name: destination.name || '',
       service: destination.service || 'custom',
       url: destination.url || '',
@@ -3193,13 +3204,15 @@ async function loadSettings() {
     _settingsData.notify_error       = cfg.notify?.on_error       ?? true;
     _settingsData.notify_clean       = cfg.notify?.on_clean       ?? false;
     _settingsData.notify_skip        = cfg.notify?.on_skip        ?? false;
-    _settingsData.repair_workers = (cfg.timestamp_repair_workers || []).map(worker => ({
+    const repairWorkers = Array.isArray(cfg.timestamp_repair_workers) ? cfg.timestamp_repair_workers : [];
+    _settingsData.repair_workers = repairWorkers.map(worker => ({
       name: worker.name || '',
       url: worker.url || '',
       token: worker.token || '',
       controller_url: worker.controller_url || '',
     }));
-    _settingsData.instances = (cfg.plex_instances || []).map(inst => ({
+    const plexInstances = Array.isArray(cfg.plex_instances) ? cfg.plex_instances : [];
+    _settingsData.instances = plexInstances.map(inst => ({
       name:      inst.name || '',
       url:       inst.url  || '',
       token:     inst.token || '',
@@ -3217,7 +3230,7 @@ async function loadSettings() {
       metadata_health: {
         ignored_libraries: Array.isArray(inst.metadata_health?.ignored_libraries) ? inst.metadata_health.ignored_libraries : [],
       },
-      libraries: (inst.libraries || []).map(lib => ({
+      libraries: (Array.isArray(inst.libraries) ? inst.libraries : []).map(lib => ({
         name:  lib.name  || '',
         type:  lib.type  || 'physical',
         cron:  lib.cron  || '',
@@ -3225,7 +3238,7 @@ async function loadSettings() {
         refresh_enabled: lib.refresh_enabled === true,
         refresh_cron: lib.refresh_cron || '0 * * * *',
         refresh_guard_minutes: lib.refresh_guard_minutes ?? 15,
-        paths: (lib.paths || []).map(p => ({
+        paths: (Array.isArray(lib.paths) ? lib.paths : []).map(p => ({
           path:            p.path          || '',
           type:            p.type          || 'physical',
           min_threshold:   p.min_threshold ?? 90,
@@ -3266,7 +3279,15 @@ async function loadSettings() {
       const el = document.getElementById(`pkey-${p}`);
       if (el && provCfg[p]?.api_key) el.placeholder = '••••••••  (saved — enter new key to replace)';
     });
-  } catch(e) { toast('Error loading settings', 'fail'); }
+    if (d.recovered_instances) toast('Plex instances recovered from the running configuration', 'warn');
+  } catch(e) {
+    const message = e.message || 'Error loading settings';
+    ['settings-instances-list','library-refresh-settings','mark-watched-settings'].forEach(id => {
+      const target = document.getElementById(id);
+      if (target) target.innerHTML = `<div class="repair-warning">${h(message)}. Existing Plex configuration has not been changed.</div>`;
+    });
+    toast(message, 'fail');
+  }
 }
 
 function renderSettingsInstances() {
@@ -3552,7 +3573,7 @@ async function loadSonarrConnectionStatus() {
   if (!callback.value) callback.value = `${window.location.origin}/api/webhooks/sonarr`;
   try {
     const response = await fetch('/api/mark-watched/sonarr');
-    const data = await response.json();
+    const data = await readJsonResponse(response, 'Sonarr status');
     if (!response.ok) throw new Error(data.error || 'Could not load Sonarr status');
     const connections = data.connections || [];
     const latest = connections[0] || {};
@@ -3605,7 +3626,7 @@ async function connectSonarr(configuredUrl = '', actionButton = null) {
     const response = await fetch('/api/mark-watched/sonarr/connect', {
       method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
     });
-    const data = await response.json();
+    const data = await readJsonResponse(response, 'Sonarr connection');
     if (!response.ok) throw new Error(data.error || 'Sonarr connection failed');
     if (apiKey) apiKey.value = '';
     _settingsData.mark_watched.webhook_secret_configured = true;
@@ -3638,7 +3659,7 @@ async function removeSonarrConnection(sonarrUrl, hasRemoteWebhook, apiKeyAvailab
       method:'DELETE', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({sonarr_url:sonarrUrl, api_key:apiKey}),
     });
-    const data = await response.json();
+    const data = await readJsonResponse(response, 'Sonarr removal');
     if (!response.ok) throw new Error(data.error || 'Sonarr connection could not be removed');
     await loadSonarrConnectionStatus();
     toast(data.message || 'Sonarr connection removed', data.webhook_left_behind ? 'warn' : 'pass');

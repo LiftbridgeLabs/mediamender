@@ -252,6 +252,22 @@ class SonarrClientTests(unittest.TestCase):
             (root / "sonarr-webhook.json").unlink(missing_ok=True)
             root.rmdir()
 
+    def test_status_store_ignores_malformed_connection_records(self):
+        root = Path("tests/.sonarr-status-runtime")
+        root.mkdir(exist_ok=True)
+        try:
+            path = root / "sonarr-webhook.json"
+            path.write_text(json.dumps({"connections": {
+                "http://bad": "not-a-record",
+                "http://good": {"sonarr_url": "http://good", "status": "connected"},
+            }}), encoding="utf-8")
+            status = SonarrConnectionStore(str(root)).status()
+        finally:
+            (root / "sonarr-webhook.json").unlink(missing_ok=True)
+            root.rmdir()
+        self.assertEqual(len(status["connections"]), 1)
+        self.assertEqual(status["connections"][0]["sonarr_url"], "http://good")
+
 
 class SonarrProvisioningApiTests(unittest.TestCase):
     def _client(self, role="admin", permissions=None):
@@ -317,6 +333,16 @@ class SonarrProvisioningApiTests(unittest.TestCase):
         connections = response.get_json()["connections"]
         self.assertTrue(connections[0]["api_key_available"])
         self.assertFalse(connections[1]["api_key_available"])
+
+    def test_status_failure_is_returned_as_json(self):
+        with patch.object(
+            app, "_mark_watched_sonarr_status_response",
+            side_effect=RuntimeError("broken status"),
+        ):
+            response = self._client().get("/api/mark-watched/sonarr")
+        self.assertEqual(response.status_code, 500)
+        self.assertTrue(response.is_json)
+        self.assertIn("broken status", response.get_json()["error"])
 
     def test_status_lists_environment_instances_before_they_are_connected(self):
         store = Mock()

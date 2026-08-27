@@ -614,6 +614,21 @@ class MarkWatchedSettingsTests(unittest.TestCase):
         self.assertNotIn("webhook-sensitive", body)
         self.assertTrue(response.get_json()["config"]["plex_instances"][0]["token_configured"])
 
+    def test_config_load_recovers_live_plex_instances_when_file_list_is_empty(self):
+        self.path.write_text(yaml.safe_dump({"plex_instances": []}), encoding="utf-8")
+        runtime = AppConfig(instances=[PlexInstanceConfig(
+            "Live Plex", "http://plex", "runtime-sensitive",
+            [LibraryConfig("TV", "physical", [], section_id="7")],
+        )])
+        with patch.object(app, "CONFIG_PATH", str(self.path)), \
+             patch.object(app, "config", runtime):
+            response = self._client().get("/api/config/load")
+        body = response.get_json()
+        self.assertTrue(body["recovered_instances"])
+        self.assertEqual(body["config"]["plex_instances"][0]["name"], "Live Plex")
+        self.assertTrue(body["config"]["plex_instances"][0]["token_configured"])
+        self.assertNotIn("runtime-sensitive", response.get_data(as_text=True))
+
     def test_settings_save_preserves_blank_redacted_secrets_and_visibility(self):
         self.path.write_text(yaml.safe_dump({
             "mark_watched": {"webhook_secret": "keep-webhook"},
@@ -638,6 +653,29 @@ class MarkWatchedSettingsTests(unittest.TestCase):
         self.assertEqual(saved["mark_watched"]["visible_libraries"], [])
         self.assertEqual(saved["plex_instances"][0]["token"], "keep-plex")
 
+    def test_non_plex_save_cannot_erase_instances_after_ui_load_failure(self):
+        self.path.write_text(yaml.safe_dump({"plex_instances": []}), encoding="utf-8")
+        runtime = AppConfig(instances=[PlexInstanceConfig(
+            "Live Plex", "http://plex", "runtime-token",
+            [LibraryConfig("TV", "physical", [], section_id="7")],
+        )])
+        payload = {
+            "store_tokens": True, "save_scope": "mark-watched",
+            "mark_watched": {"visible_libraries": []}, "instances": [],
+        }
+        with patch.object(app, "CONFIG_PATH", str(self.path)), \
+             patch.object(app, "config", runtime), \
+             patch.object(app, "_save_and_apply") as save:
+            response = self._client().post(
+                "/api/wizard/save", json=payload,
+                headers={"X-CSRF-Token": "known-token"},
+            )
+        self.assertEqual(response.status_code, 200)
+        saved = save.call_args.args[0]
+        self.assertEqual(len(saved["plex_instances"]), 1)
+        self.assertEqual(saved["plex_instances"][0]["name"], "Live Plex")
+        self.assertEqual(saved["plex_instances"][0]["token"], "runtime-token")
+
     def test_settings_navigation_does_not_call_plex(self):
         config = AppConfig(instances=[PlexInstanceConfig(
             "Plex", "http://plex", "token", [LibraryConfig("TV", "physical", [])],
@@ -661,6 +699,7 @@ class MarkWatchedSettingsTests(unittest.TestCase):
         )
         self.assertIn("Install webhook", html)
         self.assertIn("Repair / test", html)
+        self.assertIn("readJsonResponse", html)
         self.assertIn('id="mark-watched-instance"', html)
         self.assertIn('id="mark-watched-library"', html)
         self.assertIn("loadMarkWatchedPage", html)

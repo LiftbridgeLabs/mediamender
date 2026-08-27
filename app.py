@@ -8,6 +8,7 @@ import time
 import urllib.parse
 import yaml
 from datetime import datetime, timezone
+from dataclasses import asdict
 from functools import wraps
 from pathlib import Path
 from types import SimpleNamespace
@@ -1100,6 +1101,17 @@ def _missing_sonarr_api_key_message(sonarr_url: str) -> str:
 @app.route("/api/mark-watched/sonarr", methods=["GET"])
 @require_auth
 def api_mark_watched_sonarr_status():
+    try:
+        return _mark_watched_sonarr_status_response()
+    except Exception as exc:
+        logger.exception("Could not build Sonarr webhook connection status")
+        return jsonify({
+            "ok": False,
+            "error": f"Could not load Sonarr connection status: {type(exc).__name__}: {exc}",
+        }), 500
+
+
+def _mark_watched_sonarr_status_response():
     saved = sonarr_connection.status()
     saved_by_url = {}
     for connection in saved.get("connections", []):
@@ -1577,6 +1589,17 @@ def api_history():
 @app.route("/api/library-refresh/status", methods=["GET"])
 @require_auth
 def api_library_refresh_status():
+    try:
+        return _library_refresh_status_response()
+    except Exception as exc:
+        logger.exception("Could not build Library Refresh status")
+        return jsonify({
+            "ok": False,
+            "error": f"Could not load Library Refresh status: {type(exc).__name__}: {exc}",
+        }), 500
+
+
+def _library_refresh_status_response():
     saved = library_refresh.status()
     with _library_refresh_queue_lock:
         queue = dict(_library_refresh_queue)
@@ -2998,8 +3021,28 @@ def api_wizard_save():
         for instance in existing.get("plex_instances", [])
         if isinstance(instance, dict)
     }
+    existing_tokens.update({
+        instance.name: instance.token for instance in config.instances
+        if instance.name not in existing_tokens
+    })
     submitted_instances = []
-    for submitted in data.get("instances", []):
+    submitted_source = data.get("instances", [])
+    if not isinstance(submitted_source, list):
+        submitted_source = []
+    if save_scope != "plex" and not submitted_source and config.instances:
+        file_instances = existing.get("plex_instances", [])
+        submitted_source = (
+            file_instances if isinstance(file_instances, list) and file_instances
+            else [
+                _runtime_instance_settings_dict(instance)
+                for instance in config.instances
+            ]
+        )
+        logger.warning(
+            "Refused empty Plex instance list during scoped %s save; preserved %s instances",
+            save_scope or "settings", len(submitted_source),
+        )
+    for submitted in submitted_source:
         item = dict(submitted)
         if not str(item.get("token", "")):
             item["token"] = existing_tokens.get(str(item.get("name", "")), "")
@@ -3055,13 +3098,43 @@ def api_notifications_test():
         return jsonify({"ok": False, "error": str(exc)}), 400
 
 
+def _runtime_instance_settings_dict(runtime_instance) -> dict:
+    """Serialize one live Plex instance back to Settings-safe units."""
+    instance = asdict(runtime_instance)
+    for library in instance.get("libraries", []):
+        for path in library.get("paths", []):
+            threshold = float(path.get("min_threshold", 0.9))
+            path["min_threshold"] = round(
+                threshold * 100 if threshold <= 1 else threshold, 2,
+            )
+    return instance
+
+
 @app.route("/api/config/load", methods=["GET"])
 @require_auth
 def api_config_load():
     """Return current config.yml contents for the settings editor."""
+    load_warning = ""
     try:
-        with open(CONFIG_PATH, "r") as f:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
+    except Exception as exc:
+        logger.exception("Could not read Settings configuration")
+        raw = {}
+        load_warning = f"Could not read config.yml: {type(exc).__name__}: {exc}"
+    try:
+        recovered_instances = False
+        raw_instances = raw.get("plex_instances")
+        if (not isinstance(raw_instances, list) or not raw_instances) and config.instances:
+            raw["plex_instances"] = [
+                _runtime_instance_settings_dict(instance)
+                for instance in config.instances
+            ]
+            recovered_instances = True
+            logger.warning(
+                "Settings config lacked Plex instances; recovered %s from runtime",
+                len(raw["plex_instances"]),
+            )
         # Do not send password hashes back to the browser.
         if isinstance(raw.get("auth"), dict):
             raw["auth"].pop("password_hash", None)
@@ -3081,8 +3154,13 @@ def api_config_load():
             if isinstance(instance, dict):
                 instance["token_configured"] = bool(instance.get("token"))
                 instance["token"] = ""
-        return jsonify({"ok": True, "config": raw})
+        return jsonify({
+            "ok": True, "config": raw,
+            "recovered_instances": recovered_instances,
+            "warning": load_warning,
+        })
     except Exception as e:
+        logger.exception("Could not prepare Settings configuration")
         return jsonify({"ok": False, "error": str(e)}), 500
 
 

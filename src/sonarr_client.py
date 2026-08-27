@@ -294,7 +294,7 @@ class SonarrConnectionStore:
             records = [
                 {key: value for key, value in record.items()
                  if key != "connection_id"}
-                for record in self._load().values()
+                for record in self._load().values() if isinstance(record, dict)
             ]
         records.sort(
             key=lambda item: str(item.get("last_success") or item.get("last_attempt") or ""),

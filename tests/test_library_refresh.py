@@ -64,6 +64,16 @@ class LibraryRefreshApiTests(unittest.TestCase):
             browser_session["_csrf_token"] = "known-token"
         return client
 
+    def test_status_failure_is_returned_as_json(self):
+        with patch.object(
+            app, "_library_refresh_status_response",
+            side_effect=RuntimeError("broken refresh status"),
+        ):
+            response = self._client().get("/api/library-refresh/status")
+        self.assertEqual(response.status_code, 500)
+        self.assertTrue(response.is_json)
+        self.assertIn("broken refresh status", response.get_json()["error"])
+
     def test_manual_queue_refreshes_selected_libraries_sequentially(self):
         libraries = [
             LibraryConfig("Youtube", "physical", [], section_id="1"),
