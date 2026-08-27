@@ -1,3 +1,5 @@
+import time
+
 import requests
 import defusedxml.ElementTree as ET
 from typing import Optional, List, Dict
@@ -72,6 +74,8 @@ class PlexClient:
             "X-Plex-Client-Identifier": PRODUCT_SLUG,
             "Accept":                   "application/json",
         })
+        self._sections_cache: List[Dict] | None = None
+        self._sections_cached_at = 0.0
 
     def _get(self, path: str, params: dict = None, timeout: int = 15):
         return self.session.get(f"{self.url}{path}", params=params, timeout=timeout)
@@ -84,20 +88,34 @@ class PlexClient:
         ]
 
     def list_tv_shows(self, section_id: str) -> List[Dict]:
+        return self.list_tv_shows_page(section_id, 0, 100000)["shows"]
+
+    def list_tv_shows_page(self, section_id: str, start: int = 0,
+                           size: int = 24) -> Dict:
+        """Return one Plex-native page of shows without loading the library."""
         response = self._get(
             f"/library/sections/{section_id}/all",
-            params={"type": 2, "X-Plex-Container-Start": 0,
-                    "X-Plex-Container-Size": 100000}, timeout=60,
+            params={"type": 2, "sort": "titleSort:asc",
+                    "X-Plex-Container-Start": max(0, int(start)),
+                    "X-Plex-Container-Size": max(1, min(int(size), 100000))},
+            timeout=30,
         )
         response.raise_for_status()
-        return [{
+        container = response.json().get("MediaContainer", {})
+        items = self._metadata(response)
+        shows = [{
             "rating_key": str(item.get("ratingKey", "")),
             "title": str(item.get("title", "Unknown")),
             "year": item.get("year"),
             "thumb": str(item.get("thumb", "")),
             "leaf_count": int(item.get("leafCount", 0) or 0),
             "viewed_leaf_count": int(item.get("viewedLeafCount", 0) or 0),
-        } for item in self._metadata(response) if item.get("ratingKey")]
+        } for item in items if item.get("ratingKey")]
+        total = int(
+            container.get("totalSize", container.get("totalLeafCount", len(shows)))
+            or len(shows)
+        )
+        return {"shows": shows, "total": total, "start": max(0, int(start))}
 
     def list_show_seasons(self, show_rating_key: str) -> List[Dict]:
         response = self._get(f"/library/metadata/{show_rating_key}/children", timeout=30)
@@ -165,7 +183,7 @@ class PlexClient:
     def get_artwork(self, artwork_key: str):
         if not artwork_key.startswith("/") or artwork_key.startswith("//"):
             raise ValueError("Invalid Plex artwork key")
-        response = self._get(artwork_key, timeout=30)
+        response = self._get(artwork_key, timeout=10)
         response.raise_for_status()
         return response
 
@@ -181,13 +199,19 @@ class PlexClient:
         except Exception as e:
             return {"pass": False, "detail": f"Plex unreachable ({self.url}): {e}"}
 
-    def get_sections(self) -> List[Dict]:
+    def get_sections(self, refresh: bool = False) -> List[Dict]:
+        if (not refresh and self._sections_cache is not None
+                and time.monotonic() - self._sections_cached_at < 60):
+            return [dict(section) for section in self._sections_cache]
         r = self._get("/library/sections")
         r.raise_for_status()
-        return [
+        sections = [
             {"id": str(s["key"]), "title": s["title"], "type": s["type"]}
             for s in r.json().get("MediaContainer", {}).get("Directory", [])
         ]
+        self._sections_cache = sections
+        self._sections_cached_at = time.monotonic()
+        return [dict(section) for section in sections]
 
     def get_machine_identifier(self) -> Optional[str]:
         try:

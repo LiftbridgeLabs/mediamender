@@ -380,6 +380,13 @@ select **Connect Sonarr**. mediaMender uses Sonarr's advertised Webhook schema,
 runs Sonarr's Test event, and creates or updates the managed connection. The
 Sonarr API key is used for that request only and is never saved.
 
+Repeat Connect Sonarr for every Sonarr instance. mediaMender keeps a non-secret
+per-instance connection list and binds each automatically managed webhook to
+the mediaMender user who connected it, so only that user's rules are evaluated
+for its imports. The Plex watched state is written through the selected server's
+shared configured Plex token and therefore belongs to that Plex account, not to
+every Plex Home profile.
+
 If no dedicated webhook secret exists, Connect Sonarr generates and saves one
 automatically. `MEDIAMENDER_SONARR_WEBHOOK_SECRET` remains the preferred
 environment override. Manual setup is still supported: use
@@ -392,6 +399,9 @@ Plex has scanned and matched every episode in the import, then applies the
 current show/season rules. Duplicate payloads reuse the original durable job.
 Recent success, retry, and failure state is shown on the Mark-it-Watched page.
 The non-secret Sonarr connection status is stored in `data/sonarr-webhook.json`.
+The rule browser loads one selected Plex server and TV library at a time. Shows
+use Plex-native pagination (12, 24, 36, or 48 per page); movie libraries are not
+shown.
 
 Settings controls which shared Plex TV libraries are visible. Administrators
 can create application users, grant page permissions, and confirm All On or All

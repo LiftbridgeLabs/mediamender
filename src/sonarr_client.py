@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 import ipaddress
 import json
+import secrets
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
@@ -134,7 +136,8 @@ class SonarrClient:
                 return
         raise SonarrError(f"Sonarr's Webhook schema is missing the {name} field")
 
-    def _payload(self, schema: dict, callback_url: str, secret: str) -> dict:
+    def _payload(self, schema: dict, callback_url: str, secret: str,
+                 connection_id: str = "") -> dict:
         payload = copy.deepcopy(schema)
         payload.pop("id", None)
         payload.pop("presets", None)
@@ -156,16 +159,24 @@ class SonarrClient:
         self._set_field(payload, "url", callback_url)
         # Keep Sonarr's advertised Webhook method default, which its schema
         # initializes to POST, instead of assuming an enum value.
-        self._set_field(payload, "headers", [
+        headers = [
             {"key": "X-Sonarr-Webhook-Secret", "value": secret},
-        ])
+        ]
+        if connection_id:
+            headers.append({
+                "key": "X-MediaMender-Connection-ID", "value": connection_id,
+            })
+        self._set_field(payload, "headers", headers)
         return payload
 
     def provision_webhook(self, callback_url: str, secret: str,
-                          *, status: dict | None = None) -> dict:
+                          *, status: dict | None = None,
+                          connection_id: str = "") -> dict:
         callback_url = normalize_callback_url(callback_url)
         status = status or self.system_status()
-        payload = self._payload(self._webhook_schema(), callback_url, secret)
+        payload = self._payload(
+            self._webhook_schema(), callback_url, secret, connection_id,
+        )
 
         # Test before changing Sonarr's saved connections. This invokes the same
         # callback and secret header that the saved connection will use.
@@ -203,35 +214,95 @@ class SonarrConnectionStore:
 
     def __init__(self, data_dir: str):
         self.path = Path(data_dir) / "sonarr-webhook.json"
+        self._lock = threading.RLock()
 
-    def status(self) -> dict:
+    def _load(self) -> dict:
         try:
             value = json.loads(self.path.read_text(encoding="utf-8"))
-            return value if isinstance(value, dict) else {"status": "not_configured"}
+            if not isinstance(value, dict):
+                return {}
+            connections = value.get("connections")
+            if isinstance(connections, dict):
+                return connections
+            # Migrate the original single-connection status file in memory.
+            if value.get("sonarr_url"):
+                return {str(value["sonarr_url"]): value}
+            return {}
         except (OSError, ValueError):
-            return {"status": "not_configured"}
+            return {}
 
-    def success(self, sonarr_url: str, result: dict) -> dict:
-        value = {
-            "status": "connected",
-            "sonarr_url": sonarr_url,
-            "callback_url": result.get("callback_url", ""),
-            "notification_id": result.get("notification_id"),
-            "sonarr_version": result.get("sonarr_version", ""),
-            "sonarr_instance": result.get("sonarr_instance", "Sonarr"),
-            "action": result.get("action", "created"),
-            "last_success": _utc_now(),
-        }
-        atomic_write_json(str(self.path), value)
-        return value
+    def _save(self, connections: dict) -> None:
+        atomic_write_json(str(self.path), {"connections": connections})
+
+    def status(self) -> dict:
+        with self._lock:
+            records = [
+                {key: value for key, value in record.items()
+                 if key != "connection_id"}
+                for record in self._load().values()
+            ]
+        records.sort(
+            key=lambda item: str(item.get("last_success") or item.get("last_attempt") or ""),
+            reverse=True,
+        )
+        return {"connections": records}
+
+    def prepare(self, sonarr_url: str, owner: str) -> dict:
+        with self._lock:
+            connections = self._load()
+            value = dict(connections.get(sonarr_url, {}))
+            value.update({
+                "status": "configuring",
+                "sonarr_url": sonarr_url,
+                "owner": owner,
+                "connection_id": value.get("connection_id") or secrets.token_urlsafe(18),
+                "last_attempt": _utc_now(),
+            })
+            connections[sonarr_url] = value
+            self._save(connections)
+            return dict(value)
+
+    def owner_for(self, connection_id: str) -> str:
+        if not connection_id:
+            return ""
+        with self._lock:
+            for value in self._load().values():
+                if value.get("connection_id") == connection_id:
+                    return str(value.get("owner", ""))
+        return ""
+
+    def success(self, sonarr_url: str, result: dict, *, owner: str = "",
+                connection_id: str = "") -> dict:
+        with self._lock:
+            connections = self._load()
+            value = dict(connections.get(sonarr_url, {}))
+            value.update({
+                "status": "connected",
+                "sonarr_url": sonarr_url,
+                "callback_url": result.get("callback_url", ""),
+                "notification_id": result.get("notification_id"),
+                "sonarr_version": result.get("sonarr_version", ""),
+                "sonarr_instance": result.get("sonarr_instance", "Sonarr"),
+                "action": result.get("action", "created"),
+                "owner": owner or value.get("owner", ""),
+                "connection_id": connection_id or value.get("connection_id", ""),
+                "last_success": _utc_now(),
+            })
+            connections[sonarr_url] = value
+            self._save(connections)
+            return dict(value)
 
     def failure(self, sonarr_url: str, callback_url: str, error: str) -> dict:
-        value = {
-            "status": "failed",
-            "sonarr_url": sonarr_url,
-            "callback_url": callback_url,
-            "error": str(error)[:300],
-            "last_attempt": _utc_now(),
-        }
-        atomic_write_json(str(self.path), value)
-        return value
+        with self._lock:
+            connections = self._load()
+            value = dict(connections.get(sonarr_url, {}))
+            value.update({
+                "status": "failed",
+                "sonarr_url": sonarr_url,
+                "callback_url": callback_url,
+                "error": str(error)[:300],
+                "last_attempt": _utc_now(),
+            })
+            connections[sonarr_url] = value
+            self._save(connections)
+            return dict(value)

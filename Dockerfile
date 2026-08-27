@@ -33,4 +33,4 @@ EXPOSE 8222 8223
 
 # entrypoint.sh drops privileges to PUID/PGID via gosu
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["gunicorn", "--bind", "0.0.0.0:8222", "--workers", "1", "--threads", "4", "--timeout", "120", "app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8222", "--workers", "1", "--threads", "8", "--timeout", "120", "app:app"]

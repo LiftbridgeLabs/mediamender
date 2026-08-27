@@ -110,6 +110,26 @@ class SonarrClientTests(unittest.TestCase):
         self.assertTrue(session.calls[-1][1].endswith("/notification/7"))
         self.assertEqual(session.calls[-1][2]["json"]["id"], 7)
 
+    def test_provision_adds_connection_identity_header(self):
+        session = FakeSession([
+            FakeResponse({"version": "5.0.1"}),
+            FakeResponse([webhook_schema()]), FakeResponse(None),
+            FakeResponse([]), FakeResponse({"id": 42}),
+        ])
+        SonarrClient(
+            "http://sonarr:8989", "key", session=session,
+        ).provision_webhook(
+            "http://mediamender:8222", "secret",
+            connection_id="connection-1",
+        )
+        fields = {
+            field["name"]: field["value"]
+            for field in session.calls[2][2]["json"]["fields"]
+        }
+        self.assertIn({
+            "key": "X-MediaMender-Connection-ID", "value": "connection-1",
+        }, fields["headers"])
+
     def test_callback_path_is_fixed_and_private_hosts_are_allowed(self):
         self.assertEqual(
             normalize_callback_url("http://192.168.1.20:8222"),
@@ -135,6 +155,29 @@ class SonarrClientTests(unittest.TestCase):
             root.rmdir()
         self.assertNotIn("must-not-persist", content)
         self.assertNotIn("also-not-persist", content)
+
+    def test_status_store_tracks_multiple_instances_and_owners(self):
+        root = Path("tests/.sonarr-status-runtime")
+        root.mkdir(exist_ok=True)
+        try:
+            store = SonarrConnectionStore(str(root))
+            first = store.prepare("http://sonarr-anime:8989", "alice")
+            store.success("http://sonarr-anime:8989", {
+                "action": "created", "sonarr_instance": "Anime",
+                "callback_url": "http://mediamender:8222/api/webhooks/sonarr",
+            }, owner="alice", connection_id=first["connection_id"])
+            second = store.prepare("http://sonarr-unlimited:8989", "bob")
+            store.success("http://sonarr-unlimited:8989", {
+                "action": "created", "sonarr_instance": "Unlimited",
+                "callback_url": "http://mediamender:8222/api/webhooks/sonarr",
+            }, owner="bob", connection_id=second["connection_id"])
+            status = store.status()
+            self.assertEqual(len(status["connections"]), 2)
+            self.assertEqual(store.owner_for(first["connection_id"]), "alice")
+            self.assertEqual(store.owner_for(second["connection_id"]), "bob")
+        finally:
+            (root / "sonarr-webhook.json").unlink(missing_ok=True)
+            root.rmdir()
 
 
 class SonarrProvisioningApiTests(unittest.TestCase):
@@ -175,6 +218,7 @@ class SonarrProvisioningApiTests(unittest.TestCase):
             "sonarr_version": "5.0.1", "sonarr_instance": "TV",
         }
         store = Mock()
+        store.prepare.return_value = {"connection_id": "connection-1"}
         store.success.return_value = {"status": "connected", "notification_id": 12}
         with patch.object(app, "config", config), \
              patch.object(app, "SonarrClient", return_value=client) as constructor, \
@@ -190,6 +234,11 @@ class SonarrProvisioningApiTests(unittest.TestCase):
         client.provision_webhook.assert_called_once_with(
             "http://mediamender:8222/api/webhooks/sonarr", "webhook-secret",
             status={"version": "5.0.1"},
+            connection_id="connection-1",
+        )
+        store.success.assert_called_once_with(
+            "http://sonarr:8989", client.provision_webhook.return_value,
+            owner="default", connection_id="connection-1",
         )
         body = response.get_data(as_text=True)
         self.assertNotIn("api-sensitive", body)
@@ -210,6 +259,7 @@ class SonarrProvisioningApiTests(unittest.TestCase):
                 "sonarr_version": "5.0.1", "sonarr_instance": "Sonarr",
             }
             store = Mock()
+            store.prepare.return_value = {"connection_id": "connection-1"}
             store.success.return_value = {"status": "connected"}
             with patch.object(app, "CONFIG_PATH", str(config_path)), \
                  patch.object(app, "config", runtime), \

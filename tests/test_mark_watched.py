@@ -51,6 +51,24 @@ class SonarrWebhookApiTests(unittest.TestCase):
         manager.enqueue.assert_called_once()
         manager.process.assert_not_called()
 
+    def test_managed_connection_binds_job_to_its_rule_user(self):
+        manager = Mock()
+        manager.enqueue.return_value = ({"id": "job-1", "status": "queued"}, True)
+        connection = Mock()
+        connection.owner_for.return_value = "alice"
+        with patch.object(app, "config", self.config), \
+             patch.object(app, "mark_watched", manager), \
+             patch.object(app, "sonarr_connection", connection):
+            response = self.client.post(
+                "/api/webhooks/sonarr", json=sonarr_download(),
+                headers={"X-Sonarr-Webhook-Secret": "sonarr-secret",
+                         "X-MediaMender-Connection-ID": "connection-1"},
+            )
+        self.assertEqual(response.status_code, 202)
+        queued = manager.enqueue.call_args.args[0]
+        self.assertEqual(queued["_mediamender_user"], "alice")
+        self.assertEqual(queued["_mediamender_connection"], "connection-1")
+
     def test_non_final_event_is_rejected(self):
         payload = sonarr_download()
         payload["eventType"] = "Grab"
@@ -91,6 +109,51 @@ class MarkWatchedUiApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("/api/mark-watched/poster", body)
         self.assertNotIn("top-secret-token", body)
+
+    def test_options_loads_only_selected_server_and_excludes_movies(self):
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [
+                LibraryConfig("TV", "physical", [], section_id="7"),
+                LibraryConfig("Movies", "physical", [], section_id="8"),
+            ],
+        )])
+        plex = Mock()
+        plex.get_sections.return_value = [
+            {"id": "7", "title": "TV", "type": "show"},
+            {"id": "8", "title": "Movies", "type": "movie"},
+        ]
+        with patch.object(app, "config", config), \
+             patch.object(app, "plex_clients", {"Plex": plex}):
+            response = self._client().get("/api/mark-watched/options?instance=Plex")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["libraries"], [{
+            "name": "TV", "section_id": "7",
+        }])
+        plex.get_sections.assert_called_once_with()
+
+    def test_show_api_requests_one_bounded_plex_page(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "secret-token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.list_tv_shows_page.return_value = {"shows": [{
+            "rating_key": "10", "title": "Example", "year": 2024,
+            "thumb": "/thumb", "leaf_count": 10, "viewed_leaf_count": 1,
+        }], "total": 50}
+        with patch.object(app, "config", config), \
+             patch.object(app, "plex_clients", {"Plex": plex}), \
+             patch.object(app.mark_watched_rules, "rule", return_value={
+                 "show_enabled": False,
+             }):
+            response = self._client().get(
+                "/api/mark-watched/shows?instance=Plex&library=TV&page=2&page_size=24"
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["pages"], 3)
+        plex.list_tv_shows_page.assert_called_once_with("7", 24, 24)
+        self.assertNotIn("secret-token", response.get_data(as_text=True))
 
     def test_season_rule_api_persists_explicit_override(self):
         library = LibraryConfig("TV", "physical", [], section_id="7")
@@ -232,6 +295,29 @@ class MarkWatchedRuleTests(unittest.TestCase):
         self.assertEqual(result["marked"], 1)
         plex.mark_watched.assert_called_once_with("30")
 
+    def test_processor_uses_only_managed_connection_owner_rules(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = {
+            "rating_key": "30", "show_rating_key": "10",
+            "season_rating_key": "20", "season_index": 2,
+            "episode_index": 3, "title": "Done",
+        }
+        self.rules.set_show("alice", "Plex", "TV", "10", False)
+        self.rules.set_show("bob", "Plex", "TV", "10", True)
+        event = {
+            "series": {"title": "Example Show"},
+            "episodes": [{"season": 2, "episode": 3}],
+            "rule_user": "alice",
+        }
+        result = process_plex_event(event, config, {"Plex": plex}, self.rules)
+        self.assertEqual(result["marked"], 0)
+        plex.mark_watched.assert_not_called()
+
     def test_multi_episode_import_waits_before_marking_partial_match(self):
         library = LibraryConfig("TV", "physical", [], section_id="7")
         config = AppConfig(instances=[PlexInstanceConfig(
@@ -281,6 +367,20 @@ class PlexMarkWatchedClientTests(unittest.TestCase):
             client.mark_watched("30")
         self.assertEqual(get.call_args.args[0], "/:/scrobble")
         self.assertEqual(get.call_args.kwargs["params"]["key"], "30")
+
+    def test_list_tv_shows_page_uses_plex_container_pagination(self):
+        client = PlexClient("http://plex", "token")
+        response = Mock()
+        response.json.return_value = {"MediaContainer": {
+            "totalSize": 80,
+            "Metadata": [{"ratingKey": "10", "title": "Example"}],
+        }}
+        with patch.object(client, "_get", return_value=response) as get:
+            result = client.list_tv_shows_page("7", 24, 24)
+        self.assertEqual(result["total"], 80)
+        self.assertEqual(len(result["shows"]), 1)
+        self.assertEqual(get.call_args.kwargs["params"]["X-Plex-Container-Start"], 24)
+        self.assertEqual(get.call_args.kwargs["params"]["X-Plex-Container-Size"], 24)
 
 
 class MarkWatchedPermissionTests(unittest.TestCase):
@@ -407,6 +507,10 @@ class MarkWatchedSettingsTests(unittest.TestCase):
         self.assertIn('id="ss-mark-watched"', html)
         self.assertIn('id="mark-watched-sonarr-connect"', html)
         self.assertIn("async function connectSonarr()", html)
+        self.assertIn('id="mark-watched-instance"', html)
+        self.assertIn('id="mark-watched-library"', html)
+        self.assertIn("loadMarkWatchedPage", html)
+        self.assertIn('<div class="rollup-title">Empty Trash</div>', html)
 
 
 if __name__ == "__main__":

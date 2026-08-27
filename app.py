@@ -992,6 +992,14 @@ def api_sonarr_webhook():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "A JSON webhook payload is required"}), 400
+    connection_id = request.headers.get("X-MediaMender-Connection-ID", "").strip()
+    if connection_id:
+        owner = sonarr_connection.owner_for(connection_id)
+        if not owner:
+            return jsonify({"ok": False, "error": "Unknown Sonarr connection"}), 401
+        payload = dict(payload)
+        payload["_mediamender_user"] = owner
+        payload["_mediamender_connection"] = connection_id
     try:
         record, created = mark_watched.enqueue(payload)
     except ValueError as exc:
@@ -1018,7 +1026,7 @@ def api_mark_watched_status():
 def api_mark_watched_sonarr_status():
     if not _is_admin():
         return jsonify({"ok": False, "error": "Administrator role required"}), 403
-    return jsonify({"ok": True, "connection": sonarr_connection.status()})
+    return jsonify({"ok": True, **sonarr_connection.status()})
 
 
 @app.route("/api/mark-watched/sonarr/connect", methods=["POST"])
@@ -1039,10 +1047,20 @@ def api_mark_watched_sonarr_connect():
         # Verify the key before creating a local webhook secret.
         sonarr_status = client.system_status()
         webhook_secret = _ensure_sonarr_webhook_secret()
+        owner = _current_username()
+        pending = sonarr_connection.prepare(sonarr_url, owner)
         result = client.provision_webhook(
             callback_url, webhook_secret, status=sonarr_status,
+            connection_id=pending["connection_id"],
         )
-        connection = sonarr_connection.success(sonarr_url, result)
+        connection = sonarr_connection.success(
+            sonarr_url, result, owner=owner,
+            connection_id=pending["connection_id"],
+        )
+        public_connection = {
+            key: value for key, value in connection.items()
+            if key != "connection_id"
+        }
         logger.info(
             "Sonarr webhook %s for %s (notification %s)",
             result["action"], result.get("sonarr_instance", "Sonarr"),
@@ -1050,7 +1068,7 @@ def api_mark_watched_sonarr_connect():
         )
         return jsonify({
             "ok": True,
-            "connection": connection,
+            "connection": public_connection,
             "message": (
                 f"Sonarr webhook {result['action']} and its Test event succeeded. "
                 "The Sonarr API key was not saved."
@@ -1114,6 +1132,116 @@ def api_mark_watched_libraries():
             result.append({"instance": instance.name, "library": library.name,
                            "section_id": str(section_id), "shows": shows})
     return jsonify({"libraries": result, "jobs": mark_watched.status(10)["jobs"]})
+
+
+@app.route("/api/mark-watched/options", methods=["GET"])
+@require_auth
+def api_mark_watched_options():
+    """List configured servers, then TV libraries for one selected server."""
+    requested = str(request.args.get("instance", "")).strip()
+    configured_visibility = config.mark_watched.visible_libraries
+    visible = set(configured_visibility or [])
+    with _runtime_lock:
+        instances = list(config.instances)
+    available_instances = [{
+        "name": instance.name,
+        "library_count": sum(
+            1 for library in instance.libraries
+            if configured_visibility is None
+            or f"{instance.name}::{library.name}" in visible
+        ),
+    } for instance in instances if any(
+        configured_visibility is None
+        or f"{instance.name}::{library.name}" in visible
+        for library in instance.libraries
+    )]
+    if not requested:
+        return jsonify({"instances": available_instances, "libraries": []})
+
+    instance = next((item for item in instances if item.name == requested), None)
+    plex = plex_clients.get(requested)
+    if instance is None or plex is None:
+        return jsonify({"error": "Unknown Plex server"}), 404
+    try:
+        sections = plex.get_sections()
+    except Exception as exc:
+        logger.warning("Could not list TV libraries for %s (%s)",
+                       requested, type(exc).__name__)
+        return jsonify({"error": "Plex TV libraries could not be loaded"}), 502
+    by_id = {str(section.get("id", "")): section for section in sections}
+    by_title = {str(section.get("title", "")): section for section in sections}
+    libraries = []
+    for library in instance.libraries:
+        key = f"{instance.name}::{library.name}"
+        if configured_visibility is not None and key not in visible:
+            continue
+        section = by_id.get(str(library.section_id or "")) or by_title.get(library.name)
+        if not section or section.get("type") != "show":
+            continue
+        libraries.append({
+            "name": library.name,
+            "section_id": str(section["id"]),
+        })
+    return jsonify({"instances": available_instances, "libraries": libraries})
+
+
+@app.route("/api/mark-watched/shows", methods=["GET"])
+@require_auth
+def api_mark_watched_shows():
+    """Return one bounded page from one explicitly selected Plex TV library."""
+    instance_name = str(request.args.get("instance", "")).strip()
+    library_name = str(request.args.get("library", "")).strip()
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+        page_size = int(request.args.get("page_size", 12))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Valid page and page_size are required"}), 400
+    if page_size not in {12, 24, 36, 48}:
+        return jsonify({"error": "page_size must be 12, 24, 36, or 48"}), 400
+    instance, library, plex = _mark_watched_library(instance_name, library_name)
+    if instance is None or library is None or plex is None:
+        return jsonify({"error": "Unknown Plex TV library"}), 404
+    configured_visibility = config.mark_watched.visible_libraries
+    if configured_visibility is not None and (
+        f"{instance_name}::{library_name}" not in set(configured_visibility)
+    ):
+        return jsonify({"error": "This Plex library is hidden in Settings"}), 404
+    section_id = library.section_id or plex.find_section_id(library.name)
+    if not section_id or plex.get_section_type(str(section_id)) != "show":
+        return jsonify({"error": "Mark-it-Watched supports TV libraries only"}), 400
+    try:
+        result = plex.list_tv_shows_page(
+            str(section_id), (page - 1) * page_size, page_size,
+        )
+    except Exception as exc:
+        logger.warning("Could not load Mark-it-Watched page for %s::%s (%s)",
+                       instance_name, library_name, type(exc).__name__)
+        return jsonify({"error": "Plex shows could not be loaded"}), 502
+    username = _current_username()
+    shows = result["shows"]
+    for show in shows:
+        rule = mark_watched_rules.rule(
+            username, instance_name, library_name, show["rating_key"], 0,
+        )
+        show["rule_enabled"] = rule["show_enabled"]
+        show["poster_url"] = url_for(
+            "api_mark_watched_poster", instance_name=instance_name,
+            key=show.get("thumb", ""),
+        ) if show.get("thumb") else ""
+        show.pop("thumb", None)
+    total = int(result.get("total", len(shows)))
+    pages = max(1, (total + page_size - 1) // page_size)
+    return jsonify({
+        "instance": instance_name,
+        "library": library_name,
+        "section_id": str(section_id),
+        "shows": shows,
+        "page": page,
+        "page_size": page_size,
+        "pages": pages,
+        "total": total,
+        "rule_user": username,
+    })
 
 
 @app.route("/api/mark-watched/seasons", methods=["GET"])

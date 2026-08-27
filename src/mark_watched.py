@@ -73,6 +73,8 @@ def normalize_sonarr_download(payload: dict) -> dict | None:
         },
         "episodes": normalized_episodes,
         "is_upgrade": bool(payload.get("isUpgrade", False)),
+        "rule_user": str(payload.get("_mediamender_user", "")),
+        "source_connection": str(payload.get("_mediamender_connection", "")),
     }
 
 
@@ -81,6 +83,8 @@ def webhook_key(event: dict) -> str:
         "series": event["series"],
         "episode_file": event["episode_file"],
         "episodes": event["episodes"],
+        "rule_user": event.get("rule_user", ""),
+        "source_connection": event.get("source_connection", ""),
     }
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
@@ -365,10 +369,15 @@ def process_plex_event(event: dict, app_config, clients: dict,
         )
         raise PlexEpisodePending(f"{event['series']['title']} {coordinates}")
     for item in matched:
-        if not rules.enabled_for_any_user(
+        rule_user = str(event.get("rule_user", ""))
+        enabled = rules.rule(
+            rule_user, item["instance_name"], item["library_name"],
+            item["show_rating_key"], item["season_index"],
+        )["enabled"] if rule_user else rules.enabled_for_any_user(
             item["instance_name"], item["library_name"],
             item["show_rating_key"], item["season_index"],
-        ):
+        )
+        if not enabled:
             continue
         item["plex"].mark_watched(item["rating_key"])
         marked.append(item)
