@@ -373,12 +373,12 @@ plex_instances:
 
 ## Mark-it-Watched
 
-Mark-it-Watched applies per-user show defaults and explicit season overrides to
-future finalized Sonarr imports. An administrator can open Settings â†’
-Mark-it-Watched, enter the Sonarr URL and API key, verify the callback URL, and
-select **Connect Sonarr**. mediaMender uses Sonarr's advertised Webhook schema,
-runs Sonarr's Test event, and creates or updates the managed connection. The
-Sonarr API key is used for that request only and is never saved.
+Mark-it-Watched applies show defaults and explicit season overrides to future
+finalized Sonarr imports for the configured Plex identity. Open Settings,
+select Mark-it-Watched, enter the Sonarr URL and API key, verify the callback
+URL, and select **Connect entered Sonarr**. mediaMender uses Sonarr's advertised
+Webhook schema, runs Sonarr's Test event, and creates or updates the managed
+connection. The Sonarr API key is used for that request only and is never saved.
 
 Repeat Connect Sonarr for every Sonarr instance. mediaMender keeps a non-secret
 per-instance connection list and gives each automatically managed webhook a
@@ -405,10 +405,13 @@ SONARR_ANIME_URL=http://sonarr-anime:8989
 SONARR_ANIME_API_KEY=...
 ```
 
-The URL selects the correct key; a trailing slash is ignored. A key typed in
-the form takes precedence, while `SONARR_API_KEY` remains an optional fallback
-for unpaired instances. Keys are never included in the status response or
-written to `data/sonarr-webhook.json`.
+The URL selects the correct key; a trailing slash is ignored. Configured URLs
+appear in Settings before their webhooks are installed. Select **Install
+webhook** for each new instance, or **Repair / test** to update the managed
+webhook and rerun Sonarr's Test event. A key typed in the form takes precedence,
+while `SONARR_API_KEY` remains an optional fallback for unpaired instances.
+Keys are never included in the status response or written to
+`data/sonarr-webhook.json`.
 
 If no dedicated webhook secret exists, Connect Sonarr generates and saves one
 automatically. `MEDIAMENDER_SONARR_WEBHOOK_SECRET` remains the preferred

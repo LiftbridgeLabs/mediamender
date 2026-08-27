@@ -318,6 +318,48 @@ class SonarrProvisioningApiTests(unittest.TestCase):
         self.assertTrue(connections[0]["api_key_available"])
         self.assertFalse(connections[1]["api_key_available"])
 
+    def test_status_lists_environment_instances_before_they_are_connected(self):
+        store = Mock()
+        store.status.return_value = {"connections": []}
+        environment = {
+            "SONARR_MAIN_URL": "http://sonarr:8989",
+            "SONARR_MAIN_API_KEY": "main-key",
+            "SONARR_ANIME_URL": "http://sonarr-anime:8989",
+            "SONARR_ANIME_API_KEY": "anime-key",
+        }
+        with patch.dict(os.environ, environment, clear=True), \
+             patch.object(app, "sonarr_connection", store):
+            response = self._client().get("/api/mark-watched/sonarr")
+        connections = response.get_json()["connections"]
+        self.assertEqual(
+            {item["sonarr_url"] for item in connections},
+            {"http://sonarr:8989", "http://sonarr-anime:8989"},
+        )
+        self.assertTrue(all(item["status"] == "not_connected" for item in connections))
+        self.assertTrue(all(item["configured_from_environment"] for item in connections))
+        self.assertTrue(all(item["api_key_available"] for item in connections))
+        self.assertNotIn("main-key", response.get_data(as_text=True))
+        self.assertNotIn("anime-key", response.get_data(as_text=True))
+
+    def test_status_merges_saved_connection_with_environment_instance(self):
+        store = Mock()
+        store.status.return_value = {"connections": [{
+            "sonarr_url": "http://sonarr:8989", "status": "connected",
+            "sonarr_instance": "Main Sonarr", "notification_id": 42,
+        }]}
+        environment = {
+            "SONARR_MAIN_URL": "http://sonarr:8989",
+            "SONARR_MAIN_API_KEY": "main-key",
+        }
+        with patch.dict(os.environ, environment, clear=True), \
+             patch.object(app, "sonarr_connection", store):
+            response = self._client().get("/api/mark-watched/sonarr")
+        connections = response.get_json()["connections"]
+        self.assertEqual(len(connections), 1)
+        self.assertEqual(connections[0]["status"], "connected")
+        self.assertTrue(connections[0]["saved_record"])
+        self.assertTrue(connections[0]["configured_from_environment"])
+
     def test_missing_key_names_the_exact_suggested_environment_pair(self):
         with patch.dict(os.environ, {}, clear=True), \
              patch.object(app, "SonarrClient") as constructor:

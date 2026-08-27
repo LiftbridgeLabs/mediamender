@@ -676,21 +676,22 @@ dialog.overlay::backdrop{background:transparent;}
 .htable td{padding:13px 16px;}
 .empty-msg{font-size:13px;}
 .app-footer{
-  width:min(var(--content-w),calc(100% - clamp(32px,5vw,96px)));
-  margin:auto auto 0;
-  padding:24px 0 30px;
+  width:100%;
+  margin:auto 0 0;
+  padding:10px clamp(20px,3vw,56px);
   border-top:1px solid var(--border);
+  background:var(--bg2);
   display:flex;
   align-items:center;
   justify-content:space-between;
-  gap:24px;
+  gap:18px;
   color:var(--muted);
-  font-size:12px;
+  font-size:11px;
 }
 .footer-brand{display:flex;align-items:center;gap:10px;}
-.footer-logo{width:30px;height:30px;object-fit:contain;opacity:.88;}
+.footer-logo{width:22px;height:22px;object-fit:contain;opacity:.88;}
 .footer-product{color:var(--text2);font-weight:700;}
-.footer-version{font-family:var(--mono);margin-left:7px;color:var(--muted);}
+.footer-version{font-family:var(--mono);color:var(--accent2);}
 .footer-links{display:flex;align-items:center;gap:18px;}
 .footer-links a{color:var(--text2);text-decoration:none;}
 .footer-links a:hover{color:var(--accent2);}
@@ -709,7 +710,7 @@ dialog.overlay::backdrop{background:transparent;}
   .nav-link{padding:8px 10px;font-size:12px;}
   .nav-right{gap:6px;}
   .sched-label,.nav-right .btn-warn{display:none;}
-  .page,.app-footer{width:calc(100% - 28px);}
+  .page{width:calc(100% - 28px);}
   .dashboard-intro{align-items:flex-start;flex-direction:column;}
   .server-tabs{display:none;}
   .server-select-label{display:block;}
@@ -1364,13 +1365,13 @@ dialog.overlay::backdrop{background:transparent;}
         <div class="settings-section-title">Mark-it-Watched</div>
         <div class="settings-section-desc">Choose which configured Plex libraries appear on the rule page and connect Sonarr to finalized import processing.</div>
         {% if current_identity.role == 'admin' %}
-        <div class="card"><div class="card-header"><div><div class="card-title">Connect Sonarr</div><div class="form-hint">mediaMender will create or update its Sonarr Webhook connection and run Sonarr's Test event.</div></div></div><div class="card-body">
+        <div class="card"><div class="card-header"><div><div class="card-title">Sonarr Webhook Connections</div><div class="form-hint">Configured Sonarr instances appear below. Install or repair each webhook directly from mediaMender.</div></div></div><div class="card-body">
           <div class="form-grid">
             <div class="form-group"><label class="form-label">Sonarr URL</label><input class="form-input" id="mark-watched-sonarr-url" type="url" placeholder="http://sonarr:8989" autocomplete="url"></div>
             <div class="form-group"><label class="form-label">Sonarr API key</label><input class="form-input" id="mark-watched-sonarr-api-key" type="password" placeholder="Used once and never saved" autocomplete="new-password"></div>
             <div class="form-group"><label class="form-label">mediaMender callback URL</label><input class="form-input" id="mark-watched-callback-url" type="url" placeholder="http://mediamender:8222/api/webhooks/sonarr"><div class="form-hint">Use a hostname or IP that the Sonarr host/container can reach.</div></div>
           </div>
-          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><button class="btn btn-primary" id="mark-watched-sonarr-connect" onclick="connectSonarr()">Connect Sonarr</button><span id="mark-watched-sonarr-status" class="form-hint">No Sonarr connections recorded yet.</span></div>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><button class="btn btn-primary" id="mark-watched-sonarr-connect" onclick="connectSonarr()">Connect entered Sonarr</button><span id="mark-watched-sonarr-status" class="form-hint">Loading configured Sonarr instances&hellip;</span></div>
           <div class="metadata-settings-list" id="mark-watched-sonarr-connections" style="margin-top:14px;"></div>
           <div class="form-hint" style="margin-top:10px;">The API key is sent only to this mediaMender request and is not written to config, status files, logs, or API responses.</div>
         </div></div>
@@ -1804,11 +1805,8 @@ dialog.overlay::backdrop{background:transparent;}
 <footer class="app-footer">
   <div class="footer-brand">
     <img class="footer-logo" src="/static/mediamender.png" alt="{{ product_name }}">
-    <div>
-      <span class="footer-product">{{ product_name }}</span>
-      <span class="footer-version">v{{ app_version }}</span>
-      <div>Plex trash safety monitor</div>
-    </div>
+    <span class="footer-product">{{ product_name }}</span>
+    <span class="footer-version">Version {{ app_version }}</span>
   </div>
   <div class="footer-links">
     <a href="https://github.com/LiftbridgeLabs/mediamender" target="_blank" rel="noreferrer">GitHub</a>
@@ -3517,28 +3515,38 @@ async function loadSonarrConnectionStatus() {
     const connections = data.connections || [];
     const latest = connections[0] || {};
     if (latest.callback_url) callback.value = latest.callback_url;
+    const configured = connections.filter(item => item.configured_from_environment).length;
     const connected = connections.filter(item => item.status === 'connected').length;
     const failed = connections.filter(item => item.status === 'failed').length;
     if (connections.length) {
-      status.textContent = `${connected} connected Sonarr ${connected===1?'instance':'instances'}${failed?`; ${failed} need attention`:''}.`;
+      const waiting = connections.filter(item => item.status === 'not_connected').length;
+      status.textContent = `${configured} configured · ${connected} ${connected===1?'webhook':'webhooks'} installed${waiting?` · ${waiting} not connected`:''}${failed?` · ${failed} need attention`:''}.`;
       status.style.color = failed && !connected ? 'var(--fail2)' : 'var(--pass)';
     } else {
       status.textContent = 'No Sonarr connections recorded yet.';
       status.style.color = '';
     }
-    if (list) list.innerHTML = connections.map(connection => `<div class="metadata-setting-row"><div><strong>${h(connection.sonarr_instance || 'Sonarr')}</strong><br><span>${h(connection.sonarr_url || '')} &middot; ${h(connection.sonarr_version || 'version unknown')}</span>${connection.error?`<br><span style="color:var(--fail2);">${h(connection.error)}</span>`:''}</div><div style="display:flex;align-items:center;gap:8px;"><span class="badge ${connection.status==='connected'?'success':connection.status==='failed'?'error':'skipped'}">${h(connection.status || 'unknown')}</span><button class="btn btn-danger btn-sm" onclick="removeSonarrConnection(${h(JSON.stringify(connection.sonarr_url || ''))},${connection.status==='connected'||connection.notification_id?'true':'false'},${connection.api_key_available?'true':'false'},this)">Remove</button></div></div>`).join('') || '<div class="empty-msg">Connect each Sonarr URL once.</div>';
+    if (list) list.innerHTML = connections.map(connection => {
+      const installed = connection.status === 'connected';
+      const action = installed ? 'Repair / test' : connection.status === 'failed' ? 'Retry webhook' : 'Install webhook';
+      const version = connection.sonarr_version ? ` · v${h(connection.sonarr_version)}` : '';
+      const verified = connection.last_success ? `<br><span>Last verified ${h(fmtAgo(connection.last_success))}</span>` : '';
+      const missingKey = !connection.api_key_available ? '<br><span style="color:var(--warn2);">API key required</span>' : '';
+      const remove = connection.saved_record ? `<button class="btn btn-danger btn-sm" onclick="removeSonarrConnection(${h(JSON.stringify(connection.sonarr_url || ''))},${installed||connection.notification_id?'true':'false'},${connection.api_key_available?'true':'false'},this)">Remove</button>` : '';
+      return `<div class="metadata-setting-row"><div><strong>${h(connection.sonarr_instance || connection.environment_label || 'Sonarr')}</strong><br><span>${h(connection.sonarr_url || '')}${version}</span>${verified}${missingKey}${connection.error?`<br><span style="color:var(--fail2);">${h(connection.error)}</span>`:''}</div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;"><span class="badge ${installed?'success':connection.status==='failed'?'error':'skipped'}">${installed?'webhook installed':connection.status==='failed'?'needs attention':'not connected'}</span><button class="btn ${installed?'btn-secondary':'btn-primary'} btn-sm" onclick="connectSonarr(${h(JSON.stringify(connection.sonarr_url || ''))},this)">${action}</button>${remove}</div></div>`;
+    }).join('') || '<div class="empty-msg">No Sonarr environment URLs found. Enter one above to connect it manually.</div>';
   } catch (error) {
     status.textContent = error.message || 'Could not load Sonarr status';
     status.style.color = 'var(--fail2)';
   }
 }
 
-async function connectSonarr() {
-  const button = document.getElementById('mark-watched-sonarr-connect');
+async function connectSonarr(configuredUrl = '', actionButton = null) {
+  const button = actionButton || document.getElementById('mark-watched-sonarr-connect');
   const status = document.getElementById('mark-watched-sonarr-status');
   const apiKey = document.getElementById('mark-watched-sonarr-api-key');
   const payload = {
-    sonarr_url: document.getElementById('mark-watched-sonarr-url')?.value.trim() || '',
+    sonarr_url: configuredUrl || document.getElementById('mark-watched-sonarr-url')?.value.trim() || '',
     api_key: apiKey?.value || '',
     callback_url: document.getElementById('mark-watched-callback-url')?.value.trim() || '',
   };
@@ -3569,7 +3577,7 @@ async function connectSonarr() {
     toast(status.textContent, 'fail');
   } finally {
     button.disabled = false;
-    button.innerHTML = button.dataset.label || 'Connect Sonarr';
+    button.innerHTML = button.dataset.label || 'Connect entered Sonarr';
   }
 }
 

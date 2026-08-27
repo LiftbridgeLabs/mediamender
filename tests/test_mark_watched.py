@@ -556,7 +556,12 @@ class MarkWatchedSettingsTests(unittest.TestCase):
         self.assertIn('class="library-refresh-control-grid"', html)
         self.assertIn('id="ss-mark-watched"', html)
         self.assertIn('id="mark-watched-sonarr-connect"', html)
-        self.assertIn("async function connectSonarr()", html)
+        self.assertIn(
+            "async function connectSonarr(configuredUrl = '', actionButton = null)",
+            html,
+        )
+        self.assertIn("Install webhook", html)
+        self.assertIn("Repair / test", html)
         self.assertIn('id="mark-watched-instance"', html)
         self.assertIn('id="mark-watched-library"', html)
         self.assertIn("loadMarkWatchedPage", html)

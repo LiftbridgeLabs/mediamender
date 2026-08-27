@@ -1021,8 +1021,10 @@ def api_mark_watched_status():
     return jsonify(mark_watched.status())
 
 
-def _sonarr_environment_entry(sonarr_url: str) -> tuple[str, str, str] | None:
-    """Return the URL variable, key variable, and key paired to this URL."""
+def _sonarr_environment_instances() -> list[dict]:
+    """Return configured Sonarr URLs and key availability without exposing keys."""
+    instances = []
+    seen_urls = set()
     for url_variable in sorted(os.environ):
         if not url_variable.startswith("SONARR_") or not url_variable.endswith("_URL"):
             continue
@@ -1033,10 +1035,29 @@ def _sonarr_environment_entry(sonarr_url: str) -> tuple[str, str, str] | None:
             configured_url = normalize_sonarr_url(os.environ.get(url_variable, ""))
         except ValueError:
             continue
-        if configured_url != sonarr_url:
+        if configured_url in seen_urls:
             continue
         key_variable = f"SONARR_{slug}_API_KEY"
-        return url_variable, key_variable, os.environ.get(key_variable, "").strip()
+        instances.append({
+            "sonarr_url": configured_url,
+            "environment_label": slug,
+            "url_variable": url_variable,
+            "key_variable": key_variable,
+            "api_key": os.environ.get(key_variable, "").strip(),
+        })
+        seen_urls.add(configured_url)
+    return instances
+
+
+def _sonarr_environment_entry(sonarr_url: str) -> tuple[str, str, str] | None:
+    """Return the URL variable, key variable, and key paired to this URL."""
+    for instance in _sonarr_environment_instances():
+        if instance["sonarr_url"] != sonarr_url:
+            continue
+        return (
+            instance["url_variable"], instance["key_variable"],
+            instance["api_key"],
+        )
     return None
 
 
@@ -1080,14 +1101,39 @@ def _missing_sonarr_api_key_message(sonarr_url: str) -> str:
 @require_auth
 def api_mark_watched_sonarr_status():
     saved = sonarr_connection.status()
+    saved_by_url = {}
     for connection in saved.get("connections", []):
         try:
             sonarr_url = normalize_sonarr_url(connection.get("sonarr_url", ""))
         except ValueError:
             connection["api_key_available"] = False
             continue
+        connection["sonarr_url"] = sonarr_url
+        saved_by_url[sonarr_url] = connection
+
+    connections = []
+    for configured in _sonarr_environment_instances():
+        sonarr_url = configured["sonarr_url"]
+        connection = saved_by_url.pop(sonarr_url, None)
+        saved_record = connection is not None
+        connection = dict(connection or {
+            "sonarr_url": sonarr_url,
+            "sonarr_instance": configured["environment_label"].replace("_", " ").title(),
+            "status": "not_connected",
+        })
+        connection["configured_from_environment"] = True
+        connection["environment_label"] = configured["environment_label"]
+        connection["saved_record"] = saved_record
         connection["api_key_available"] = bool(_sonarr_api_key({}, sonarr_url))
-    return jsonify({"ok": True, **saved})
+        connections.append(connection)
+
+    for sonarr_url, connection in saved_by_url.items():
+        connection["configured_from_environment"] = False
+        connection["saved_record"] = True
+        connection["api_key_available"] = bool(_sonarr_api_key({}, sonarr_url))
+        connections.append(connection)
+
+    return jsonify({"ok": True, "connections": connections})
 
 
 @app.route("/api/mark-watched/sonarr/connect", methods=["POST"])
