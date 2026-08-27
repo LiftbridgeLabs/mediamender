@@ -35,6 +35,7 @@ from src import notifications
 from src.version import __version__
 from src.timestamp_repair import TimestampRepairManager
 from src.library_refresh import LibraryRefreshManager
+from src.mark_watched import MarkWatchedManager
 from src.maintenance import lease, set_recovery_check
 from src.repair_worker_client import RepairWorkerClient, validate_worker_url
 from src.worker_auth import SignatureVerifier
@@ -86,6 +87,10 @@ timestamp_repair = TimestampRepairManager(
 )
 library_refresh = LibraryRefreshManager(
     os.path.dirname(os.path.abspath(CONFIG_PATH)),
+)
+mark_watched = MarkWatchedManager(
+    os.path.dirname(os.path.abspath(CONFIG_PATH)),
+    retry_delays=tuple(config.mark_watched.retry_delays),
 )
 runner.set_library_refresh_guard(library_refresh.trash_hold_reason)
 startup_recovery = timestamp_repair.recover()
@@ -665,6 +670,7 @@ def _apply_runtime_config(new_config: AppConfig) -> None:
         new_config.log_retention_days,
     )
     _worker_recovery_cache.clear()
+    mark_watched.retry_delays = tuple(new_config.mark_watched.retry_delays)
     CONFIG_LOAD_ERROR = ""
 
 
@@ -699,7 +705,7 @@ def _csrf_token() -> str:
 def protect_state_changes():
     if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
         return None
-    if request.endpoint in {"login", "api_timestamp_repair_worker_scan"}:
+    if request.endpoint in {"login", "api_timestamp_repair_worker_scan", "api_sonarr_webhook"}:
         return None
     # Non-browser automations with a verified API token do not rely on cookies
     # and therefore are not susceptible to cookie-based CSRF.
@@ -869,6 +875,47 @@ def api_status():
         "version":            __version__,
         "startup_checks":     refresh_progress,
     })
+
+
+def _valid_sonarr_webhook_auth() -> bool:
+    """Authenticate automation without granting it a browser session."""
+    if has_valid_api_token(config):
+        return True
+    supplied = request.headers.get("X-Sonarr-Webhook-Secret", "")
+    authorization = request.headers.get("Authorization", "")
+    if not supplied and authorization.lower().startswith("bearer "):
+        supplied = authorization[7:].strip()
+    expected = config.mark_watched.webhook_secret
+    return bool(expected and supplied and secrets.compare_digest(supplied, expected))
+
+
+@app.route("/api/webhooks/sonarr", methods=["POST"])
+def api_sonarr_webhook():
+    """Accept only completed imports and hand them to the durable worker."""
+    if not _valid_sonarr_webhook_auth():
+        return jsonify({"ok": False, "error": "Unauthorized Sonarr webhook"}), 401
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "A JSON webhook payload is required"}), 400
+    try:
+        record, created = mark_watched.enqueue(payload)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    if record is None:
+        return jsonify({"ok": True, "test": True, "message": "Sonarr webhook authenticated"})
+    return jsonify({
+        "ok": True,
+        "queued": created,
+        "duplicate": not created,
+        "job_id": record["id"],
+        "status": record["status"],
+    }), 202 if created else 200
+
+
+@app.route("/api/mark-watched/status", methods=["GET"])
+@require_auth
+def api_mark_watched_status():
+    return jsonify(mark_watched.status())
 
 
 @app.route("/api/history", methods=["GET"])
@@ -2204,6 +2251,7 @@ def api_wizard_save():
 
     cfg = {
         "features": data.get("features", existing.get("features", {})),
+        "mark_watched": data.get("mark_watched", existing.get("mark_watched", {})),
         "discord_webhook": data.get("discord_webhook", ""),
         "log_level": data.get("log_level", existing.get("log_level", "INFO")),
         "notify": {
@@ -2343,6 +2391,8 @@ def api_config_load():
         if isinstance(raw.get("auth"), dict):
             raw["auth"].pop("password_hash", None)
             raw["auth"].pop("api_token_hash", None)
+        if isinstance(raw.get("mark_watched"), dict):
+            raw["mark_watched"].pop("webhook_secret", None)
         return jsonify({"ok": True, "config": raw})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500

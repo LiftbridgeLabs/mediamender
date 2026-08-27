@@ -71,6 +71,14 @@ class FeatureConfig:
     metadata_health: bool = True
     timestamp_repair: bool = True
     library_refresh: bool = True
+    mark_watched: bool = True
+
+
+@dataclass
+class MarkWatchedConfig:
+    webhook_secret: str = ""
+    retry_delays: List[int] = field(default_factory=lambda: [10, 30, 60, 120, 300])
+    visible_libraries: List[str] = field(default_factory=list)
 
 
 # ── Plex instance config ──────────────────────────────────────────────────────
@@ -121,6 +129,7 @@ class NotificationDestination:
 class AppConfig:
     instances: List[PlexInstanceConfig]
     features: FeatureConfig = field(default_factory=FeatureConfig)
+    mark_watched: MarkWatchedConfig = field(default_factory=MarkWatchedConfig)
     repair_workers: List[RepairWorkerConfig] = field(default_factory=list)
     discord_webhook: str = ""
     notify: NotifyConfig = field(default_factory=NotifyConfig)
@@ -334,6 +343,21 @@ def parse_config(raw: dict, config_missing: bool = False) -> AppConfig:
         metadata_health=features_raw.get("metadata_health", True) is not False,
         timestamp_repair=features_raw.get("timestamp_repair", True) is not False,
         library_refresh=features_raw.get("library_refresh", True) is not False,
+        mark_watched=features_raw.get("mark_watched", True) is not False,
+    )
+    mark_raw = raw.get("mark_watched", {})
+    if not isinstance(mark_raw, dict):
+        mark_raw = {}
+    retry_delays = mark_raw.get("retry_delays", [10, 30, 60, 120, 300])
+    if not isinstance(retry_delays, list):
+        retry_delays = [10, 30, 60, 120, 300]
+    mark_watched = MarkWatchedConfig(
+        webhook_secret=_env_override(
+            "MEDIAMENDER_SONARR_WEBHOOK_SECRET",
+            str(mark_raw.get("webhook_secret", "")),
+        ),
+        retry_delays=[max(0, int(value)) for value in retry_delays[:10]],
+        visible_libraries=[str(value) for value in mark_raw.get("visible_libraries", [])],
     )
     clean_bundles_before_empty = bool(raw.get("clean_bundles_before_empty", False))
     max_trash_items = int(raw.get("max_trash_items", 1000))
@@ -375,6 +399,7 @@ def parse_config(raw: dict, config_missing: bool = False) -> AppConfig:
     return AppConfig(
         instances           = instances,
         features            = features,
+        mark_watched        = mark_watched,
         repair_workers      = repair_workers,
         discord_webhook     = discord,
         notify              = notify,
