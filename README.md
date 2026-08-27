@@ -387,6 +387,12 @@ Mark-it-Watched rules. Plex watched state is written through the matching
 server's globally configured Plex token and therefore belongs to that Plex
 account, not every Plex Home profile.
 
+Each saved Sonarr row has a Remove control. Failed setup records can be
+forgotten immediately. Removing a successfully managed connection asks for that
+Sonarr instance's API key once, deletes mediaMender's webhook from Sonarr, and
+then removes the local status record. Sonarr validation and callback-test errors
+are displayed without exposing API keys or webhook secrets.
+
 If no dedicated webhook secret exists, Connect Sonarr generates and saves one
 automatically. `MEDIAMENDER_SONARR_WEBHOOK_SECRET` remains the preferred
 environment override. Manual setup is still supported: use

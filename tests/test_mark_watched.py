@@ -180,6 +180,7 @@ class MarkWatchedUiApiTests(unittest.TestCase):
         self.assertIn("Inherited from show", html)
         self.assertNotIn("Application Users", html)
         self.assertIn("Plex: ${h(_markWatchedData.instance)}", html)
+        self.assertIn("removeSonarrConnection", html)
 
     def test_download_without_episode_file_is_rejected(self):
         payload = sonarr_download()

@@ -86,13 +86,33 @@ class SonarrClient:
         if not str(api_key or "").strip():
             raise ValueError("Sonarr API key is required")
         self.timeout = timeout
+        self._api_key = str(api_key).strip()
         self.session = session or requests.Session()
         self.session.headers.update({
             "Accept": "application/json",
-            "X-Api-Key": str(api_key).strip(),
+            "X-Api-Key": self._api_key,
         })
 
-    def _request(self, method: str, path: str, payload=None):
+    @staticmethod
+    def _error_detail(response) -> str:
+        """Extract Sonarr's useful validation message without echoing values."""
+        try:
+            payload = response.json()
+        except (ValueError, TypeError):
+            return ""
+        entries = payload if isinstance(payload, list) else [payload]
+        messages = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            message = entry.get("errorMessage") or entry.get("message") or entry.get("detail")
+            if message:
+                cleaned = " ".join(str(message).split())
+                if cleaned and cleaned not in messages:
+                    messages.append(cleaned[:300])
+        return "; ".join(messages[:3])
+
+    def _request(self, method: str, path: str, payload=None, *, redactions=()):
         try:
             response = self.session.request(
                 method,
@@ -103,8 +123,13 @@ class SonarrClient:
         except requests.RequestException as exc:
             raise SonarrError("Could not reach Sonarr") from exc
         if not response.ok:
+            detail = self._error_detail(response)
+            for sensitive in (self._api_key, *redactions):
+                if sensitive:
+                    detail = detail.replace(str(sensitive), "[redacted]")
             raise SonarrError(
                 f"Sonarr returned HTTP {response.status_code} for {method} {path}"
+                + (f": {detail}" if detail else "")
             )
         if response.status_code == 204 or not response.content:
             return None
@@ -180,7 +205,9 @@ class SonarrClient:
 
         # Test before changing Sonarr's saved connections. This invokes the same
         # callback and secret header that the saved connection will use.
-        self._request("POST", "/notification/test", payload)
+        self._request(
+            "POST", "/notification/test", payload, redactions=(secret,),
+        )
         notifications = self._request("GET", "/notification")
         if not isinstance(notifications, list):
             raise SonarrError("Sonarr returned an invalid notification list")
@@ -207,6 +234,22 @@ class SonarrClient:
             "sonarr_instance": str(status.get("instanceName", "Sonarr")),
             "callback_url": callback_url,
         }
+
+    def remove_webhook(self) -> int:
+        """Delete mediaMender-managed webhook connections from this Sonarr."""
+        notifications = self._request("GET", "/notification")
+        if not isinstance(notifications, list):
+            raise SonarrError("Sonarr returned an invalid notification list")
+        matches = [
+            item for item in notifications
+            if isinstance(item, dict)
+            and item.get("name") == WEBHOOK_NAME
+            and str(item.get("implementation", "")).lower() == "webhook"
+            and isinstance(item.get("id"), int)
+        ]
+        for item in matches:
+            self._request("DELETE", f"/notification/{item['id']}")
+        return len(matches)
 
 
 class SonarrConnectionStore:
@@ -246,6 +289,19 @@ class SonarrConnectionStore:
             reverse=True,
         )
         return {"connections": records}
+
+    def get(self, sonarr_url: str) -> dict | None:
+        with self._lock:
+            value = self._load().get(str(sonarr_url))
+            return dict(value) if isinstance(value, dict) else None
+
+    def remove(self, sonarr_url: str) -> bool:
+        with self._lock:
+            connections = self._load()
+            removed = connections.pop(str(sonarr_url), None) is not None
+            if removed:
+                self._save(connections)
+            return removed
 
     def prepare(self, sonarr_url: str, owner: str) -> dict:
         with self._lock:

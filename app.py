@@ -1086,6 +1086,49 @@ def api_mark_watched_sonarr_connect():
         }), 500
 
 
+@app.route("/api/mark-watched/sonarr", methods=["DELETE"])
+@require_auth
+def api_mark_watched_sonarr_remove():
+    """Remove the managed Sonarr webhook, then forget its local status."""
+    data = request.get_json(silent=True) or {}
+    try:
+        sonarr_url = normalize_sonarr_url(data.get("sonarr_url", ""))
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    connection = sonarr_connection.get(sonarr_url)
+    if connection is None:
+        return jsonify({"ok": False, "error": "Sonarr connection was not found"}), 404
+    api_key = str(data.get("api_key", "")).strip()
+    remote_record = (
+        connection.get("status") == "connected"
+        or bool(connection.get("notification_id"))
+    )
+    removed_webhooks = 0
+    if remote_record:
+        if not api_key:
+            return jsonify({
+                "ok": False,
+                "error": "The Sonarr API key is required to remove its managed webhook",
+            }), 400
+        try:
+            removed_webhooks = SonarrClient(sonarr_url, api_key).remove_webhook()
+        except (ValueError, SonarrError) as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+    try:
+        sonarr_connection.remove(sonarr_url)
+    except OSError:
+        logger.exception("Could not remove saved Sonarr connection status")
+        return jsonify({"ok": False, "error": "Could not remove saved Sonarr status"}), 500
+    return jsonify({
+        "ok": True,
+        "removed_webhooks": removed_webhooks,
+        "message": (
+            "Managed Sonarr webhook and saved connection removed"
+            if remote_record else "Failed Sonarr connection record removed"
+        ),
+    })
+
+
 @app.route("/api/mark-watched/libraries", methods=["GET"])
 @require_auth
 def api_mark_watched_libraries():

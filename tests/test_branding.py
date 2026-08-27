@@ -5,6 +5,7 @@ from unittest.mock import patch
 import app
 from src.auth import _verify_password
 from src.branding import PRODUCT_NAME, PRODUCT_SLUG, get_env
+from src.version import __version__
 
 
 class BrandingTests(unittest.TestCase):
@@ -29,6 +30,8 @@ class BrandingTests(unittest.TestCase):
         self.assertIn("/static/mediamender.png", html)
         status = app.app.test_client().get("/api/status").get_json()
         self.assertEqual(status["product"], "mediaMender")
+        self.assertEqual(__version__, "2.1.0")
+        self.assertEqual(status["version"], __version__)
 
     def test_new_logo_route_is_raster_png(self):
         response = app.app.test_client().get("/favicon.png")

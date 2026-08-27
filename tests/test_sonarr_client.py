@@ -9,7 +9,7 @@ import app
 from src.config import AppConfig, AppUser, MarkWatchedConfig
 from src.auth import hash_password
 from src.sonarr_client import (
-    SonarrClient, SonarrConnectionStore, WEBHOOK_NAME,
+    SonarrClient, SonarrConnectionStore, SonarrError, WEBHOOK_NAME,
     normalize_callback_url,
 )
 
@@ -59,6 +59,22 @@ class FakeSession:
 
 
 class SonarrClientTests(unittest.TestCase):
+    def test_http_error_includes_safe_sonarr_validation_message(self):
+        session = FakeSession([FakeResponse([{
+            "propertyName": "",
+            "errorMessage": (
+                "Unable to send test message: callback returned 401 for api-sensitive"
+            ),
+            "attemptedValue": "must-not-display",
+        }], 400)])
+        client = SonarrClient("http://sonarr:8989", "api-sensitive", session=session)
+        with self.assertRaisesRegex(
+            SonarrError, "Unable to send test message: callback returned 401",
+        ) as raised:
+            client._request("POST", "/notification/test", {})
+        self.assertNotIn("must-not-display", str(raised.exception))
+        self.assertNotIn("api-sensitive", str(raised.exception))
+
     def test_provision_creates_and_tests_schema_driven_webhook(self):
         session = FakeSession([
             FakeResponse({"version": "5.0.1", "instanceName": "TV"}),
@@ -130,6 +146,21 @@ class SonarrClientTests(unittest.TestCase):
             "key": "X-MediaMender-Connection-ID", "value": "connection-1",
         }, fields["headers"])
 
+    def test_remove_deletes_only_mediamender_webhooks(self):
+        session = FakeSession([
+            FakeResponse([
+                {"id": 7, "name": WEBHOOK_NAME, "implementation": "Webhook"},
+                {"id": 8, "name": "Another webhook", "implementation": "Webhook"},
+            ]),
+            FakeResponse(None, 204),
+        ])
+        removed = SonarrClient(
+            "http://sonarr:8989", "key", session=session,
+        ).remove_webhook()
+        self.assertEqual(removed, 1)
+        self.assertEqual(session.calls[-1][0], "DELETE")
+        self.assertTrue(session.calls[-1][1].endswith("/notification/7"))
+
     def test_callback_path_is_fixed_and_private_hosts_are_allowed(self):
         self.assertEqual(
             normalize_callback_url("http://192.168.1.20:8222"),
@@ -175,6 +206,11 @@ class SonarrClientTests(unittest.TestCase):
             self.assertEqual(len(status["connections"]), 2)
             self.assertEqual(store.owner_for(first["connection_id"]), "alice")
             self.assertEqual(store.owner_for(second["connection_id"]), "bob")
+            self.assertEqual(
+                store.get("http://sonarr-anime:8989")["sonarr_instance"], "Anime",
+            )
+            self.assertTrue(store.remove("http://sonarr-anime:8989"))
+            self.assertIsNone(store.get("http://sonarr-anime:8989"))
         finally:
             (root / "sonarr-webhook.json").unlink(missing_ok=True)
             root.rmdir()
@@ -293,6 +329,42 @@ class SonarrProvisioningApiTests(unittest.TestCase):
         generated = save.call_args.args[0]["mark_watched"]["webhook_secret"]
         self.assertGreaterEqual(len(generated), 32)
         self.assertEqual(client.provision_webhook.call_args.args[1], generated)
+
+    def test_remove_connected_instance_deletes_remote_webhook_then_status(self):
+        store = Mock()
+        store.get.return_value = {
+            "sonarr_url": "http://sonarr:8989", "status": "connected",
+            "notification_id": 12,
+        }
+        sonarr = Mock()
+        sonarr.remove_webhook.return_value = 1
+        with patch.object(app, "sonarr_connection", store), \
+             patch.object(app, "SonarrClient", return_value=sonarr) as constructor:
+            response = self._client().delete(
+                "/api/mark-watched/sonarr",
+                json={"sonarr_url": "http://sonarr:8989", "api_key": "one-time-key"},
+                headers={"X-CSRF-Token": "known-token"},
+            )
+        self.assertEqual(response.status_code, 200)
+        constructor.assert_called_once_with("http://sonarr:8989", "one-time-key")
+        sonarr.remove_webhook.assert_called_once_with()
+        store.remove.assert_called_once_with("http://sonarr:8989")
+
+    def test_remove_failed_instance_needs_no_api_key(self):
+        store = Mock()
+        store.get.return_value = {
+            "sonarr_url": "http://sonarr:8989", "status": "failed",
+        }
+        with patch.object(app, "sonarr_connection", store), \
+             patch.object(app, "SonarrClient") as constructor:
+            response = self._client().delete(
+                "/api/mark-watched/sonarr",
+                json={"sonarr_url": "http://sonarr:8989"},
+                headers={"X-CSRF-Token": "known-token"},
+            )
+        self.assertEqual(response.status_code, 200)
+        constructor.assert_not_called()
+        store.remove.assert_called_once_with("http://sonarr:8989")
 
 
 if __name__ == "__main__":
