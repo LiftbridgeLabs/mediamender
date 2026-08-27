@@ -3,12 +3,14 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import app
-from src.config import AppConfig, MarkWatchedConfig
+from src.config import AppConfig, LibraryConfig, MarkWatchedConfig, PlexInstanceConfig
 from src.mark_watched import (
-    MarkWatchedManager,
+    MarkWatchedManager, MarkWatchedRuleStore,
     PlexEpisodePending,
     normalize_sonarr_download,
+    process_plex_event,
 )
+from src.plex_client import PlexClient
 
 
 def sonarr_download():
@@ -75,6 +77,7 @@ class MarkWatchedQueueTests(unittest.TestCase):
 
     def tearDown(self):
         (self.runtime / "mark-watched-jobs.json").unlink(missing_ok=True)
+        (self.runtime / "mark-watched-rules.json").unlink(missing_ok=True)
         self.runtime.rmdir()
 
     def test_duplicate_webhooks_create_one_job(self):
@@ -108,6 +111,87 @@ class MarkWatchedQueueTests(unittest.TestCase):
 
     def test_normalizer_accepts_sonarr_test_without_queueing(self):
         self.assertIsNone(normalize_sonarr_download({"eventType": "Test"}))
+
+
+class MarkWatchedRuleTests(unittest.TestCase):
+    def setUp(self):
+        self.runtime = Path("tests/.mark-watched-rule-runtime")
+        self.runtime.mkdir(exist_ok=True)
+        (self.runtime / "mark-watched-rules.json").unlink(missing_ok=True)
+        self.rules = MarkWatchedRuleStore(str(self.runtime))
+
+    def tearDown(self):
+        (self.runtime / "mark-watched-rules.json").unlink(missing_ok=True)
+        self.runtime.rmdir()
+
+    def test_season_inherits_show_until_explicitly_overridden(self):
+        self.rules.set_show("alice", "Plex", "TV", "10", True)
+        inherited = self.rules.rule("alice", "Plex", "TV", "10", 2)
+        self.assertEqual(inherited, {
+            "enabled": True, "source": "show", "show_enabled": True,
+            "season_override": None,
+        })
+        self.rules.set_season("alice", "Plex", "TV", "10", 2, False)
+        explicit = self.rules.rule("alice", "Plex", "TV", "10", 2)
+        self.assertFalse(explicit["enabled"])
+        self.assertEqual(explicit["source"], "season")
+
+    def test_clearing_season_override_restores_inheritance(self):
+        self.rules.set_show("alice", "Plex", "TV", "10", False)
+        self.rules.set_season("alice", "Plex", "TV", "10", 1, True)
+        self.rules.set_season("alice", "Plex", "TV", "10", 1, None)
+        self.assertEqual(
+            self.rules.rule("alice", "Plex", "TV", "10", 1)["source"], "show",
+        )
+
+    def test_processor_marks_only_when_rule_is_enabled(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = {
+            "rating_key": "30", "show_rating_key": "10",
+            "season_rating_key": "20", "season_index": 2,
+            "episode_index": 3, "title": "Done",
+        }
+        self.rules.set_show("alice", "Plex", "TV", "10", True)
+        result = process_plex_event(sonarr_download() | {
+            "series": sonarr_download()["series"],
+            "episode_file": {"id": 99, "path": "/tv/file.mkv"},
+            "episodes": [{"season": 2, "episode": 3, "title": "Done"}],
+        }, config, {"Plex": plex}, self.rules)
+        self.assertEqual(result["marked"], 1)
+        plex.mark_watched.assert_called_once_with("30")
+
+
+class PlexMarkWatchedClientTests(unittest.TestCase):
+    def test_find_episode_uses_exact_show_and_coordinates(self):
+        client = PlexClient("http://plex", "token")
+        response = Mock()
+        response.json.return_value = {"MediaContainer": {"Metadata": [{
+            "type": "episode", "ratingKey": "30", "grandparentRatingKey": "10",
+            "parentRatingKey": "20", "grandparentTitle": "Example Show",
+            "parentIndex": 2, "index": 3, "title": "Done",
+        }]}}
+        with patch.object(client, "_get", return_value=response) as get:
+            result = client.find_episode("7", "Example Show", 2, 3)
+        self.assertEqual(result["rating_key"], "30")
+        self.assertEqual(get.call_args.kwargs["params"]["type"], 4)
+
+    def test_mark_watched_uses_advertised_scrobble_endpoint(self):
+        client = PlexClient("http://plex", "token")
+        provider = Mock()
+        provider.json.return_value = {"MediaContainer": {"MediaProvider": [{
+            "identifier": "com.plexapp.plugins.library",
+            "Feature": [{"type": "timeline", "scrobbleKey": "/:/scrobble"}],
+        }]}}
+        scrobble = Mock()
+        with patch.object(client, "_get", side_effect=[provider, scrobble]) as get:
+            client.mark_watched("30")
+        self.assertEqual(get.call_args.args[0], "/:/scrobble")
+        self.assertEqual(get.call_args.kwargs["params"]["key"], "30")
 
 
 if __name__ == "__main__":

@@ -227,3 +227,138 @@ class MarkWatchedManager:
                 self._records.values(), key=lambda item: item.get("updated_at", ""), reverse=True,
             )[:limit]
             return {"jobs": [dict(record) for record in records]}
+
+
+class MarkWatchedRuleStore:
+    """Persist per-user show defaults and explicit season overrides."""
+
+    def __init__(self, data_dir: str):
+        self.path = Path(data_dir) / "mark-watched-rules.json"
+        self._lock = threading.RLock()
+        self._data = self._load()
+
+    def _load(self) -> dict:
+        try:
+            value = json.loads(self.path.read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {"users": {}}
+        except (OSError, ValueError):
+            return {"users": {}}
+
+    def _save(self) -> None:
+        atomic_write_json(str(self.path), self._data)
+
+    @staticmethod
+    def _show_key(instance: str, library: str, show_rating_key: str) -> str:
+        return f"{instance}::{library}::{show_rating_key}"
+
+    def _user(self, username: str, create: bool = False) -> dict:
+        users = self._data.setdefault("users", {})
+        if create:
+            return users.setdefault(username, {"shows": {}, "seasons": {}})
+        return users.get(username, {"shows": {}, "seasons": {}})
+
+    def set_show(self, username: str, instance: str, library: str,
+                 show_rating_key: str, enabled: bool) -> None:
+        with self._lock:
+            user = self._user(username, create=True)
+            user["shows"][self._show_key(instance, library, show_rating_key)] = bool(enabled)
+            self._save()
+
+    def set_season(self, username: str, instance: str, library: str,
+                   show_rating_key: str, season_index: int,
+                   enabled: bool | None) -> None:
+        key = f"{self._show_key(instance, library, show_rating_key)}::{int(season_index)}"
+        with self._lock:
+            user = self._user(username, create=True)
+            if enabled is None:
+                user["seasons"].pop(key, None)
+            else:
+                user["seasons"][key] = bool(enabled)
+            self._save()
+
+    def rule(self, username: str, instance: str, library: str,
+             show_rating_key: str, season_index: int) -> dict:
+        show_key = self._show_key(instance, library, show_rating_key)
+        season_key = f"{show_key}::{int(season_index)}"
+        with self._lock:
+            user = self._user(username)
+            show_enabled = bool(user.get("shows", {}).get(show_key, False))
+            seasons = user.get("seasons", {})
+            explicit = season_key in seasons
+            return {
+                "enabled": bool(seasons[season_key]) if explicit else show_enabled,
+                "source": "season" if explicit else "show",
+                "show_enabled": show_enabled,
+                "season_override": seasons.get(season_key) if explicit else None,
+            }
+
+    def enabled_for_any_user(self, instance: str, library: str,
+                             show_rating_key: str, season_index: int) -> bool:
+        with self._lock:
+            usernames = list(self._data.get("users", {}))
+        return any(self.rule(
+            username, instance, library, show_rating_key, season_index,
+        )["enabled"] for username in usernames)
+
+    def all_for_user(self, username: str) -> dict:
+        with self._lock:
+            user = self._user(username)
+            return json.loads(json.dumps(user))
+
+    def set_all(self, username: str, show_keys: list[tuple[str, str, str]],
+                enabled: bool) -> None:
+        with self._lock:
+            user = self._user(username, create=True)
+            for instance, library, rating_key in show_keys:
+                user["shows"][self._show_key(instance, library, rating_key)] = bool(enabled)
+            user["seasons"] = {}
+            self._save()
+
+
+def process_plex_event(event: dict, app_config, clients: dict,
+                       rules: MarkWatchedRuleStore) -> dict:
+    """Find imported episodes across configured TV sections, then apply rules."""
+    matched = []
+    marked = []
+    visible = set(app_config.mark_watched.visible_libraries)
+    for instance in app_config.instances:
+        plex = clients.get(instance.name)
+        if plex is None:
+            continue
+        for library in instance.libraries:
+            library_key = f"{instance.name}::{library.name}"
+            if visible and library_key not in visible:
+                continue
+            section_id = library.section_id or plex.find_section_id(library.name)
+            if not section_id or plex.get_section_type(str(section_id)) != "show":
+                continue
+            for episode in event["episodes"]:
+                item = plex.find_episode(
+                    str(section_id), event["series"]["title"],
+                    episode["season"], episode["episode"],
+                )
+                if item is None:
+                    continue
+                matched.append(item)
+                if not rules.enabled_for_any_user(
+                    instance.name, library.name, item["show_rating_key"],
+                    item["season_index"],
+                ):
+                    continue
+                plex.mark_watched(item["rating_key"])
+                marked.append(item)
+    if not matched:
+        coordinates = ", ".join(
+            f"S{item['season']:02d}E{item['episode']:02d}" for item in event["episodes"]
+        )
+        raise PlexEpisodePending(f"{event['series']['title']} {coordinates}")
+    if not marked:
+        return {
+            "message": "Plex matched the import; no automatic watch rule was enabled",
+            "matched": len(matched), "marked": 0,
+        }
+    return {
+        "message": f"Marked {len(marked)} matched Plex episode(s) watched",
+        "matched": len(matched), "marked": len(marked),
+        "rating_keys": [item["rating_key"] for item in marked],
+    }

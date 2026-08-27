@@ -35,7 +35,9 @@ from src import notifications
 from src.version import __version__
 from src.timestamp_repair import TimestampRepairManager
 from src.library_refresh import LibraryRefreshManager
-from src.mark_watched import MarkWatchedManager
+from src.mark_watched import (
+    MarkWatchedManager, MarkWatchedRuleStore, process_plex_event,
+)
 from src.maintenance import lease, set_recovery_check
 from src.repair_worker_client import RepairWorkerClient, validate_worker_url
 from src.worker_auth import SignatureVerifier
@@ -88,8 +90,14 @@ timestamp_repair = TimestampRepairManager(
 library_refresh = LibraryRefreshManager(
     os.path.dirname(os.path.abspath(CONFIG_PATH)),
 )
+mark_watched_rules = MarkWatchedRuleStore(
+    os.path.dirname(os.path.abspath(CONFIG_PATH)),
+)
 mark_watched = MarkWatchedManager(
     os.path.dirname(os.path.abspath(CONFIG_PATH)),
+    processor=lambda event: process_plex_event(
+        event, config, plex_clients, mark_watched_rules,
+    ),
     retry_delays=tuple(config.mark_watched.retry_delays),
 )
 runner.set_library_refresh_guard(library_refresh.trash_hold_reason)

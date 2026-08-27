@@ -76,6 +76,99 @@ class PlexClient:
     def _get(self, path: str, params: dict = None, timeout: int = 15):
         return self.session.get(f"{self.url}{path}", params=params, timeout=timeout)
 
+    @staticmethod
+    def _metadata(response) -> List[Dict]:
+        container = response.json().get("MediaContainer", {})
+        return list(container.get("Metadata", [])) or [
+            *container.get("Directory", []), *container.get("Video", []),
+        ]
+
+    def list_tv_shows(self, section_id: str) -> List[Dict]:
+        response = self._get(
+            f"/library/sections/{section_id}/all",
+            params={"type": 2, "X-Plex-Container-Start": 0,
+                    "X-Plex-Container-Size": 100000}, timeout=60,
+        )
+        response.raise_for_status()
+        return [{
+            "rating_key": str(item.get("ratingKey", "")),
+            "title": str(item.get("title", "Unknown")),
+            "year": item.get("year"),
+            "thumb": str(item.get("thumb", "")),
+            "leaf_count": int(item.get("leafCount", 0) or 0),
+            "viewed_leaf_count": int(item.get("viewedLeafCount", 0) or 0),
+        } for item in self._metadata(response) if item.get("ratingKey")]
+
+    def list_show_seasons(self, show_rating_key: str) -> List[Dict]:
+        response = self._get(f"/library/metadata/{show_rating_key}/children", timeout=30)
+        response.raise_for_status()
+        return [{
+            "rating_key": str(item.get("ratingKey", "")),
+            "index": int(item.get("index", 0) or 0),
+            "title": str(item.get("title", "Season")),
+            "thumb": str(item.get("thumb", "")),
+            "leaf_count": int(item.get("leafCount", 0) or 0),
+            "viewed_leaf_count": int(item.get("viewedLeafCount", 0) or 0),
+        } for item in self._metadata(response)
+          if item.get("type") == "season" and item.get("ratingKey")]
+
+    def find_episode(self, section_id: str, show_title: str,
+                     season: int, episode: int) -> Optional[Dict]:
+        response = self._get(
+            f"/library/sections/{section_id}/all",
+            params={"type": 4, "grandparentTitle": show_title,
+                    "parentIndex": int(season), "index": int(episode)},
+            timeout=30,
+        )
+        response.raise_for_status()
+        expected = show_title.strip().casefold()
+        for item in self._metadata(response):
+            if str(item.get("grandparentTitle", "")).strip().casefold() != expected:
+                continue
+            if int(item.get("parentIndex", -1)) != int(season):
+                continue
+            if int(item.get("index", -1)) != int(episode):
+                continue
+            rating_key = str(item.get("ratingKey", ""))
+            show_key = str(item.get("grandparentRatingKey", ""))
+            if rating_key and show_key:
+                return {
+                    "rating_key": rating_key,
+                    "show_rating_key": show_key,
+                    "season_rating_key": str(item.get("parentRatingKey", "")),
+                    "season_index": int(season),
+                    "episode_index": int(episode),
+                    "title": str(item.get("title", "")),
+                }
+        return None
+
+    def _scrobble_endpoint(self) -> tuple[str, str]:
+        response = self._get("/media/providers")
+        response.raise_for_status()
+        container = response.json().get("MediaContainer", {})
+        providers = container.get("MediaProvider", container.get("Metadata", []))
+        for provider in providers:
+            identifier = str(provider.get("identifier", ""))
+            for feature in provider.get("Feature", []):
+                endpoint = feature.get("scrobbleKey")
+                if feature.get("type") == "timeline" and endpoint:
+                    return str(endpoint), identifier or "com.plexapp.plugins.library"
+        raise RuntimeError("Plex did not advertise a scrobble endpoint")
+
+    def mark_watched(self, rating_key: str) -> None:
+        endpoint, identifier = self._scrobble_endpoint()
+        response = self._get(endpoint, params={
+            "key": str(rating_key), "identifier": identifier,
+        })
+        response.raise_for_status()
+
+    def get_artwork(self, artwork_key: str):
+        if not artwork_key.startswith("/") or artwork_key.startswith("//"):
+            raise ValueError("Invalid Plex artwork key")
+        response = self._get(artwork_key, timeout=30)
+        response.raise_for_status()
+        return response
+
     def check_reachable(self) -> Dict:
         try:
             r = self._get("/identity")
