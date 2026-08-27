@@ -30,7 +30,7 @@ class BrandingTests(unittest.TestCase):
         self.assertIn("/static/mediamender.png", html)
         status = app.app.test_client().get("/api/status").get_json()
         self.assertEqual(status["product"], "mediaMender")
-        self.assertEqual(__version__, "2.1.0")
+        self.assertEqual(__version__, "2.2.0")
         self.assertEqual(status["version"], __version__)
 
     def test_new_logo_route_is_raster_png(self):
