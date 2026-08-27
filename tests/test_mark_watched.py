@@ -405,6 +405,8 @@ class MarkWatchedSettingsTests(unittest.TestCase):
         self.assertIn("document.querySelector('.settings-section.active')", html)
         self.assertIn('class="library-refresh-control-grid"', html)
         self.assertIn('id="ss-mark-watched"', html)
+        self.assertIn('id="mark-watched-sonarr-connect"', html)
+        self.assertIn("async function connectSonarr()", html)
 
 
 if __name__ == "__main__":

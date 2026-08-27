@@ -1353,7 +1353,18 @@ dialog.overlay::backdrop{background:transparent;}
       <!-- Mark-it-Watched -->
       <div class="settings-section" id="ss-mark-watched">
         <div class="settings-section-title">Mark-it-Watched</div>
-        <div class="settings-section-desc">Choose which configured Plex libraries appear on the rule page and set a dedicated Sonarr webhook secret.</div>
+        <div class="settings-section-desc">Choose which configured Plex libraries appear on the rule page and connect Sonarr to finalized import processing.</div>
+        {% if current_identity.role == 'admin' %}
+        <div class="card"><div class="card-header"><div><div class="card-title">Connect Sonarr</div><div class="form-hint">mediaMender will create or update its Sonarr Webhook connection and run Sonarr's Test event.</div></div></div><div class="card-body">
+          <div class="form-grid">
+            <div class="form-group"><label class="form-label">Sonarr URL</label><input class="form-input" id="mark-watched-sonarr-url" type="url" placeholder="http://sonarr:8989" autocomplete="url"></div>
+            <div class="form-group"><label class="form-label">Sonarr API key</label><input class="form-input" id="mark-watched-sonarr-api-key" type="password" placeholder="Used once and never saved" autocomplete="new-password"></div>
+            <div class="form-group"><label class="form-label">mediaMender callback URL</label><input class="form-input" id="mark-watched-callback-url" type="url" placeholder="http://mediamender:8222/api/webhooks/sonarr"><div class="form-hint">Use a hostname or IP that the Sonarr host/container can reach.</div></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><button class="btn btn-primary" id="mark-watched-sonarr-connect" onclick="connectSonarr()">Connect Sonarr</button><span id="mark-watched-sonarr-status" class="form-hint">Not connected by mediaMender yet.</span></div>
+          <div class="form-hint" style="margin-top:10px;">The API key is sent only to this mediaMender request and is not written to config, status files, logs, or API responses.</div>
+        </div></div>
+        {% endif %}
         <div class="card"><div class="card-body"><div class="form-group"><label class="form-label">Sonarr webhook secret</label><input class="form-input" id="mark-watched-webhook-secret" type="password" autocomplete="new-password" placeholder="Leave blank to keep the existing secret"><div class="form-hint" id="mark-watched-secret-status">Use this as X-Sonarr-Webhook-Secret or a Bearer token. The secret is never returned by the API.</div></div></div></div>
         <div class="repair-section-heading"><h3 class="repair-section-title">Library visibility</h3><div class="repair-section-line"></div><button class="btn btn-secondary btn-sm" onclick="useAllMarkWatchedLibraries()">Use all configured</button></div>
         <div id="mark-watched-settings"></div>
@@ -2538,7 +2549,7 @@ function showSettingsSection(name, btn) {
   if (name === 'timestamp-repair') renderRepairSettings();
   if (name === 'trash-removal') { renderTrashRemovalSettings(); loadGlobalScheduleControls(); }
   if (name === 'library-refresh') renderLibraryRefreshSettings();
-  if (name === 'mark-watched') renderMarkWatchedSettings();
+  if (name === 'mark-watched') { renderMarkWatchedSettings(); if (_identity.role === 'admin') loadSonarrConnectionStatus(); }
   if (name === 'features') renderFeatureSettings();
   if (name === 'metadata-health') renderMetadataHealthSettings();
   if (name === 'general') startLogViewer();
@@ -3365,6 +3376,75 @@ function renderMarkWatchedSettings() {
     </div></div></section>`).join('') || '<div class="empty-msg">No Plex instances configured.</div>';
   const status = document.getElementById('mark-watched-secret-status');
   if (status) status.textContent = `${_settingsData.mark_watched.webhook_secret_configured?'A secret is configured. ':''}Use X-Sonarr-Webhook-Secret or Bearer authentication. The secret is never returned by the API.`;
+}
+
+async function loadSonarrConnectionStatus() {
+  const status = document.getElementById('mark-watched-sonarr-status');
+  const callback = document.getElementById('mark-watched-callback-url');
+  if (!status || !callback) return;
+  if (!callback.value) callback.value = `${window.location.origin}/api/webhooks/sonarr`;
+  try {
+    const response = await fetch('/api/mark-watched/sonarr');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not load Sonarr status');
+    const connection = data.connection || {};
+    const sonarrUrl = document.getElementById('mark-watched-sonarr-url');
+    if (sonarrUrl && !sonarrUrl.value && connection.sonarr_url) sonarrUrl.value = connection.sonarr_url;
+    if (connection.callback_url) callback.value = connection.callback_url;
+    if (connection.status === 'connected') {
+      status.textContent = `Connected to ${connection.sonarr_instance || 'Sonarr'} ${connection.sonarr_version || ''}; webhook ${connection.action || 'saved'} and tested.`;
+      status.style.color = 'var(--pass)';
+    } else if (connection.status === 'failed') {
+      status.textContent = `Last connection failed: ${connection.error || 'unknown error'}`;
+      status.style.color = 'var(--fail2)';
+    } else {
+      status.textContent = 'Not connected by mediaMender yet.';
+      status.style.color = '';
+    }
+  } catch (error) {
+    status.textContent = error.message || 'Could not load Sonarr status';
+    status.style.color = 'var(--fail2)';
+  }
+}
+
+async function connectSonarr() {
+  const button = document.getElementById('mark-watched-sonarr-connect');
+  const status = document.getElementById('mark-watched-sonarr-status');
+  const apiKey = document.getElementById('mark-watched-sonarr-api-key');
+  const payload = {
+    sonarr_url: document.getElementById('mark-watched-sonarr-url')?.value.trim() || '',
+    api_key: apiKey?.value || '',
+    callback_url: document.getElementById('mark-watched-callback-url')?.value.trim() || '',
+  };
+  if (!payload.sonarr_url || !payload.api_key || !payload.callback_url) {
+    toast('Sonarr URL, API key, and callback URL are required', 'fail');
+    return;
+  }
+  button.disabled = true;
+  button.dataset.label ||= button.innerHTML;
+  button.innerHTML = '<span class="spin"></span> connecting&hellip;';
+  status.textContent = 'Verifying Sonarr, testing the callback, and saving the webhook&hellip;';
+  status.style.color = '';
+  try {
+    const response = await fetch('/api/mark-watched/sonarr/connect', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Sonarr connection failed');
+    if (apiKey) apiKey.value = '';
+    _settingsData.mark_watched.webhook_secret_configured = true;
+    renderMarkWatchedSettings();
+    await loadSonarrConnectionStatus();
+    toast(data.message || 'Sonarr connected', 'pass');
+  } catch (error) {
+    if (apiKey) apiKey.value = '';
+    status.textContent = error.message || 'Sonarr connection failed';
+    status.style.color = 'var(--fail2)';
+    toast(status.textContent, 'fail');
+  } finally {
+    button.disabled = false;
+    button.innerHTML = button.dataset.label || 'Connect Sonarr';
+  }
 }
 
 function setMarkWatchedLibraryVisibility(instanceIndex, libraryIndex, visible) {

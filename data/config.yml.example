@@ -12,7 +12,8 @@ features:
   mark_watched: true
 
 # Future Sonarr Download imports can be marked watched after Plex matches them.
-# Prefer MEDIAMENDER_SONARR_WEBHOOK_SECRET instead of storing the secret here.
+# Connect Sonarr in Settings to generate this automatically, or prefer the
+# MEDIAMENDER_SONARR_WEBHOOK_SECRET environment override.
 mark_watched:
   webhook_secret: ""
   retry_delays: [10, 30, 60, 120, 300]

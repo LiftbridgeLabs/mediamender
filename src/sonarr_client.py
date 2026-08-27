@@ -1,0 +1,237 @@
+"""Sonarr API client and non-secret webhook connection status storage."""
+
+from __future__ import annotations
+
+import copy
+import ipaddress
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlparse, urlunparse
+
+import requests
+
+from src.storage import atomic_write_json
+
+
+WEBHOOK_NAME = "mediaMender - Mark-it-Watched"
+WEBHOOK_PATH = "/api/webhooks/sonarr"
+
+
+class SonarrError(RuntimeError):
+    """A safe-to-display Sonarr connection or API error."""
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _validate_http_url(value: str, label: str) -> tuple[bool, str]:
+    try:
+        parsed = urlparse(value)
+    except Exception:
+        return False, f"Invalid {label} URL"
+    if parsed.scheme not in {"http", "https"}:
+        return False, f"{label} URL must use http or https"
+    if not parsed.hostname:
+        return False, f"{label} URL must include a hostname"
+    if parsed.username or parsed.password:
+        return False, f"Credentials must not be embedded in the {label} URL"
+    if parsed.query or parsed.fragment:
+        return False, f"{label} URL cannot include a query or fragment"
+    host = parsed.hostname.lower()
+    if host in {"169.254.169.254", "metadata.google.internal", "fd00:ec2::254"}:
+        return False, f"{label} URL targets a cloud metadata address"
+    try:
+        address = ipaddress.ip_address(host)
+        if (address.is_link_local or address.is_multicast or
+                address.is_unspecified or address.is_reserved):
+            return False, f"{label} URL targets a non-routable or reserved address"
+    except ValueError:
+        pass
+    return True, ""
+
+
+def normalize_sonarr_url(value: str) -> str:
+    """Validate a Sonarr base URL while retaining an optional URL base path."""
+    value = str(value or "").strip().rstrip("/")
+    ok, reason = _validate_http_url(value, "Sonarr")
+    if not ok:
+        raise ValueError(reason)
+    return value
+
+
+def normalize_callback_url(value: str) -> str:
+    """Validate a mediaMender URL and append the fixed webhook path if omitted."""
+    value = str(value or "").strip().rstrip("/")
+    ok, reason = _validate_http_url(value, "Callback")
+    if not ok:
+        raise ValueError(reason)
+    parsed = urlparse(value)
+    path = parsed.path.rstrip("/")
+    if not path:
+        path = WEBHOOK_PATH
+    elif path != WEBHOOK_PATH:
+        raise ValueError(f"Callback URL path must be {WEBHOOK_PATH}")
+    return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
+
+
+class SonarrClient:
+    """Provision mediaMender's webhook using Sonarr's advertised schema."""
+
+    def __init__(self, url: str, api_key: str, *, session=None, timeout: int = 15):
+        self.url = normalize_sonarr_url(url)
+        if not str(api_key or "").strip():
+            raise ValueError("Sonarr API key is required")
+        self.timeout = timeout
+        self.session = session or requests.Session()
+        self.session.headers.update({
+            "Accept": "application/json",
+            "X-Api-Key": str(api_key).strip(),
+        })
+
+    def _request(self, method: str, path: str, payload=None):
+        try:
+            response = self.session.request(
+                method,
+                f"{self.url}/api/v3{path}",
+                json=payload,
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise SonarrError("Could not reach Sonarr") from exc
+        if not response.ok:
+            raise SonarrError(
+                f"Sonarr returned HTTP {response.status_code} for {method} {path}"
+            )
+        if response.status_code == 204 or not response.content:
+            return None
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise SonarrError(f"Sonarr returned invalid JSON for {method} {path}") from exc
+
+    def system_status(self) -> dict:
+        result = self._request("GET", "/system/status")
+        if not isinstance(result, dict):
+            raise SonarrError("Sonarr returned an invalid system status")
+        return result
+
+    def _webhook_schema(self) -> dict:
+        schemas = self._request("GET", "/notification/schema")
+        if not isinstance(schemas, list):
+            raise SonarrError("Sonarr returned an invalid notification schema")
+        for schema in schemas:
+            if isinstance(schema, dict) and str(schema.get("implementation", "")).lower() == "webhook":
+                return copy.deepcopy(schema)
+        raise SonarrError("This Sonarr version did not advertise Webhook connections")
+
+    @staticmethod
+    def _set_field(payload: dict, name: str, value) -> None:
+        for field in payload.get("fields", []):
+            if isinstance(field, dict) and str(field.get("name", "")).lower() == name.lower():
+                field["value"] = value
+                return
+        raise SonarrError(f"Sonarr's Webhook schema is missing the {name} field")
+
+    def _payload(self, schema: dict, callback_url: str, secret: str) -> dict:
+        payload = copy.deepcopy(schema)
+        payload.pop("id", None)
+        payload.pop("presets", None)
+        payload["name"] = WEBHOOK_NAME
+        payload["tags"] = []
+        # Sonarr's Download event is emitted after each episode file import. The
+        # newer Import Complete event is aggregate and would duplicate work.
+        for name in (
+            "onGrab", "onRename", "onSeriesAdd", "onSeriesDelete",
+            "onEpisodeFileDelete", "onEpisodeFileDeleteForUpgrade",
+            "onHealthIssue", "onHealthRestored", "onApplicationUpdate",
+            "onManualInteractionRequired", "onImportComplete",
+        ):
+            if name in payload:
+                payload[name] = False
+        payload["onDownload"] = True
+        if "onUpgrade" in payload:
+            payload["onUpgrade"] = True
+        self._set_field(payload, "url", callback_url)
+        # Keep Sonarr's advertised Webhook method default, which its schema
+        # initializes to POST, instead of assuming an enum value.
+        self._set_field(payload, "headers", [
+            {"key": "X-Sonarr-Webhook-Secret", "value": secret},
+        ])
+        return payload
+
+    def provision_webhook(self, callback_url: str, secret: str,
+                          *, status: dict | None = None) -> dict:
+        callback_url = normalize_callback_url(callback_url)
+        status = status or self.system_status()
+        payload = self._payload(self._webhook_schema(), callback_url, secret)
+
+        # Test before changing Sonarr's saved connections. This invokes the same
+        # callback and secret header that the saved connection will use.
+        self._request("POST", "/notification/test", payload)
+        notifications = self._request("GET", "/notification")
+        if not isinstance(notifications, list):
+            raise SonarrError("Sonarr returned an invalid notification list")
+        existing = next((
+            item for item in notifications
+            if isinstance(item, dict)
+            and item.get("name") == WEBHOOK_NAME
+            and str(item.get("implementation", "")).lower() == "webhook"
+        ), None)
+        if existing and isinstance(existing.get("id"), int):
+            payload["id"] = existing["id"]
+            saved = self._request(
+                "PUT", f"/notification/{existing['id']}", payload,
+            )
+            action = "updated"
+        else:
+            saved = self._request("POST", "/notification", payload)
+            action = "created"
+        saved = saved if isinstance(saved, dict) else {}
+        return {
+            "action": action,
+            "notification_id": saved.get("id", payload.get("id")),
+            "sonarr_version": str(status.get("version", "")),
+            "sonarr_instance": str(status.get("instanceName", "Sonarr")),
+            "callback_url": callback_url,
+        }
+
+
+class SonarrConnectionStore:
+    """Persist useful connection status without retaining Sonarr credentials."""
+
+    def __init__(self, data_dir: str):
+        self.path = Path(data_dir) / "sonarr-webhook.json"
+
+    def status(self) -> dict:
+        try:
+            value = json.loads(self.path.read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {"status": "not_configured"}
+        except (OSError, ValueError):
+            return {"status": "not_configured"}
+
+    def success(self, sonarr_url: str, result: dict) -> dict:
+        value = {
+            "status": "connected",
+            "sonarr_url": sonarr_url,
+            "callback_url": result.get("callback_url", ""),
+            "notification_id": result.get("notification_id"),
+            "sonarr_version": result.get("sonarr_version", ""),
+            "sonarr_instance": result.get("sonarr_instance", "Sonarr"),
+            "action": result.get("action", "created"),
+            "last_success": _utc_now(),
+        }
+        atomic_write_json(str(self.path), value)
+        return value
+
+    def failure(self, sonarr_url: str, callback_url: str, error: str) -> dict:
+        value = {
+            "status": "failed",
+            "sonarr_url": sonarr_url,
+            "callback_url": callback_url,
+            "error": str(error)[:300],
+            "last_attempt": _utc_now(),
+        }
+        atomic_write_json(str(self.path), value)
+        return value

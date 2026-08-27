@@ -374,16 +374,24 @@ plex_instances:
 ## Mark-it-Watched
 
 Mark-it-Watched applies per-user show defaults and explicit season overrides to
-future finalized Sonarr imports. Configure Sonarr's webhook URL as
-`http://MEDIAMENDER:8222/api/webhooks/sonarr` and send either the dedicated
-`MEDIAMENDER_SONARR_WEBHOOK_SECRET` in `X-Sonarr-Webhook-Secret` (or as a Bearer
-token), or the independent mediaMender API token in `X-API-Token`.
+future finalized Sonarr imports. An administrator can open Settings â†’
+Mark-it-Watched, enter the Sonarr URL and API key, verify the callback URL, and
+select **Connect Sonarr**. mediaMender uses Sonarr's advertised Webhook schema,
+runs Sonarr's Test event, and creates or updates the managed connection. The
+Sonarr API key is used for that request only and is never saved.
+
+If no dedicated webhook secret exists, Connect Sonarr generates and saves one
+automatically. `MEDIAMENDER_SONARR_WEBHOOK_SECRET` remains the preferred
+environment override. Manual setup is still supported: use
+`http://MEDIAMENDER:8222/api/webhooks/sonarr` and send the secret in
+`X-Sonarr-Webhook-Secret` or as a Bearer token.
 
 Only Sonarr `Download` events containing an imported `episodeFile` are queued.
 The HTTP request returns immediately; persistent background work retries until
 Plex has scanned and matched every episode in the import, then applies the
 current show/season rules. Duplicate payloads reuse the original durable job.
 Recent success, retry, and failure state is shown on the Mark-it-Watched page.
+The non-secret Sonarr connection status is stored in `data/sonarr-webhook.json`.
 
 Settings controls which shared Plex TV libraries are visible. Administrators
 can create application users, grant page permissions, and confirm All On or All

@@ -39,6 +39,10 @@ from src.library_refresh import LibraryRefreshManager
 from src.mark_watched import (
     MarkWatchedManager, MarkWatchedRuleStore, process_plex_event,
 )
+from src.sonarr_client import (
+    SonarrClient, SonarrConnectionStore, SonarrError,
+    normalize_callback_url, normalize_sonarr_url,
+)
 from src.maintenance import lease, set_recovery_check
 from src.repair_worker_client import RepairWorkerClient, validate_worker_url
 from src.worker_auth import SignatureVerifier
@@ -100,6 +104,9 @@ mark_watched = MarkWatchedManager(
         event, config, plex_clients, mark_watched_rules,
     ),
     retry_delays=tuple(config.mark_watched.retry_delays),
+)
+sonarr_connection = SonarrConnectionStore(
+    os.path.dirname(os.path.abspath(CONFIG_PATH)),
 )
 runner.set_library_refresh_guard(library_refresh.trash_hold_reason)
 startup_recovery = timestamp_repair.recover()
@@ -958,6 +965,25 @@ def _mark_watched_library(instance_name: str, library_name: str):
     return None, None, None
 
 
+def _ensure_sonarr_webhook_secret() -> str:
+    """Return the runtime secret, generating and saving one when needed."""
+    if config.mark_watched.webhook_secret:
+        return config.mark_watched.webhook_secret
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as handle:
+            raw = yaml.safe_load(handle) or {}
+    except OSError:
+        raw = {}
+    mark_settings = raw.get("mark_watched")
+    if not isinstance(mark_settings, dict):
+        mark_settings = {}
+        raw["mark_watched"] = mark_settings
+    secret = secrets.token_urlsafe(32)
+    mark_settings["webhook_secret"] = secret
+    _save_and_apply(raw, require_paths=False)
+    return secret
+
+
 @app.route("/api/webhooks/sonarr", methods=["POST"])
 def api_sonarr_webhook():
     """Accept only completed imports and hand them to the durable worker."""
@@ -985,6 +1011,65 @@ def api_sonarr_webhook():
 @require_auth
 def api_mark_watched_status():
     return jsonify(mark_watched.status())
+
+
+@app.route("/api/mark-watched/sonarr", methods=["GET"])
+@require_auth
+def api_mark_watched_sonarr_status():
+    if not _is_admin():
+        return jsonify({"ok": False, "error": "Administrator role required"}), 403
+    return jsonify({"ok": True, "connection": sonarr_connection.status()})
+
+
+@app.route("/api/mark-watched/sonarr/connect", methods=["POST"])
+@require_auth
+@_serialized_config_write
+def api_mark_watched_sonarr_connect():
+    """Use a Sonarr API key once to test and provision the managed webhook."""
+    if not _is_admin():
+        return jsonify({"ok": False, "error": "Administrator role required"}), 403
+    data = request.get_json(silent=True) or {}
+    api_key = str(data.get("api_key", "")).strip()
+    sonarr_url = ""
+    callback_url = ""
+    try:
+        sonarr_url = normalize_sonarr_url(data.get("sonarr_url", ""))
+        callback_url = normalize_callback_url(data.get("callback_url", ""))
+        client = SonarrClient(sonarr_url, api_key)
+        # Verify the key before creating a local webhook secret.
+        sonarr_status = client.system_status()
+        webhook_secret = _ensure_sonarr_webhook_secret()
+        result = client.provision_webhook(
+            callback_url, webhook_secret, status=sonarr_status,
+        )
+        connection = sonarr_connection.success(sonarr_url, result)
+        logger.info(
+            "Sonarr webhook %s for %s (notification %s)",
+            result["action"], result.get("sonarr_instance", "Sonarr"),
+            result.get("notification_id", "unknown"),
+        )
+        return jsonify({
+            "ok": True,
+            "connection": connection,
+            "message": (
+                f"Sonarr webhook {result['action']} and its Test event succeeded. "
+                "The Sonarr API key was not saved."
+            ),
+        })
+    except (ValueError, SonarrError) as exc:
+        if sonarr_url and callback_url:
+            try:
+                sonarr_connection.failure(sonarr_url, callback_url, str(exc))
+            except OSError:
+                logger.warning("Could not persist Sonarr connection failure status")
+        logger.warning("Sonarr webhook provisioning failed (%s)", type(exc).__name__)
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except OSError:
+        logger.exception("Could not save Sonarr webhook configuration")
+        return jsonify({
+            "ok": False,
+            "error": "Sonarr connected, but mediaMender could not save its local configuration",
+        }), 500
 
 
 @app.route("/api/mark-watched/libraries", methods=["GET"])
