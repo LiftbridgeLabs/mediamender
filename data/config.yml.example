@@ -9,6 +9,17 @@ features:
   metadata_health: true
   timestamp_repair: true
   library_refresh: true
+  mark_watched: true
+
+# Future Sonarr Download imports can be marked watched after Plex matches them.
+# Prefer MEDIAMENDER_SONARR_WEBHOOK_SECRET instead of storing the secret here.
+mark_watched:
+  webhook_secret: ""
+  retry_delays: [10, 30, 60, 120, 300]
+  # Omit visible_libraries to show all configured TV libraries. An explicit
+  # empty list hides all libraries; Settings can manage this list safely.
+  # visible_libraries:
+  #   - "My Plex::TV Shows"
 
 discord_webhook: https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN
 
@@ -62,6 +73,8 @@ schedule:
 # Or configure via Settings → Security in the UI
 auth:
   username: admin
+  # Additional admin/user accounts and page permissions are managed in Settings.
+  # users: []
   # API token hashes are managed automatically; generate tokens in Settings.
   password_hash: ""  # set via Settings UI — never enter plaintext here
 

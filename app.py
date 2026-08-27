@@ -2775,6 +2775,10 @@ def api_users_save():
             return jsonify({"ok": False, "error": "Password required"}), 400
         existing.update({"username": username, "password_hash": password_hash,
                          "role": role, "permissions": permissions})
+        if not any(user.get("role") == "admin" for user in users) and not (
+            auth.get("username") or get_env("MEDIAMENDER_USERNAME")
+        ):
+            return jsonify({"ok": False, "error": "At least one administrator is required"}), 409
         _save_and_apply(raw, require_paths=False)
         return jsonify({"ok": True})
     except Exception as exc:

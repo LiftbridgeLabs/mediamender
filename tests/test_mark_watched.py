@@ -232,6 +232,28 @@ class MarkWatchedRuleTests(unittest.TestCase):
         self.assertEqual(result["marked"], 1)
         plex.mark_watched.assert_called_once_with("30")
 
+    def test_multi_episode_import_waits_before_marking_partial_match(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.side_effect = [{
+            "rating_key": "30", "show_rating_key": "10",
+            "season_rating_key": "20", "season_index": 2,
+            "episode_index": 3, "title": "Part One",
+        }, None]
+        event = {
+            "series": {"title": "Example Show"},
+            "episodes": [
+                {"season": 2, "episode": 3}, {"season": 2, "episode": 4},
+            ],
+        }
+        with self.assertRaises(PlexEpisodePending):
+            process_plex_event(event, config, {"Plex": plex}, self.rules)
+        plex.mark_watched.assert_not_called()
+
 
 class PlexMarkWatchedClientTests(unittest.TestCase):
     def test_find_episode_uses_exact_show_and_coordinates(self):

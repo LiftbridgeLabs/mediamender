@@ -371,7 +371,30 @@ plex_instances:
 
 ---
 
+## Mark-it-Watched
+
+Mark-it-Watched applies per-user show defaults and explicit season overrides to
+future finalized Sonarr imports. Configure Sonarr's webhook URL as
+`http://MEDIAMENDER:8222/api/webhooks/sonarr` and send either the dedicated
+`MEDIAMENDER_SONARR_WEBHOOK_SECRET` in `X-Sonarr-Webhook-Secret` (or as a Bearer
+token), or the independent mediaMender API token in `X-API-Token`.
+
+Only Sonarr `Download` events containing an imported `episodeFile` are queued.
+The HTTP request returns immediately; persistent background work retries until
+Plex has scanned and matched every episode in the import, then applies the
+current show/season rules. Duplicate payloads reuse the original durable job.
+Recent success, retry, and failure state is shown on the Mark-it-Watched page.
+
+Settings controls which shared Plex TV libraries are visible. Administrators
+can create application users, grant page permissions, and confirm All On or All
+Off. These bulk controls alter future rules only and never rewrite existing Plex
+watch history.
+
 ## Auth
+
+Administrators can create application users with `admin` or `user` roles and
+grant access to individual pages/features. Mark-it-Watched selections are
+stored separately for each user.
 
 Settings → Security. Enter username and password, save. Takes effect immediately, no restart needed. Stored as a bcrypt hash in config.yml — never plaintext.
 

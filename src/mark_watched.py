@@ -329,6 +329,10 @@ def process_plex_event(event: dict, app_config, clients: dict,
     """Find imported episodes across configured TV sections, then apply rules."""
     matched = []
     marked = []
+    expected_coordinates = {
+        (episode["season"], episode["episode"]) for episode in event["episodes"]
+    }
+    matched_coordinates = set()
     configured_visibility = app_config.mark_watched.visible_libraries
     visible = set(configured_visibility or [])
     for instance in app_config.instances:
@@ -350,18 +354,24 @@ def process_plex_event(event: dict, app_config, clients: dict,
                 if item is None:
                     continue
                 matched.append(item)
-                if not rules.enabled_for_any_user(
-                    instance.name, library.name, item["show_rating_key"],
-                    item["season_index"],
-                ):
-                    continue
-                plex.mark_watched(item["rating_key"])
-                marked.append(item)
-    if not matched:
+                item["instance_name"] = instance.name
+                item["library_name"] = library.name
+                item["plex"] = plex
+                matched_coordinates.add((episode["season"], episode["episode"]))
+    missing = expected_coordinates - matched_coordinates
+    if missing:
         coordinates = ", ".join(
-            f"S{item['season']:02d}E{item['episode']:02d}" for item in event["episodes"]
+            f"S{season:02d}E{episode:02d}" for season, episode in sorted(missing)
         )
         raise PlexEpisodePending(f"{event['series']['title']} {coordinates}")
+    for item in matched:
+        if not rules.enabled_for_any_user(
+            item["instance_name"], item["library_name"],
+            item["show_rating_key"], item["season_index"],
+        ):
+            continue
+        item["plex"].mark_watched(item["rating_key"])
+        marked.append(item)
     if not marked:
         return {
             "message": "Plex matched the import; no automatic watch rule was enabled",
