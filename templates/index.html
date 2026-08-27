@@ -3508,12 +3508,15 @@ async function loadSonarrConnectionStatus() {
       status.textContent = 'No Sonarr connections recorded yet.';
       status.style.color = '';
     }
-    if (list) list.innerHTML = connections.map(connection => `<div class="metadata-setting-row"><div><strong>${h(connection.sonarr_instance || 'Sonarr')}</strong><br><span>${h(connection.sonarr_url || '')} &middot; ${h(connection.sonarr_version || 'version unknown')}</span>${connection.error?`<br><span style="color:var(--fail2);">${h(connection.error)}</span>`:''}</div><div style="display:flex;align-items:center;gap:8px;"><span class="badge ${connection.status==='connected'?'success':connection.status==='failed'?'error':'skipped'}">${h(connection.status || 'unknown')}</span><button class="btn btn-danger btn-sm" onclick="removeSonarrConnection(${h(JSON.stringify(connection.sonarr_url || ''))},${connection.status==='connected'||connection.notification_id?'true':'false'},this)">Remove</button></div></div>`).join('') || '<div class="empty-msg">Connect each Sonarr URL once. API keys are never retained.</div>';
+    _sonarrKeyFromEnv = !!data.api_key_from_env;
+    if (list) list.innerHTML = connections.map(connection => `<div class="metadata-setting-row"><div><strong>${h(connection.sonarr_instance || 'Sonarr')}</strong><br><span>${h(connection.sonarr_url || '')} &middot; ${h(connection.sonarr_version || 'version unknown')}</span>${connection.error?`<br><span style="color:var(--fail2);">${h(connection.error)}</span>`:''}</div><div style="display:flex;align-items:center;gap:8px;"><span class="badge ${connection.status==='connected'?'success':connection.status==='failed'?'error':'skipped'}">${h(connection.status || 'unknown')}</span><button class="btn btn-danger btn-sm" onclick="removeSonarrConnection(${h(JSON.stringify(connection.sonarr_url || ''))},${connection.status==='connected'||connection.notification_id?'true':'false'},this)">Remove</button></div></div>`).join('') || '<div class="empty-msg">Connect each Sonarr URL once.</div>';
   } catch (error) {
     status.textContent = error.message || 'Could not load Sonarr status';
     status.style.color = 'var(--fail2)';
   }
 }
+
+let _sonarrKeyFromEnv = false;
 
 async function connectSonarr() {
   const button = document.getElementById('mark-watched-sonarr-connect');
@@ -3524,8 +3527,12 @@ async function connectSonarr() {
     api_key: apiKey?.value || '',
     callback_url: document.getElementById('mark-watched-callback-url')?.value.trim() || '',
   };
-  if (!payload.sonarr_url || !payload.api_key || !payload.callback_url) {
-    toast('Sonarr URL, API key, and callback URL are required', 'fail');
+  if (!payload.sonarr_url || !payload.callback_url) {
+    toast('Sonarr URL and callback URL are required', 'fail');
+    return;
+  }
+  if (!payload.api_key && !_sonarrKeyFromEnv) {
+    toast('Sonarr API key is required, or set SONARR_API_KEY', 'fail');
     return;
   }
   button.disabled = true;
@@ -3558,9 +3565,11 @@ async function connectSonarr() {
 async function removeSonarrConnection(sonarrUrl, hasRemoteWebhook, button) {
   if (!confirm(`Remove ${sonarrUrl} from mediaMender?${hasRemoteWebhook?' Its managed webhook will also be deleted from Sonarr.':''}`)) return;
   let apiKey = '';
-  if (hasRemoteWebhook) {
-    apiKey = prompt('Enter this Sonarr instance\'s API key. It will be used once and never saved.') || '';
-    if (!apiKey) return;
+  if (hasRemoteWebhook && !_sonarrKeyFromEnv) {
+    // Cancelling used to abort the removal entirely, so a connection whose key you no longer had
+    // could never be cleared. Skipping the key now removes it locally and says what was left in
+    // Sonarr.
+    apiKey = prompt('Sonarr API key, to delete its webhook. Leave blank to just forget the connection here.') || '';
   }
   button.disabled = true;
   try {
@@ -3571,7 +3580,7 @@ async function removeSonarrConnection(sonarrUrl, hasRemoteWebhook, button) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Sonarr connection could not be removed');
     await loadSonarrConnectionStatus();
-    toast(data.message || 'Sonarr connection removed', 'pass');
+    toast(data.message || 'Sonarr connection removed', data.webhook_left_behind ? 'warn' : 'pass');
   } catch (error) {
     button.disabled = false;
     toast(error.message || 'Sonarr connection could not be removed', 'fail');

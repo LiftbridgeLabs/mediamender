@@ -79,8 +79,8 @@ class SonarrClientTests(unittest.TestCase):
         session = FakeSession([
             FakeResponse({"version": "5.0.1", "instanceName": "TV"}),
             FakeResponse([webhook_schema()]),
-            FakeResponse(None),
             FakeResponse([]),
+            FakeResponse(None),
             FakeResponse({"id": 42}),
         ])
         client = SonarrClient("http://sonarr:8989", "api-sensitive", session=session)
@@ -94,10 +94,10 @@ class SonarrClientTests(unittest.TestCase):
         self.assertEqual(
             [(call[0], call[1].split("/api/v3", 1)[1]) for call in session.calls],
             [("GET", "/system/status"), ("GET", "/notification/schema"),
-             ("POST", "/notification/test"), ("GET", "/notification"),
+             ("GET", "/notification"), ("POST", "/notification/test"),
              ("POST", "/notification")],
         )
-        test_payload = session.calls[2][2]["json"]
+        test_payload = session.calls[3][2]["json"]
         fields = {field["name"]: field["value"] for field in test_payload["fields"]}
         self.assertEqual(test_payload["name"], WEBHOOK_NAME)
         self.assertTrue(test_payload["onDownload"])
@@ -114,8 +114,8 @@ class SonarrClientTests(unittest.TestCase):
         session = FakeSession([
             FakeResponse({"version": "4.0.0"}),
             FakeResponse([webhook_schema()]),
-            FakeResponse(None),
             FakeResponse([existing]),
+            FakeResponse(None),
             FakeResponse({"id": 7}),
         ])
         result = SonarrClient(
@@ -126,11 +126,47 @@ class SonarrClientTests(unittest.TestCase):
         self.assertTrue(session.calls[-1][1].endswith("/notification/7"))
         self.assertEqual(session.calls[-1][2]["json"]["id"], 7)
 
+    def test_reconnect_tests_with_the_existing_id_so_the_name_stays_unique(self):
+        """Sonarr validates a test payload as though it were being saved, and its Name uniqueness
+        rule only excludes the record carrying the same Id. Testing an unidentified payload named
+        after a connection that already exists is rejected with "Should be unique" — which made the
+        first connect succeed and every later one fail permanently."""
+        existing = {"id": 7, "name": WEBHOOK_NAME, "implementation": "Webhook"}
+
+        class UniqueNameSession(FakeSession):
+            def request(self, method, url, **kwargs):
+                if url.endswith("/notification/test"):
+                    payload = kwargs.get("json") or {}
+                    if payload.get("name") == existing["name"] and payload.get("id") != existing["id"]:
+                        self.calls.append((method, url, kwargs))
+                        self.responses.pop(0)
+                        return FakeResponse(
+                            [{"propertyName": "Name", "errorMessage": "Should be unique"}], 400,
+                        )
+                return super().request(method, url, **kwargs)
+
+        session = UniqueNameSession([
+            FakeResponse({"version": "4.0.0"}),
+            FakeResponse([webhook_schema()]),
+            FakeResponse([existing]),
+            FakeResponse(None),
+            FakeResponse({"id": 7}),
+        ])
+        result = SonarrClient(
+            "http://sonarr:8989", "key", session=session,
+        ).provision_webhook("http://mediamender:8222/api/webhooks/sonarr", "secret")
+
+        self.assertEqual(result["action"], "updated")
+        tested = next(
+            call for call in session.calls if call[1].endswith("/notification/test")
+        )
+        self.assertEqual(tested[2]["json"]["id"], 7)
+
     def test_provision_adds_connection_identity_header(self):
         session = FakeSession([
             FakeResponse({"version": "5.0.1"}),
-            FakeResponse([webhook_schema()]), FakeResponse(None),
-            FakeResponse([]), FakeResponse({"id": 42}),
+            FakeResponse([webhook_schema()]), FakeResponse([]),
+            FakeResponse(None), FakeResponse({"id": 42}),
         ])
         SonarrClient(
             "http://sonarr:8989", "key", session=session,
@@ -140,7 +176,7 @@ class SonarrClientTests(unittest.TestCase):
         )
         fields = {
             field["name"]: field["value"]
-            for field in session.calls[2][2]["json"]["fields"]
+            for field in session.calls[3][2]["json"]["fields"]
         }
         self.assertIn({
             "key": "X-MediaMender-Connection-ID", "value": "connection-1",
@@ -228,6 +264,14 @@ class SonarrProvisioningApiTests(unittest.TestCase):
                 "_csrf_token": "known-token",
             })
         return client
+
+    def test_status_endpoint_remains_bound_to_status_handler(self):
+        store = Mock()
+        store.status.return_value = {"connections": []}
+        with patch.object(app, "sonarr_connection", store):
+            response = self._client().get("/api/mark-watched/sonarr")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["connections"], [])
 
     def test_connect_is_available_to_the_authenticated_mark_watched_user(self):
         config = AppConfig(instances=[], users=[AppUser(

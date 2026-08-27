@@ -1021,10 +1021,27 @@ def api_mark_watched_status():
     return jsonify(mark_watched.status())
 
 
+def _sonarr_api_key(data: dict) -> str:
+    """The key for this request: whatever was typed in, otherwise SONARR_API_KEY.
+
+    Keeping the key out of the box entirely meant re-entering it for every action, including
+    removing a connection that was already broken — and there is no way to delete a webhook from
+    Sonarr without one. An environment variable set in compose or the unraid template keeps it out
+    of the config and status files (which are written to disk and shown in the UI) while letting
+    the ordinary paths work unattended."""
+    typed = str(data.get("api_key", "")).strip()
+    return typed or os.environ.get("SONARR_API_KEY", "").strip()
+
+
 @app.route("/api/mark-watched/sonarr", methods=["GET"])
 @require_auth
 def api_mark_watched_sonarr_status():
-    return jsonify({"ok": True, **sonarr_connection.status()})
+    return jsonify({
+        "ok": True,
+        # Lets the UI skip prompting for a key it already has a source for.
+        "api_key_from_env": bool(os.environ.get("SONARR_API_KEY", "").strip()),
+        **sonarr_connection.status(),
+    })
 
 
 @app.route("/api/mark-watched/sonarr/connect", methods=["POST"])
@@ -1033,7 +1050,7 @@ def api_mark_watched_sonarr_status():
 def api_mark_watched_sonarr_connect():
     """Use a Sonarr API key once to test and provision the managed webhook."""
     data = request.get_json(silent=True) or {}
-    api_key = str(data.get("api_key", "")).strip()
+    api_key = _sonarr_api_key(data)
     sonarr_url = ""
     callback_url = ""
     try:
@@ -1066,8 +1083,7 @@ def api_mark_watched_sonarr_connect():
             "ok": True,
             "connection": public_connection,
             "message": (
-                f"Sonarr webhook {result['action']} and its Test event succeeded. "
-                "The Sonarr API key was not saved."
+                f"Sonarr webhook {result['action']} and its Test event succeeded."
             ),
         })
     except (ValueError, SonarrError) as exc:
@@ -1098,34 +1114,45 @@ def api_mark_watched_sonarr_remove():
     connection = sonarr_connection.get(sonarr_url)
     if connection is None:
         return jsonify({"ok": False, "error": "Sonarr connection was not found"}), 404
-    api_key = str(data.get("api_key", "")).strip()
+    api_key = _sonarr_api_key(data)
     remote_record = (
         connection.get("status") == "connected"
         or bool(connection.get("notification_id"))
     )
+
+    # Removing the local record always succeeds, even when the webhook in Sonarr can't be deleted.
+    # Previously a missing key or an unreachable Sonarr aborted the whole thing, which left a
+    # broken connection permanently stuck in the list: the one state you most want to remove was
+    # the one you couldn't. Anything left behind in Sonarr is reported rather than hidden, since
+    # that connection is now unmanaged and has to be deleted there by hand.
     removed_webhooks = 0
+    leftover = ""
     if remote_record:
         if not api_key:
-            return jsonify({
-                "ok": False,
-                "error": "The Sonarr API key is required to remove its managed webhook",
-            }), 400
-        try:
-            removed_webhooks = SonarrClient(sonarr_url, api_key).remove_webhook()
-        except (ValueError, SonarrError) as exc:
-            return jsonify({"ok": False, "error": str(exc)}), 400
+            leftover = "no Sonarr API key was available, so its webhook was left in place"
+        else:
+            try:
+                removed_webhooks = SonarrClient(sonarr_url, api_key).remove_webhook()
+            except (ValueError, SonarrError) as exc:
+                leftover = f"its webhook could not be deleted from Sonarr ({exc})"
+
     try:
         sonarr_connection.remove(sonarr_url)
     except OSError:
         logger.exception("Could not remove saved Sonarr connection status")
         return jsonify({"ok": False, "error": "Could not remove saved Sonarr status"}), 500
+
+    if leftover:
+        message = f"Connection removed from mediaMender, but {leftover}"
+    elif remote_record:
+        message = "Managed Sonarr webhook and saved connection removed"
+    else:
+        message = "Failed Sonarr connection record removed"
     return jsonify({
         "ok": True,
         "removed_webhooks": removed_webhooks,
-        "message": (
-            "Managed Sonarr webhook and saved connection removed"
-            if remote_record else "Failed Sonarr connection record removed"
-        ),
+        "webhook_left_behind": bool(leftover),
+        "message": message,
     })
 
 

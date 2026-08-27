@@ -194,6 +194,17 @@ class SonarrClient:
         self._set_field(payload, "headers", headers)
         return payload
 
+    def _find_managed_notification(self) -> dict | None:
+        notifications = self._request("GET", "/notification")
+        if not isinstance(notifications, list):
+            raise SonarrError("Sonarr returned an invalid notification list")
+        return next((
+            item for item in notifications
+            if isinstance(item, dict)
+            and item.get("name") == WEBHOOK_NAME
+            and str(item.get("implementation", "")).lower() == "webhook"
+        ), None)
+
     def provision_webhook(self, callback_url: str, secret: str,
                           *, status: dict | None = None,
                           connection_id: str = "") -> dict:
@@ -203,24 +214,25 @@ class SonarrClient:
             self._webhook_schema(), callback_url, secret, connection_id,
         )
 
+        # Look for the existing connection before testing, not after. Sonarr
+        # validates the test payload as if it were being saved, and its Name
+        # uniqueness rule only excludes the record carrying the same Id — so
+        # testing an unidentified payload named the same as a connection that
+        # already exists fails with "Should be unique". That made the very
+        # first connect succeed and every later one fail permanently, because
+        # the test raised before this lookup could supply the Id.
+        existing = self._find_managed_notification()
+        if existing and isinstance(existing.get("id"), int):
+            payload["id"] = existing["id"]
+
         # Test before changing Sonarr's saved connections. This invokes the same
         # callback and secret header that the saved connection will use.
         self._request(
             "POST", "/notification/test", payload, redactions=(secret,),
         )
-        notifications = self._request("GET", "/notification")
-        if not isinstance(notifications, list):
-            raise SonarrError("Sonarr returned an invalid notification list")
-        existing = next((
-            item for item in notifications
-            if isinstance(item, dict)
-            and item.get("name") == WEBHOOK_NAME
-            and str(item.get("implementation", "")).lower() == "webhook"
-        ), None)
-        if existing and isinstance(existing.get("id"), int):
-            payload["id"] = existing["id"]
+        if "id" in payload:
             saved = self._request(
-                "PUT", f"/notification/{existing['id']}", payload,
+                "PUT", f"/notification/{payload['id']}", payload,
             )
             action = "updated"
         else:
