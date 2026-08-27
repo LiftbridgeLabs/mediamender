@@ -69,6 +69,19 @@
   <Config Name="Discord Webhook URL (optional)" Target="DISCORD_WEBHOOK" Default="" Mode=""
           Description="Optional notification override." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
 
+  <Config Name="Sonarr Main URL (optional)" Target="SONARR_MAIN_URL" Default="" Mode=""
+          Description="URL paired with the Main Sonarr API key." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Sonarr Main API Key (optional)" Target="SONARR_MAIN_API_KEY" Default="" Mode=""
+          Description="API key used only for the matching Main Sonarr URL." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Sonarr Unlimited URL (optional)" Target="SONARR_UNLIMITED_URL" Default="" Mode=""
+          Description="URL paired with the Unlimited Sonarr API key." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Sonarr Unlimited API Key (optional)" Target="SONARR_UNLIMITED_API_KEY" Default="" Mode=""
+          Description="API key used only for the matching Unlimited Sonarr URL." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Sonarr Anime URL (optional)" Target="SONARR_ANIME_URL" Default="" Mode=""
+          Description="URL paired with the Anime Sonarr API key." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Sonarr Anime API Key (optional)" Target="SONARR_ANIME_API_KEY" Default="" Mode=""
+          Description="API key used only for the matching Anime Sonarr URL." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+
   <Config Name="PUID" Target="PUID" Default="99" Mode=""
           Description="User ID; use 99 on Unraid." Type="Variable" Display="always" Required="false" Mask="false">99</Config>
   <Config Name="PGID" Target="PGID" Default="100" Mode=""

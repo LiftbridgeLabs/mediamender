@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -272,6 +273,91 @@ class SonarrProvisioningApiTests(unittest.TestCase):
             response = self._client().get("/api/mark-watched/sonarr")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["connections"], [])
+
+    def test_url_paired_environment_keys_are_isolated_per_instance(self):
+        environment = {
+            "SONARR_MAIN_URL": "http://sonarr:8989/",
+            "SONARR_MAIN_API_KEY": "main-key",
+            "SONARR_UNLIMITED_URL": "http://sonarr-unlimited:8989",
+            "SONARR_UNLIMITED_API_KEY": "unlimited-key",
+            "SONARR_API_KEY": "fallback-key",
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            self.assertEqual(
+                app._sonarr_api_key({}, "http://sonarr:8989"), "main-key",
+            )
+            self.assertEqual(
+                app._sonarr_api_key({}, "http://sonarr-unlimited:8989"),
+                "unlimited-key",
+            )
+            self.assertEqual(
+                app._sonarr_api_key({}, "http://sonarr-anime:8989"),
+                "fallback-key",
+            )
+            self.assertEqual(
+                app._sonarr_api_key(
+                    {"api_key": "typed-key"}, "http://sonarr:8989",
+                ),
+                "typed-key",
+            )
+
+    def test_status_reports_environment_key_availability_per_connection(self):
+        store = Mock()
+        store.status.return_value = {"connections": [
+            {"sonarr_url": "http://sonarr:8989"},
+            {"sonarr_url": "http://sonarr-anime:8989"},
+        ]}
+        environment = {
+            "SONARR_MAIN_URL": "http://sonarr:8989",
+            "SONARR_MAIN_API_KEY": "main-key",
+        }
+        with patch.dict(os.environ, environment, clear=True), \
+             patch.object(app, "sonarr_connection", store):
+            response = self._client().get("/api/mark-watched/sonarr")
+        connections = response.get_json()["connections"]
+        self.assertTrue(connections[0]["api_key_available"])
+        self.assertFalse(connections[1]["api_key_available"])
+
+    def test_missing_key_names_the_exact_suggested_environment_pair(self):
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(app, "SonarrClient") as constructor:
+            response = self._client().post(
+                "/api/mark-watched/sonarr/connect",
+                json={"sonarr_url": "http://sonarr-unlimited:8989",
+                      "callback_url": "http://mediamender:8222"},
+                headers={"X-CSRF-Token": "known-token"},
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("SONARR_UNLIMITED_URL", response.get_json()["error"])
+        self.assertIn("SONARR_UNLIMITED_API_KEY", response.get_json()["error"])
+        constructor.assert_not_called()
+
+    def test_connect_uses_url_paired_environment_key(self):
+        sonarr = Mock()
+        sonarr.system_status.return_value = {"version": "5.0.1"}
+        sonarr.provision_webhook.return_value = {
+            "action": "created", "notification_id": 12,
+            "callback_url": "http://mediamender:8222/api/webhooks/sonarr",
+        }
+        store = Mock()
+        store.prepare.return_value = {"connection_id": "connection-1"}
+        store.success.return_value = {"status": "connected"}
+        environment = {
+            "SONARR_ANIME_URL": "http://sonarr-anime:8989",
+            "SONARR_ANIME_API_KEY": "anime-key",
+        }
+        with patch.dict(os.environ, environment, clear=True), \
+             patch.object(app, "SonarrClient", return_value=sonarr) as constructor, \
+             patch.object(app, "sonarr_connection", store), \
+             patch.object(app, "_ensure_sonarr_webhook_secret", return_value="secret"):
+            response = self._client().post(
+                "/api/mark-watched/sonarr/connect",
+                json={"sonarr_url": "http://sonarr-anime:8989",
+                      "callback_url": "http://mediamender:8222"},
+                headers={"X-CSRF-Token": "known-token"},
+            )
+        self.assertEqual(response.status_code, 200)
+        constructor.assert_called_once_with("http://sonarr-anime:8989", "anime-key")
 
     def test_connect_is_available_to_the_authenticated_mark_watched_user(self):
         config = AppConfig(instances=[], users=[AppUser(

@@ -1021,27 +1021,73 @@ def api_mark_watched_status():
     return jsonify(mark_watched.status())
 
 
-def _sonarr_api_key(data: dict) -> str:
-    """The key for this request: whatever was typed in, otherwise SONARR_API_KEY.
+def _sonarr_environment_entry(sonarr_url: str) -> tuple[str, str, str] | None:
+    """Return the URL variable, key variable, and key paired to this URL."""
+    for url_variable in sorted(os.environ):
+        if not url_variable.startswith("SONARR_") or not url_variable.endswith("_URL"):
+            continue
+        slug = url_variable[len("SONARR_"):-len("_URL")]
+        if not slug:
+            continue
+        try:
+            configured_url = normalize_sonarr_url(os.environ.get(url_variable, ""))
+        except ValueError:
+            continue
+        if configured_url != sonarr_url:
+            continue
+        key_variable = f"SONARR_{slug}_API_KEY"
+        return url_variable, key_variable, os.environ.get(key_variable, "").strip()
+    return None
 
-    Keeping the key out of the box entirely meant re-entering it for every action, including
-    removing a connection that was already broken — and there is no way to delete a webhook from
-    Sonarr without one. An environment variable set in compose or the unraid template keeps it out
-    of the config and status files (which are written to disk and shown in the UI) while letting
-    the ordinary paths work unattended."""
+
+def _suggest_sonarr_environment_names(sonarr_url: str) -> tuple[str, str]:
+    host = urllib.parse.urlparse(sonarr_url).hostname or "main"
+    slug = "".join(
+        character if character.isalnum() else "_" for character in host
+    ).upper().strip("_")
+    if slug == "SONARR":
+        slug = "MAIN"
+    elif slug.startswith("SONARR_"):
+        slug = slug[len("SONARR_"):]
+    slug = slug or "MAIN"
+    return f"SONARR_{slug}_URL", f"SONARR_{slug}_API_KEY"
+
+
+def _sonarr_api_key(data: dict, sonarr_url: str) -> str:
+    """Resolve a typed key, URL-paired environment key, or global fallback."""
     typed = str(data.get("api_key", "")).strip()
-    return typed or os.environ.get("SONARR_API_KEY", "").strip()
+    if typed:
+        return typed
+    entry = _sonarr_environment_entry(sonarr_url)
+    if entry and entry[2]:
+        return entry[2]
+    return os.environ.get("SONARR_API_KEY", "").strip()
+
+
+def _missing_sonarr_api_key_message(sonarr_url: str) -> str:
+    entry = _sonarr_environment_entry(sonarr_url)
+    if entry:
+        url_variable, key_variable, _key = entry
+    else:
+        url_variable, key_variable = _suggest_sonarr_environment_names(sonarr_url)
+    return (
+        "Sonarr API key is required. Enter it here, set the fallback SONARR_API_KEY, "
+        f"or pair {url_variable} with {key_variable}."
+    )
 
 
 @app.route("/api/mark-watched/sonarr", methods=["GET"])
 @require_auth
 def api_mark_watched_sonarr_status():
-    return jsonify({
-        "ok": True,
-        # Lets the UI skip prompting for a key it already has a source for.
-        "api_key_from_env": bool(os.environ.get("SONARR_API_KEY", "").strip()),
-        **sonarr_connection.status(),
-    })
+    saved = sonarr_connection.status()
+    for connection in saved.get("connections", []):
+        try:
+            sonarr_url = normalize_sonarr_url(connection.get("sonarr_url", ""))
+        except ValueError:
+            connection["api_key_available"] = False
+            continue
+        connection["api_key_available"] = bool(_sonarr_api_key({}, sonarr_url))
+    return jsonify({"ok": True, **saved})
 
 
 @app.route("/api/mark-watched/sonarr/connect", methods=["POST"])
@@ -1050,12 +1096,14 @@ def api_mark_watched_sonarr_status():
 def api_mark_watched_sonarr_connect():
     """Use a Sonarr API key once to test and provision the managed webhook."""
     data = request.get_json(silent=True) or {}
-    api_key = _sonarr_api_key(data)
     sonarr_url = ""
     callback_url = ""
     try:
         sonarr_url = normalize_sonarr_url(data.get("sonarr_url", ""))
         callback_url = normalize_callback_url(data.get("callback_url", ""))
+        api_key = _sonarr_api_key(data, sonarr_url)
+        if not api_key:
+            raise ValueError(_missing_sonarr_api_key_message(sonarr_url))
         client = SonarrClient(sonarr_url, api_key)
         # Verify the key before creating a local webhook secret.
         sonarr_status = client.system_status()
@@ -1114,7 +1162,7 @@ def api_mark_watched_sonarr_remove():
     connection = sonarr_connection.get(sonarr_url)
     if connection is None:
         return jsonify({"ok": False, "error": "Sonarr connection was not found"}), 404
-    api_key = _sonarr_api_key(data)
+    api_key = _sonarr_api_key(data, sonarr_url)
     remote_record = (
         connection.get("status") == "connected"
         or bool(connection.get("notification_id"))

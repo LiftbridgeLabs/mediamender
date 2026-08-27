@@ -3508,15 +3508,12 @@ async function loadSonarrConnectionStatus() {
       status.textContent = 'No Sonarr connections recorded yet.';
       status.style.color = '';
     }
-    _sonarrKeyFromEnv = !!data.api_key_from_env;
-    if (list) list.innerHTML = connections.map(connection => `<div class="metadata-setting-row"><div><strong>${h(connection.sonarr_instance || 'Sonarr')}</strong><br><span>${h(connection.sonarr_url || '')} &middot; ${h(connection.sonarr_version || 'version unknown')}</span>${connection.error?`<br><span style="color:var(--fail2);">${h(connection.error)}</span>`:''}</div><div style="display:flex;align-items:center;gap:8px;"><span class="badge ${connection.status==='connected'?'success':connection.status==='failed'?'error':'skipped'}">${h(connection.status || 'unknown')}</span><button class="btn btn-danger btn-sm" onclick="removeSonarrConnection(${h(JSON.stringify(connection.sonarr_url || ''))},${connection.status==='connected'||connection.notification_id?'true':'false'},this)">Remove</button></div></div>`).join('') || '<div class="empty-msg">Connect each Sonarr URL once.</div>';
+    if (list) list.innerHTML = connections.map(connection => `<div class="metadata-setting-row"><div><strong>${h(connection.sonarr_instance || 'Sonarr')}</strong><br><span>${h(connection.sonarr_url || '')} &middot; ${h(connection.sonarr_version || 'version unknown')}</span>${connection.error?`<br><span style="color:var(--fail2);">${h(connection.error)}</span>`:''}</div><div style="display:flex;align-items:center;gap:8px;"><span class="badge ${connection.status==='connected'?'success':connection.status==='failed'?'error':'skipped'}">${h(connection.status || 'unknown')}</span><button class="btn btn-danger btn-sm" onclick="removeSonarrConnection(${h(JSON.stringify(connection.sonarr_url || ''))},${connection.status==='connected'||connection.notification_id?'true':'false'},${connection.api_key_available?'true':'false'},this)">Remove</button></div></div>`).join('') || '<div class="empty-msg">Connect each Sonarr URL once.</div>';
   } catch (error) {
     status.textContent = error.message || 'Could not load Sonarr status';
     status.style.color = 'var(--fail2)';
   }
 }
-
-let _sonarrKeyFromEnv = false;
 
 async function connectSonarr() {
   const button = document.getElementById('mark-watched-sonarr-connect');
@@ -3529,10 +3526,6 @@ async function connectSonarr() {
   };
   if (!payload.sonarr_url || !payload.callback_url) {
     toast('Sonarr URL and callback URL are required', 'fail');
-    return;
-  }
-  if (!payload.api_key && !_sonarrKeyFromEnv) {
-    toast('Sonarr API key is required, or set SONARR_API_KEY', 'fail');
     return;
   }
   button.disabled = true;
@@ -3562,10 +3555,10 @@ async function connectSonarr() {
   }
 }
 
-async function removeSonarrConnection(sonarrUrl, hasRemoteWebhook, button) {
+async function removeSonarrConnection(sonarrUrl, hasRemoteWebhook, apiKeyAvailable, button) {
   if (!confirm(`Remove ${sonarrUrl} from mediaMender?${hasRemoteWebhook?' Its managed webhook will also be deleted from Sonarr.':''}`)) return;
   let apiKey = '';
-  if (hasRemoteWebhook && !_sonarrKeyFromEnv) {
+  if (hasRemoteWebhook && !apiKeyAvailable) {
     // Cancelling used to abort the removal entirely, so a connection whose key you no longer had
     // could never be cleared. Skipping the key now removes it locally and says what was left in
     // Sonarr.

@@ -393,6 +393,23 @@ Sonarr instance's API key once, deletes mediaMender's webhook from Sonarr, and
 then removes the local status record. Sonarr validation and callback-test errors
 are displayed without exposing API keys or webhook secrets.
 
+For unattended multi-instance management, pair each Sonarr URL with its key by
+an arbitrary shared environment label:
+
+```text
+SONARR_MAIN_URL=http://sonarr:8989
+SONARR_MAIN_API_KEY=...
+SONARR_UNLIMITED_URL=http://sonarr-unlimited:8989
+SONARR_UNLIMITED_API_KEY=...
+SONARR_ANIME_URL=http://sonarr-anime:8989
+SONARR_ANIME_API_KEY=...
+```
+
+The URL selects the correct key; a trailing slash is ignored. A key typed in
+the form takes precedence, while `SONARR_API_KEY` remains an optional fallback
+for unpaired instances. Keys are never included in the status response or
+written to `data/sonarr-webhook.json`.
+
 If no dedicated webhook secret exists, Connect Sonarr generates and saves one
 automatically. `MEDIAMENDER_SONARR_WEBHOOK_SECRET` remains the preferred
 environment override. Manual setup is still supported: use

@@ -40,6 +40,13 @@ services:
       - PUID=99
       - PGID=100
       - TZ=America/New_York
+      # Optional URL-matched Sonarr API keys for unattended connect/remove.
+      # - SONARR_MAIN_URL=http://sonarr:8989
+      # - SONARR_MAIN_API_KEY=${SONARR_MAIN_API_KEY}
+      # - SONARR_UNLIMITED_URL=http://sonarr-unlimited:8989
+      # - SONARR_UNLIMITED_API_KEY=${SONARR_UNLIMITED_API_KEY}
+      # - SONARR_ANIME_URL=http://sonarr-anime:8989
+      # - SONARR_ANIME_API_KEY=${SONARR_ANIME_API_KEY}
 
   # Optional repair-only sidecar for a Plex server on another machine. Deploy
   # this service on that machine, not beside the controller above. The Settings
