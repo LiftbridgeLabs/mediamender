@@ -178,6 +178,8 @@ class MarkWatchedUiApiTests(unittest.TestCase):
         self.assertIn('id="page-mark-watched"', html)
         self.assertIn("Explicit season override", html)
         self.assertIn("Inherited from show", html)
+        self.assertNotIn("Application Users", html)
+        self.assertIn("Plex: ${h(_markWatchedData.instance)}", html)
 
     def test_download_without_episode_file_is_rejected(self):
         payload = sonarr_download()
@@ -409,29 +411,33 @@ class MarkWatchedPermissionTests(unittest.TestCase):
             response = self._user_client(["mark_watched"]).get("/api/mark-watched/libraries")
         self.assertEqual(response.status_code, 200)
 
-    def test_bulk_all_requires_admin_and_never_calls_plex_mark_watched(self):
+    def test_bulk_all_updates_only_active_rule_set_and_never_plex_history(self):
         library = LibraryConfig("TV", "physical", [], section_id="7")
         config = AppConfig(instances=[PlexInstanceConfig(
             "Plex", "http://plex", "token", [library],
+        )], users=[AppUser(
+            "viewer", hash_password("password123"), "user", ["mark_watched"],
         )])
         plex = Mock()
         plex.get_section_type.return_value = "show"
         plex.list_tv_shows.return_value = [{"rating_key": "10"}, {"rating_key": "11"}]
         client = app.app.test_client()
         with client.session_transaction() as browser_session:
-            browser_session.update({"authenticated": True, "username": "admin",
-                                    "role": "admin", "permissions": ["*"],
+            browser_session.update({"authenticated": True, "username": "viewer",
+                                    "role": "user", "permissions": ["mark_watched"],
                                     "_csrf_token": "known-token"})
         with patch.object(app, "config", config), \
              patch.object(app, "plex_clients", {"Plex": plex}), \
-             patch.object(app.mark_watched_rules, "usernames", return_value=["admin"]), \
              patch.object(app.mark_watched_rules, "set_all") as set_all:
             response = client.post(
                 "/api/mark-watched/all", json={"enabled": False, "confirm": "ALL OFF"},
                 headers={"X-CSRF-Token": "known-token"},
             )
         self.assertEqual(response.status_code, 200)
-        self.assertGreaterEqual(set_all.call_count, 1)
+        set_all.assert_called_once_with(
+            "viewer", [("Plex", "TV", "10"), ("Plex", "TV", "11")], False,
+        )
+        self.assertEqual(response.get_json()["users"], 1)
         plex.mark_watched.assert_not_called()
 
 

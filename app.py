@@ -1024,8 +1024,6 @@ def api_mark_watched_status():
 @app.route("/api/mark-watched/sonarr", methods=["GET"])
 @require_auth
 def api_mark_watched_sonarr_status():
-    if not _is_admin():
-        return jsonify({"ok": False, "error": "Administrator role required"}), 403
     return jsonify({"ok": True, **sonarr_connection.status()})
 
 
@@ -1034,8 +1032,6 @@ def api_mark_watched_sonarr_status():
 @_serialized_config_write
 def api_mark_watched_sonarr_connect():
     """Use a Sonarr API key once to test and provision the managed webhook."""
-    if not _is_admin():
-        return jsonify({"ok": False, "error": "Administrator role required"}), 403
     data = request.get_json(silent=True) or {}
     api_key = str(data.get("api_key", "")).strip()
     sonarr_url = ""
@@ -1305,8 +1301,6 @@ def api_mark_watched_rules():
 @app.route("/api/mark-watched/all", methods=["POST"])
 @require_auth
 def api_mark_watched_all():
-    if not _is_admin():
-        return jsonify({"ok": False, "error": "Administrator role required"}), 403
     data = request.get_json(silent=True) or {}
     enabled = data.get("enabled")
     expected = "ALL ON" if enabled is True else "ALL OFF" if enabled is False else ""
@@ -1328,13 +1322,9 @@ def api_mark_watched_all():
                 continue
             for show in plex.list_tv_shows(str(section_id)):
                 show_keys.append((instance.name, library.name, show["rating_key"]))
-    usernames = set(mark_watched_rules.usernames())
-    usernames.update(user.username for user in config.users)
-    usernames.add(_current_username())
-    for username in usernames:
-        mark_watched_rules.set_all(username, show_keys, enabled)
+    mark_watched_rules.set_all(_current_username(), show_keys, enabled)
     return jsonify({"ok": True, "enabled": enabled, "shows": len(show_keys),
-                    "users": len(usernames),
+                    "users": 1,
                     "message": "Future automatic rules updated; Plex history was not changed"})
 
 

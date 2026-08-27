@@ -381,11 +381,11 @@ runs Sonarr's Test event, and creates or updates the managed connection. The
 Sonarr API key is used for that request only and is never saved.
 
 Repeat Connect Sonarr for every Sonarr instance. mediaMender keeps a non-secret
-per-instance connection list and binds each automatically managed webhook to
-the mediaMender user who connected it, so only that user's rules are evaluated
-for its imports. The Plex watched state is written through the selected server's
-shared configured Plex token and therefore belongs to that Plex account, not to
-every Plex Home profile.
+per-instance connection list and gives each automatically managed webhook a
+unique connection identifier. All connected Sonarr instances use the same
+Mark-it-Watched rules. Plex watched state is written through the matching
+server's globally configured Plex token and therefore belongs to that Plex
+account, not every Plex Home profile.
 
 If no dedicated webhook secret exists, Connect Sonarr generates and saves one
 automatically. `MEDIAMENDER_SONARR_WEBHOOK_SECRET` remains the preferred
@@ -403,16 +403,15 @@ The rule browser loads one selected Plex server and TV library at a time. Shows
 use Plex-native pagination (12, 24, 36, or 48 per page); movie libraries are not
 shown.
 
-Settings controls which shared Plex TV libraries are visible. Administrators
-can create application users, grant page permissions, and confirm All On or All
-Off. These bulk controls alter future rules only and never rewrite existing Plex
-watch history.
+Settings controls which shared Plex TV libraries are visible. All On and All Off
+update the single future rule set only; they never rewrite existing Plex watch
+history.
 
 ## Auth
 
-Administrators can create application users with `admin` or `user` roles and
-grant access to individual pages/features. Mark-it-Watched selections are
-stored separately for each user.
+mediaMender uses one application login and the globally configured Plex
+identity. It does not require separate application-user or per-user Plex-token
+setup.
 
 Settings → Security. Enter username and password, save. Takes effect immediately, no restart needed. Stored as a bcrypt hash in config.yml — never plaintext.
 

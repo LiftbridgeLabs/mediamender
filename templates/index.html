@@ -1134,7 +1134,7 @@ dialog.overlay::backdrop{background:transparent;}
 <div class="page" data-feature="mark_watched" id="page-mark-watched">
   <div class="repair-page-head">
     <div><div class="eyebrow">Automatic Plex watch rules</div><h1 class="dashboard-title">Mark-it-Watched</h1><div class="dashboard-subtitle">Choose shows or override individual seasons. Rules affect only future finalized Sonarr imports.</div></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-secondary" onclick="loadMarkWatched(true)">&#8635;&nbsp; Refresh Plex</button>{% if current_identity.role == 'admin' %}<button class="btn btn-primary" onclick="setAllMarkWatched(true)">All On</button><button class="btn btn-danger" onclick="setAllMarkWatched(false)">All Off</button>{% endif %}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-secondary" onclick="loadMarkWatched(true)">&#8635;&nbsp; Refresh Plex</button><button class="btn btn-primary" onclick="setAllMarkWatched(true)">All On</button><button class="btn btn-danger" onclick="setAllMarkWatched(false)">All Off</button></div>
   </div>
   <div class="repair-warning" style="border-color:var(--accent-line);background:var(--accent-faint);color:var(--text2);">This page never rewrites existing Plex history. A matching episode is marked watched only after Sonarr finishes importing it and Plex has scanned and matched it.</div>
   <div class="card"><div class="card-body mw-browser-toolbar">
@@ -1599,13 +1599,6 @@ dialog.overlay::backdrop{background:transparent;}
           </div>
         </div>
 
-        {% if current_identity.role == 'admin' %}
-        <div class="card" style="margin-top:16px;">
-          <div class="card-header"><span class="card-title">Application Users</span><button class="btn btn-secondary btn-sm" onclick="addUserForm()">Add user</button></div>
-          <div class="card-body"><div id="user-management"><div class="empty-msg">Open Security to load users.</div></div></div>
-        </div>
-        {% endif %}
-
         <div class="card" style="margin-top:16px;">
           <div class="card-header"><span class="card-title">API Token</span></div>
           <div class="card-body">
@@ -2059,7 +2052,7 @@ function renderMarkWatchedLibraries() {
   const shows = _markWatchedData.shows || [];
   container.innerHTML = `
     <section class="mw-library">
-      <div class="repair-section-heading"><h2 class="repair-section-title">${h(_markWatchedData.library)}</h2><span class="inst-chip">${h(_markWatchedData.instance)}</span><span class="inst-chip">Rules for ${h(_markWatchedData.rule_user || _identity.username || 'current user')}</span><div class="repair-section-line"></div></div>
+      <div class="repair-section-heading"><h2 class="repair-section-title">${h(_markWatchedData.library)}</h2><span class="inst-chip">Plex: ${h(_markWatchedData.instance)}</span><div class="repair-section-line"></div></div>
       <div class="mw-grid">
         ${shows.map((show, showIndex) => `
           <article class="mw-card">
@@ -2143,7 +2136,7 @@ async function setSeasonRule(showIndex, seasonIndex, enabled) {
 
 async function setAllMarkWatched(enabled) {
   const phrase = enabled ? 'ALL ON' : 'ALL OFF';
-  if (!confirm(`${phrase} for every visible show and every application user?\n\nThis changes only future automatic rules. Existing Plex watch history will not be modified.`)) return;
+  if (!confirm(`${phrase} for every visible show?\n\nThis changes only future automatic rules. Existing Plex watch history will not be modified.`)) return;
   const response = await fetch('/api/mark-watched/all', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({enabled, confirm:phrase}),
@@ -2660,7 +2653,7 @@ function showSettingsSection(name, btn) {
   document.getElementById(`ss-${name}`).classList.add('active');
   if (btn) btn.classList.add('active');
   if (name === 'providers') loadProviderStatus();
-  if (name === 'security')  { loadApiToken(); if (_identity.role === 'admin') loadUsers(); }
+  if (name === 'security')  { loadApiToken(); }
   if (name === 'timestamp-repair') renderRepairSettings();
   if (name === 'trash-removal') { renderTrashRemovalSettings(); loadGlobalScheduleControls(); }
   if (name === 'library-refresh') renderLibraryRefreshSettings();
@@ -3515,7 +3508,7 @@ async function loadSonarrConnectionStatus() {
       status.textContent = 'No Sonarr connections recorded yet.';
       status.style.color = '';
     }
-    if (list) list.innerHTML = connections.map(connection => `<div class="metadata-setting-row"><div><strong>${h(connection.sonarr_instance || 'Sonarr')}</strong><br><span>${h(connection.sonarr_url || '')} &middot; rules for ${h(connection.owner || 'legacy/all users')} &middot; ${h(connection.sonarr_version || 'version unknown')}</span>${connection.error?`<br><span style="color:var(--fail2);">${h(connection.error)}</span>`:''}</div><span class="badge ${connection.status==='connected'?'success':connection.status==='failed'?'error':'skipped'}">${h(connection.status || 'unknown')}</span></div>`).join('') || '<div class="empty-msg">Connect each Sonarr URL once. API keys are never retained.</div>';
+    if (list) list.innerHTML = connections.map(connection => `<div class="metadata-setting-row"><div><strong>${h(connection.sonarr_instance || 'Sonarr')}</strong><br><span>${h(connection.sonarr_url || '')} &middot; ${h(connection.sonarr_version || 'version unknown')}</span>${connection.error?`<br><span style="color:var(--fail2);">${h(connection.error)}</span>`:''}</div><span class="badge ${connection.status==='connected'?'success':connection.status==='failed'?'error':'skipped'}">${h(connection.status || 'unknown')}</span></div>`).join('') || '<div class="empty-msg">Connect each Sonarr URL once. API keys are never retained.</div>';
   } catch (error) {
     status.textContent = error.message || 'Could not load Sonarr status';
     status.style.color = 'var(--fail2)';
@@ -4845,65 +4838,6 @@ async function clearAuth() {
       toast('Auth removed','warn');
     } else { result.innerHTML=`<span style="color:var(--fail2);">✗ ${h(d.error)}</span>`; }
   } catch(e) { result.innerHTML='<span style="color:var(--fail2);">Failed</span>'; }
-}
-
-let _usersData = null;
-async function loadUsers() {
-  const target = document.getElementById('user-management');
-  if (!target) return;
-  const response = await fetch('/api/users');
-  const data = await response.json();
-  if (!response.ok) { target.innerHTML = `<div class="empty-msg">${h(data.error || 'Users could not be loaded')}</div>`; return; }
-  _usersData = data;
-  renderUsers();
-}
-
-function userEditor(user, index, isNew = false) {
-  const permissions = _usersData.permissions.map(permission => `
-    <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2);"><input type="checkbox" data-user-permission="${h(permission)}" ${user.permissions.includes(permission)?'checked':''}>${h(permission.replaceAll('_',' '))}</label>`).join('');
-  return `<div class="card" style="margin-bottom:10px;" id="user-editor-${index}"><div class="card-body">
-    <div class="form-row"><div class="form-group"><label class="form-label">Username</label><input class="form-input" data-user-name value="${h(user.username)}" ${isNew?'':'readonly'}></div>
-    <div class="form-group"><label class="form-label">Role</label><select class="form-input" data-user-role><option value="user" ${user.role==='user'?'selected':''}>User</option><option value="admin" ${user.role==='admin'?'selected':''}>Administrator</option></select></div></div>
-    <div class="form-group"><label class="form-label">${isNew?'Password':'New password (leave blank to keep)'}</label><input class="form-input" type="password" data-user-password autocomplete="new-password"></div>
-    <div class="form-group"><div class="form-label">Page and feature access</div><div style="display:flex;flex-wrap:wrap;gap:8px 14px;">${permissions}</div></div>
-    <div style="display:flex;gap:8px;"><button class="btn btn-primary btn-sm" onclick="saveUser(${index},${isNew})">Save user</button>${isNew?'':`<button class="btn btn-danger btn-sm" onclick="deleteUser(${index})">Delete</button>`}</div>
-  </div></div>`;
-}
-
-function renderUsers() {
-  const target = document.getElementById('user-management');
-  target.innerHTML = (_usersData.users || []).map((user,index) => userEditor(user,index)).join('') || '<div class="empty-msg">No multi-user accounts. The legacy administrator login remains active.</div>';
-}
-
-function addUserForm() {
-  if (!_usersData) return;
-  const index = _usersData.users.length;
-  document.getElementById('user-management').insertAdjacentHTML('beforeend', userEditor({username:'',role:'user',permissions:['dashboard','mark_watched']},index,true));
-}
-
-async function saveUser(index, isNew) {
-  const editor = document.getElementById(`user-editor-${index}`);
-  const payload = {
-    username:editor.querySelector('[data-user-name]').value.trim(),
-    password:editor.querySelector('[data-user-password]').value,
-    role:editor.querySelector('[data-user-role]').value,
-    permissions:[...editor.querySelectorAll('[data-user-permission]:checked')].map(input => input.dataset.userPermission),
-  };
-  const response = await fetch('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-  const data = await response.json();
-  if (!response.ok) return toast(data.error || 'User could not be saved','fail');
-  toast(`User ${payload.username} saved`,'pass');
-  await loadUsers();
-}
-
-async function deleteUser(index) {
-  const username = _usersData.users[index].username;
-  if (!confirm(`Delete application user "${username}" and their Mark-it-Watched selections?`)) return;
-  const response = await fetch(`/api/users/${encodeURIComponent(username)}`,{method:'DELETE'});
-  const data = await response.json();
-  if (!response.ok) return toast(data.error || 'User could not be deleted','fail');
-  toast(`User ${username} deleted`,'pass');
-  await loadUsers();
 }
 
 function updateAuthBanner(enabled, username) {

@@ -193,18 +193,32 @@ class SonarrProvisioningApiTests(unittest.TestCase):
             })
         return client
 
-    def test_connect_is_admin_only(self):
+    def test_connect_is_available_to_the_authenticated_mark_watched_user(self):
         config = AppConfig(instances=[], users=[AppUser(
             "user", hash_password("password123"), "user", ["mark_watched"],
         )])
-        with patch.object(app, "config", config):
+        sonarr = Mock()
+        sonarr.system_status.return_value = {"version": "5.0.1"}
+        sonarr.provision_webhook.return_value = {
+            "action": "created", "notification_id": 12,
+            "callback_url": "http://mediamender:8222/api/webhooks/sonarr",
+            "sonarr_version": "5.0.1", "sonarr_instance": "TV",
+        }
+        store = Mock()
+        store.prepare.return_value = {"connection_id": "connection-1"}
+        store.success.return_value = {"status": "connected"}
+        with patch.object(app, "config", config), \
+             patch.object(app, "SonarrClient", return_value=sonarr), \
+             patch.object(app, "sonarr_connection", store), \
+             patch.object(app, "_ensure_sonarr_webhook_secret", return_value="secret"):
             response = self._client("user", ["mark_watched"]).post(
                 "/api/mark-watched/sonarr/connect",
                 json={"sonarr_url": "http://sonarr:8989", "api_key": "key",
                       "callback_url": "http://mediamender:8222"},
                 headers={"X-CSRF-Token": "known-token"},
             )
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 200)
+        store.prepare.assert_called_once_with("http://sonarr:8989", "user")
 
     def test_connect_uses_key_once_and_returns_no_secrets(self):
         config = AppConfig(
