@@ -37,7 +37,7 @@ from src.version import __version__
 from src.timestamp_repair import TimestampRepairManager
 from src.library_refresh import LibraryRefreshManager
 from src.mark_watched import (
-    MarkWatchedManager, MarkWatchedRuleStore, process_plex_event,
+    MarkWatchedManager, MarkWatchedRuleStore, process_mark_watched_event,
 )
 from src.sonarr_client import (
     SonarrClient, SonarrConnectionStore, SonarrError,
@@ -100,7 +100,7 @@ mark_watched_rules = MarkWatchedRuleStore(
 )
 mark_watched = MarkWatchedManager(
     os.path.dirname(os.path.abspath(CONFIG_PATH)),
-    processor=lambda event: process_plex_event(
+    processor=lambda event: process_mark_watched_event(
         event, config, plex_clients, mark_watched_rules,
     ),
     retry_delays=tuple(config.mark_watched.retry_delays),
@@ -1470,6 +1470,53 @@ def api_mark_watched_rules():
     else:
         return jsonify({"ok": False, "error": "Invalid rule update"}), 400
     return jsonify({"ok": True})
+
+
+@app.route("/api/mark-watched/apply", methods=["POST"])
+@require_auth
+def api_mark_watched_apply():
+    """Queue an explicit one-time update to existing Plex watch history."""
+    data = request.get_json(silent=True) or {}
+    scope = str(data.get("scope", ""))
+    if scope not in {"show", "season"}:
+        return jsonify({"ok": False, "error": "Scope must be show or season"}), 400
+    if data.get("confirm") != "MARK WATCHED NOW":
+        return jsonify({
+            "ok": False,
+            "error": "Confirmation must be MARK WATCHED NOW",
+        }), 400
+    instance_name = str(data.get("instance", ""))
+    library_name = str(data.get("library", ""))
+    show_key = str(data.get("show_rating_key", ""))
+    _instance, _library, plex = _mark_watched_library(instance_name, library_name)
+    if plex is None or not show_key.isdigit():
+        return jsonify({"ok": False, "error": "Unknown Plex show"}), 404
+    manual = {
+        "scope": scope,
+        "instance": instance_name,
+        "library": library_name,
+        "show_rating_key": show_key,
+    }
+    if scope == "season":
+        try:
+            manual["season_index"] = int(data["season_index"])
+        except (KeyError, TypeError, ValueError):
+            return jsonify({
+                "ok": False, "error": "Valid season_index required",
+            }), 400
+    title = str(data.get("show_title", "")).strip()[:200] or "Plex show"
+    record = mark_watched.enqueue_manual({
+        "series": {"title": title},
+        "manual": manual,
+        "rule_user": _current_username(),
+    })
+    return jsonify({
+        "ok": True,
+        "queued": True,
+        "job_id": record["id"],
+        "status": record["status"],
+        "message": record["message"],
+    }), 202
 
 
 @app.route("/api/mark-watched/all", methods=["POST"])

@@ -138,6 +138,24 @@ class PlexClient:
         } for item in self._metadata(response)
           if item.get("type") == "season" and item.get("ratingKey")]
 
+    def list_show_episodes(self, show_rating_key: str) -> List[Dict]:
+        """Return episodes for one Plex show, including current watch state."""
+        response = self._get(
+            f"/library/metadata/{show_rating_key}/allLeaves", timeout=30,
+        )
+        response.raise_for_status()
+        return [{
+            "rating_key": str(item.get("ratingKey", "")),
+            "season_index": int(item.get("parentIndex", 0) or 0),
+            "episode_index": int(item.get("index", 0) or 0),
+            "title": str(item.get("title", "")),
+            "show_title": str(item.get("grandparentTitle", "")),
+            "view_count": int(item.get("viewCount", 0) or 0),
+        } for item in self._metadata(response)
+          if item.get("type") == "episode"
+          and item.get("ratingKey")
+          and str(item.get("grandparentRatingKey", "")) == str(show_rating_key)]
+
     def find_episode(self, section_id: str, show_title: str,
                      season: int, episode: int) -> Optional[Dict]:
         response = self._get(
@@ -187,6 +205,15 @@ class PlexClient:
             "key": str(rating_key), "identifier": identifier,
         })
         response.raise_for_status()
+
+    def mark_watched_many(self, rating_keys: List[str]) -> None:
+        """Mark several items watched while discovering the Plex endpoint once."""
+        endpoint, identifier = self._scrobble_endpoint()
+        for rating_key in rating_keys:
+            response = self._get(endpoint, params={
+                "key": str(rating_key), "identifier": identifier,
+            })
+            response.raise_for_status()
 
     def get_artwork(self, artwork_key: str):
         if not artwork_key.startswith("/") or artwork_key.startswith("//"):

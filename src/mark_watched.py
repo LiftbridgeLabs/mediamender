@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import queue
+import secrets
 import threading
 import time
 from datetime import datetime, timezone
@@ -13,6 +14,9 @@ from pathlib import Path
 from typing import Callable
 
 from src.storage import atomic_write_json
+
+
+logger = logging.getLogger("mediamender.mark_watched")
 
 
 class PlexEpisodePending(Exception):
@@ -160,7 +164,39 @@ class MarkWatchedManager:
             self._records[job_id] = record
             self._save()
             self._queue.put(job_id)
+            logger.info(
+                "Queued Sonarr import %s for %s",
+                job_id[:12], event["series"]["title"],
+            )
             return dict(record), True
+
+    def enqueue_manual(self, event: dict) -> dict:
+        """Queue an explicitly confirmed manual Plex history update."""
+        event = dict(event)
+        event["source"] = "manual"
+        event["request_id"] = secrets.token_urlsafe(12)
+        encoded = json.dumps(event, sort_keys=True, separators=(",", ":")).encode()
+        job_id = hashlib.sha256(encoded).hexdigest()
+        now = _utc_now()
+        scope = event.get("manual", {}).get("scope", "show")
+        record = {
+            "id": job_id,
+            "status": "queued",
+            "attempts": 0,
+            "message": f"Manual {scope} watch update queued",
+            "created_at": now,
+            "updated_at": now,
+            "event": event,
+        }
+        with self._lock:
+            self._records[job_id] = record
+            self._save()
+            self._queue.put(job_id)
+        logger.info(
+            "Queued manual %s update %s for %s",
+            scope, job_id[:12], event.get("series", {}).get("title", "Plex show"),
+        )
+        return dict(record)
 
     def _update(self, job_id: str, **changes) -> None:
         with self._lock:
@@ -184,17 +220,24 @@ class MarkWatchedManager:
                     job_id, status="retrying", next_retry_seconds=delay,
                     message=f"Plex match pending; retrying in {delay:g} seconds",
                 )
+                logger.info(
+                    "Job %s waiting %g seconds for Plex match", job_id[:12], delay,
+                )
                 self._sleep(delay)
             self._update(
                 job_id, status="processing", attempts=attempt,
                 next_retry_seconds=None, message=f"Checking Plex (attempt {attempt})",
             )
             try:
+                logger.info("Processing Mark-it-Watched job %s (attempt %s)",
+                            job_id[:12], attempt)
                 result = self.processor(event) or {}
                 self._update(
                     job_id, status="succeeded", result=result,
                     message=result.get("message", "Marked matched Plex episode watched"),
                 )
+                logger.info("Mark-it-Watched job %s succeeded: %s", job_id[:12],
+                            result.get("message", "completed"))
                 return self.get(job_id)
             except PlexEpisodePending as exc:
                 if attempt == len(delays):
@@ -202,6 +245,8 @@ class MarkWatchedManager:
                         job_id, status="failed",
                         message=f"Plex match was not available after {attempt} attempts: {exc}",
                     )
+                    logger.error("Mark-it-Watched job %s exhausted Plex retries: %s",
+                                 job_id[:12], exc)
                     return self.get(job_id)
             except Exception as exc:
                 logging.getLogger("mediamender").exception("Mark-it-Watched job failed")
@@ -209,6 +254,8 @@ class MarkWatchedManager:
                     job_id, status="failed",
                     message=f"Plex processing failed: {type(exc).__name__}: {exc}",
                 )
+                logger.error("Mark-it-Watched job %s failed: %s: %s",
+                             job_id[:12], type(exc).__name__, exc)
                 return self.get(job_id)
         return self.get(job_id)
 
@@ -391,3 +438,66 @@ def process_plex_event(event: dict, app_config, clients: dict,
         "matched": len(matched), "marked": len(marked),
         "rating_keys": [item["rating_key"] for item in marked],
     }
+
+
+def process_manual_event(event: dict, app_config, clients: dict) -> dict:
+    """Apply a confirmed manual show or season update to existing Plex history."""
+    manual = event.get("manual", {})
+    instance_name = str(manual.get("instance", ""))
+    library_name = str(manual.get("library", ""))
+    show_key = str(manual.get("show_rating_key", ""))
+    scope = str(manual.get("scope", ""))
+    if scope not in {"show", "season"} or not show_key.isdigit():
+        raise ValueError("Invalid manual Mark-it-Watched request")
+
+    instance = next(
+        (item for item in app_config.instances if item.name == instance_name), None,
+    )
+    library = next(
+        (item for item in instance.libraries if item.name == library_name), None,
+    ) if instance else None
+    plex = clients.get(instance_name)
+    if instance is None or library is None or plex is None:
+        raise ValueError("Configured Plex TV library was not found")
+    configured_visibility = app_config.mark_watched.visible_libraries
+    if configured_visibility is not None and (
+        f"{instance_name}::{library_name}" not in set(configured_visibility)
+    ):
+        raise ValueError("This Plex library is hidden in Settings")
+    section_id = library.section_id or plex.find_section_id(library.name)
+    if not section_id or plex.get_section_type(str(section_id)) != "show":
+        raise ValueError("Manual Mark-it-Watched supports TV libraries only")
+
+    episodes = plex.list_show_episodes(show_key)
+    if scope == "season":
+        season_index = int(manual["season_index"])
+        episodes = [
+            episode for episode in episodes
+            if episode["season_index"] == season_index
+        ]
+    if not episodes:
+        raise ValueError("Plex returned no episodes for the selected scope")
+
+    unwatched = [episode for episode in episodes if episode["view_count"] < 1]
+    if unwatched:
+        plex.mark_watched_many([episode["rating_key"] for episode in unwatched])
+    already_watched = len(episodes) - len(unwatched)
+    scope_label = "season" if scope == "season" else "show"
+    return {
+        "message": (
+            f"Manual {scope_label} update marked {len(unwatched)} episode(s) watched; "
+            f"{already_watched} were already watched"
+        ),
+        "matched": len(episodes),
+        "marked": len(unwatched),
+        "already_watched": already_watched,
+        "rating_keys": [episode["rating_key"] for episode in unwatched],
+    }
+
+
+def process_mark_watched_event(event: dict, app_config, clients: dict,
+                               rules: MarkWatchedRuleStore) -> dict:
+    """Dispatch durable automatic and manual Mark-it-Watched jobs."""
+    if event.get("source") == "manual":
+        return process_manual_event(event, app_config, clients)
+    return process_plex_event(event, app_config, clients, rules)

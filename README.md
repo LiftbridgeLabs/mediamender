@@ -430,6 +430,14 @@ use Plex-native pagination (12, 24, 36, or 48 per page); movie libraries are not
 shown. Search is scoped to the entire selected Plex TV library, and page controls
 are available both above and below the poster grid.
 
+The separate **Mark show watched now** and **Mark season watched now** actions
+are explicit, confirmed changes to existing Plex history. They queue durable
+background jobs, skip episodes Plex already considers watched, and report the
+matched, marked, retry, and failure results in the Mark-it-Watched activity
+panel. The panel refreshes while the page is open. The same transitions are
+written under the `mediamender.mark_watched` logger, so they can also be
+followed through the container log or the Settings log viewer.
+
 Settings controls which shared Plex TV libraries are visible. All On and All Off
 update the single future rule set only; they never rewrite existing Plex watch
 history.

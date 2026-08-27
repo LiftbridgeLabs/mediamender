@@ -11,7 +11,7 @@ from src.mark_watched import (
     MarkWatchedManager, MarkWatchedRuleStore,
     PlexEpisodePending,
     normalize_sonarr_download,
-    process_plex_event,
+    process_manual_event, process_plex_event,
 )
 from src.plex_client import PlexClient
 
@@ -198,6 +198,42 @@ class MarkWatchedUiApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         save.assert_called_once_with("default", "Plex", "TV", "10", 2, False)
 
+    def test_manual_apply_requires_destructive_confirmation(self):
+        response = self._client().post(
+            "/api/mark-watched/apply",
+            json={"scope": "show", "instance": "Plex", "library": "TV",
+                  "show_rating_key": "10"},
+            headers={"X-CSRF-Token": "known-token"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("MARK WATCHED NOW", response.get_json()["error"])
+
+    def test_manual_season_apply_is_queued_outside_request(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        manager = Mock()
+        manager.enqueue_manual.return_value = {"id": "job-1", "status": "queued",
+                                               "message": "queued"}
+        plex = Mock()
+        with patch.object(app, "config", config), \
+             patch.object(app, "plex_clients", {"Plex": plex}), \
+             patch.object(app, "mark_watched", manager):
+            response = self._client().post(
+                "/api/mark-watched/apply",
+                json={"scope": "season", "confirm": "MARK WATCHED NOW",
+                      "instance": "Plex", "library": "TV",
+                      "show_rating_key": "10", "show_title": "Example Show",
+                      "season_index": 2},
+                headers={"X-CSRF-Token": "known-token"},
+            )
+        self.assertEqual(response.status_code, 202)
+        event = manager.enqueue_manual.call_args.args[0]
+        self.assertEqual(event["manual"]["season_index"], 2)
+        self.assertEqual(event["series"]["title"], "Example Show")
+        plex.mark_watched.assert_not_called()
+
     def test_page_has_navigation_poster_and_inheritance_controls(self):
         html = Path("templates/index.html").read_text(encoding="utf-8")
         self.assertIn('id="nav-mark-watched"', html)
@@ -210,6 +246,9 @@ class MarkWatchedUiApiTests(unittest.TestCase):
         self.assertIn('id="mark-watched-search"', html)
         self.assertIn('id="mark-watched-pagination-top"', html)
         self.assertIn('id="mark-watched-pagination-bottom"', html)
+        self.assertIn("Mark show watched now", html)
+        self.assertIn("Mark season watched now", html)
+        self.assertIn("Mark-it-Watched activity", html)
 
     def test_download_without_episode_file_is_rejected(self):
         payload = sonarr_download()
@@ -267,6 +306,16 @@ class MarkWatchedQueueTests(unittest.TestCase):
 
     def test_normalizer_accepts_sonarr_test_without_queueing(self):
         self.assertIsNone(normalize_sonarr_download({"eventType": "Test"}))
+
+    def test_manual_action_uses_the_durable_background_queue(self):
+        manager = MarkWatchedManager(str(self.runtime), autostart=False)
+        record = manager.enqueue_manual({
+            "series": {"title": "Example Show"},
+            "manual": {"scope": "show"},
+        })
+        self.assertEqual(record["status"], "queued")
+        self.assertEqual(record["event"]["source"], "manual")
+        self.assertEqual(manager.status()["jobs"][0]["id"], record["id"])
 
 
 class MarkWatchedRuleTests(unittest.TestCase):
@@ -372,6 +421,30 @@ class MarkWatchedRuleTests(unittest.TestCase):
             process_plex_event(event, config, {"Plex": plex}, self.rules)
         plex.mark_watched.assert_not_called()
 
+    def test_manual_season_marks_only_unwatched_episodes_in_that_season(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.list_show_episodes.return_value = [
+            {"rating_key": "21", "season_index": 2, "episode_index": 1,
+             "view_count": 0},
+            {"rating_key": "22", "season_index": 2, "episode_index": 2,
+             "view_count": 1},
+            {"rating_key": "31", "season_index": 3, "episode_index": 1,
+             "view_count": 0},
+        ]
+        result = process_manual_event({"manual": {
+            "scope": "season", "instance": "Plex", "library": "TV",
+            "show_rating_key": "10", "season_index": 2,
+        }}, config, {"Plex": plex})
+        plex.mark_watched_many.assert_called_once_with(["21"])
+        self.assertEqual(result["matched"], 2)
+        self.assertEqual(result["marked"], 1)
+        self.assertEqual(result["already_watched"], 1)
+
 
 class PlexMarkWatchedClientTests(unittest.TestCase):
     def test_find_episode_uses_exact_show_and_coordinates(self):
@@ -399,6 +472,32 @@ class PlexMarkWatchedClientTests(unittest.TestCase):
             client.mark_watched("30")
         self.assertEqual(get.call_args.args[0], "/:/scrobble")
         self.assertEqual(get.call_args.kwargs["params"]["key"], "30")
+
+    def test_list_show_episodes_returns_watch_state_for_exact_show(self):
+        client = PlexClient("http://plex", "token")
+        response = Mock()
+        response.json.return_value = {"MediaContainer": {"Metadata": [
+            {"type": "episode", "ratingKey": "21", "grandparentRatingKey": "10",
+             "grandparentTitle": "Example", "parentIndex": 2, "index": 1,
+             "viewCount": 1},
+            {"type": "episode", "ratingKey": "99", "grandparentRatingKey": "11",
+             "parentIndex": 2, "index": 1},
+        ]}}
+        with patch.object(client, "_get", return_value=response) as get:
+            episodes = client.list_show_episodes("10")
+        self.assertEqual(len(episodes), 1)
+        self.assertEqual(episodes[0]["view_count"], 1)
+        self.assertEqual(get.call_args.args[0], "/library/metadata/10/allLeaves")
+
+    def test_mark_watched_many_discovers_scrobble_endpoint_once(self):
+        client = PlexClient("http://plex", "token")
+        responses = [Mock(), Mock()]
+        with patch.object(client, "_scrobble_endpoint", return_value=(
+            "/:/scrobble", "com.plexapp.plugins.library",
+        )) as endpoint, patch.object(client, "_get", side_effect=responses) as get:
+            client.mark_watched_many(["21", "22"])
+        endpoint.assert_called_once_with()
+        self.assertEqual(get.call_count, 2)
 
     def test_list_tv_shows_page_uses_plex_container_pagination(self):
         client = PlexClient("http://plex", "token")
