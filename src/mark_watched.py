@@ -305,6 +305,15 @@ class MarkWatchedRuleStore:
             user = self._user(username)
             return json.loads(json.dumps(user))
 
+    def usernames(self) -> list[str]:
+        with self._lock:
+            return list(self._data.get("users", {}))
+
+    def delete_user(self, username: str) -> None:
+        with self._lock:
+            self._data.get("users", {}).pop(username, None)
+            self._save()
+
     def set_all(self, username: str, show_keys: list[tuple[str, str, str]],
                 enabled: bool) -> None:
         with self._lock:

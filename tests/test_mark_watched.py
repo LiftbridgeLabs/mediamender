@@ -3,7 +3,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import app
-from src.config import AppConfig, LibraryConfig, MarkWatchedConfig, PlexInstanceConfig
+from src.auth import hash_password
+from src.config import AppConfig, AppUser, LibraryConfig, MarkWatchedConfig, PlexInstanceConfig
 from src.mark_watched import (
     MarkWatchedManager, MarkWatchedRuleStore,
     PlexEpisodePending,
@@ -202,6 +203,12 @@ class MarkWatchedRuleTests(unittest.TestCase):
             self.rules.rule("alice", "Plex", "TV", "10", 1)["source"], "show",
         )
 
+    def test_user_rules_are_isolated(self):
+        self.rules.set_show("alice", "Plex", "TV", "10", True)
+        self.rules.set_show("bob", "Plex", "TV", "10", False)
+        self.assertTrue(self.rules.rule("alice", "Plex", "TV", "10", 1)["enabled"])
+        self.assertFalse(self.rules.rule("bob", "Plex", "TV", "10", 1)["enabled"])
+
     def test_processor_marks_only_when_rule_is_enabled(self):
         library = LibraryConfig("TV", "physical", [], section_id="7")
         config = AppConfig(instances=[PlexInstanceConfig(
@@ -250,6 +257,58 @@ class PlexMarkWatchedClientTests(unittest.TestCase):
             client.mark_watched("30")
         self.assertEqual(get.call_args.args[0], "/:/scrobble")
         self.assertEqual(get.call_args.kwargs["params"]["key"], "30")
+
+
+class MarkWatchedPermissionTests(unittest.TestCase):
+    def _user_client(self, permissions):
+        client = app.app.test_client()
+        with client.session_transaction() as browser_session:
+            browser_session.update({
+                "authenticated": True, "username": "viewer", "role": "user",
+                "permissions": permissions, "_csrf_token": "known-token",
+            })
+        return client
+
+    def test_server_denies_feature_without_permission(self):
+        config = AppConfig(instances=[], users=[AppUser(
+            "viewer", hash_password("password123"), "user", ["dashboard"],
+        )])
+        with patch.object(app, "config", config):
+            response = self._user_client(["dashboard"]).get("/api/mark-watched/libraries")
+        self.assertEqual(response.status_code, 403)
+
+    def test_server_allows_granted_mark_watched_permission(self):
+        config = AppConfig(instances=[], users=[AppUser(
+            "viewer", hash_password("password123"), "user", ["mark_watched"],
+        )])
+        with patch.object(app, "config", config):
+            response = self._user_client(["mark_watched"]).get("/api/mark-watched/libraries")
+        self.assertEqual(response.status_code, 200)
+
+    def test_bulk_all_requires_admin_and_never_calls_plex_mark_watched(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.list_tv_shows.return_value = [{"rating_key": "10"}, {"rating_key": "11"}]
+        client = app.app.test_client()
+        with client.session_transaction() as browser_session:
+            browser_session.update({"authenticated": True, "username": "admin",
+                                    "role": "admin", "permissions": ["*"],
+                                    "_csrf_token": "known-token"})
+        with patch.object(app, "config", config), \
+             patch.object(app, "plex_clients", {"Plex": plex}), \
+             patch.object(app.mark_watched_rules, "usernames", return_value=["admin"]), \
+             patch.object(app.mark_watched_rules, "set_all") as set_all:
+            response = client.post(
+                "/api/mark-watched/all", json={"enabled": False, "confirm": "ALL OFF"},
+                headers={"X-CSRF-Token": "known-token"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(set_all.call_count, 1)
+        plex.mark_watched.assert_not_called()
 
 
 if __name__ == "__main__":

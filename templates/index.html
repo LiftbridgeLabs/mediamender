@@ -1132,7 +1132,7 @@ dialog.overlay::backdrop{background:transparent;}
 <div class="page" data-feature="mark_watched" id="page-mark-watched">
   <div class="repair-page-head">
     <div><div class="eyebrow">Automatic Plex watch rules</div><h1 class="dashboard-title">Mark-it-Watched</h1><div class="dashboard-subtitle">Choose shows or override individual seasons. Rules affect only future finalized Sonarr imports.</div></div>
-    <button class="btn btn-secondary" onclick="loadMarkWatched()">&#8635;&nbsp; Refresh Plex</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-secondary" onclick="loadMarkWatched()">&#8635;&nbsp; Refresh Plex</button>{% if current_identity.role == 'admin' %}<button class="btn btn-primary" onclick="setAllMarkWatched(true)">All On</button><button class="btn btn-danger" onclick="setAllMarkWatched(false)">All Off</button>{% endif %}</div>
   </div>
   <div class="repair-warning" style="border-color:var(--accent-line);background:var(--accent-faint);color:var(--text2);">This page never rewrites existing Plex history. A matching episode is marked watched only after Sonarr finishes importing it and Plex has scanned and matched it.</div>
   <div id="mark-watched-libraries"><div class="empty-msg">Open this tab to load Plex TV libraries.</div></div>
@@ -1566,6 +1566,13 @@ dialog.overlay::backdrop{background:transparent;}
           </div>
         </div>
 
+        {% if current_identity.role == 'admin' %}
+        <div class="card" style="margin-top:16px;">
+          <div class="card-header"><span class="card-title">Application Users</span><button class="btn btn-secondary btn-sm" onclick="addUserForm()">Add user</button></div>
+          <div class="card-body"><div id="user-management"><div class="empty-msg">Open Security to load users.</div></div></div>
+        </div>
+        {% endif %}
+
         <div class="card" style="margin-top:16px;">
           <div class="card-header"><span class="card-title">API Token</span></div>
           <div class="card-body">
@@ -1835,6 +1842,7 @@ window.fetch = function(input, init = {}) {
 };
 const _instances = {{ instances | tojson }};
 const _configMissing = {{ 'true' if config_missing else 'false' }};
+const _identity = {{ current_identity | tojson }};
 let _activeFeatures = {
   trash_removal: {{ 'true' if config.features.trash_removal else 'false' }},
   metadata_health: {{ 'true' if config.features.metadata_health else 'false' }},
@@ -1851,8 +1859,27 @@ function applyFeatureVisibility(features = _activeFeatures) {
   });
 }
 
+function canAccess(permission) {
+  return _identity.role === 'admin' || (_identity.permissions || []).includes('*') || (_identity.permissions || []).includes(permission);
+}
+
+function applyPermissionVisibility() {
+  const mapping = {
+    'nav-dashboard':'dashboard', 'nav-mediamender':'trash_removal',
+    'nav-library-refresh':'library_refresh', 'nav-mark-watched':'mark_watched',
+    'nav-metadata-health':'metadata_health', 'nav-timestamp-repair':'timestamp_repair',
+    'nav-settings':'settings',
+  };
+  Object.entries(mapping).forEach(([id, permission]) => {
+    const element = document.getElementById(id);
+    if (element) element.hidden = !canAccess(permission);
+  });
+}
+
 // ── Page routing ─────────────────────────────────────────────────────────────
 function showPage(name, btn) {
+  const permissions = {dashboard:'dashboard',mediamender:'trash_removal','library-refresh':'library_refresh','mark-watched':'mark_watched','metadata-audit':'metadata_health','timestamp-repair':'timestamp_repair',settings:'settings'};
+  if (permissions[name] && !canAccess(permissions[name])) return toast('You do not have access to that page', 'fail');
   const target = document.getElementById(`page-${name}`);
   if (!target || (target.dataset.feature && _activeFeatures[target.dataset.feature] === false)) {
     name = 'dashboard';
@@ -1980,6 +2007,19 @@ async function setSeasonRule(libraryIndex, showIndex, seasonIndex, enabled) {
   target.classList.remove('open');
   await toggleMarkWatchedSeasons(libraryIndex, showIndex);
   toast('Season rule saved', 'pass');
+}
+
+async function setAllMarkWatched(enabled) {
+  const phrase = enabled ? 'ALL ON' : 'ALL OFF';
+  if (!confirm(`${phrase} for every visible show and every application user?\n\nThis changes only future automatic rules. Existing Plex watch history will not be modified.`)) return;
+  const response = await fetch('/api/mark-watched/all', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({enabled, confirm:phrase}),
+  });
+  const data = await response.json();
+  if (!response.ok) return toast(data.error || 'Bulk rule update failed', 'fail');
+  toast(`${phrase}: ${data.shows} future show rules updated; Plex history unchanged`, 'pass');
+  await loadMarkWatched();
 }
 
 function renderMarkWatchedJobs(jobs) {
@@ -2480,7 +2520,7 @@ function showSettingsSection(name, btn) {
   document.getElementById(`ss-${name}`).classList.add('active');
   if (btn) btn.classList.add('active');
   if (name === 'providers') loadProviderStatus();
-  if (name === 'security')  loadApiToken();
+  if (name === 'security')  { loadApiToken(); if (_identity.role === 'admin') loadUsers(); }
   if (name === 'timestamp-repair') renderRepairSettings();
   if (name === 'trash-removal') { renderTrashRemovalSettings(); loadGlobalScheduleControls(); }
   if (name === 'library-refresh') renderLibraryRefreshSettings();
@@ -4555,6 +4595,65 @@ async function clearAuth() {
   } catch(e) { result.innerHTML='<span style="color:var(--fail2);">Failed</span>'; }
 }
 
+let _usersData = null;
+async function loadUsers() {
+  const target = document.getElementById('user-management');
+  if (!target) return;
+  const response = await fetch('/api/users');
+  const data = await response.json();
+  if (!response.ok) { target.innerHTML = `<div class="empty-msg">${h(data.error || 'Users could not be loaded')}</div>`; return; }
+  _usersData = data;
+  renderUsers();
+}
+
+function userEditor(user, index, isNew = false) {
+  const permissions = _usersData.permissions.map(permission => `
+    <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2);"><input type="checkbox" data-user-permission="${h(permission)}" ${user.permissions.includes(permission)?'checked':''}>${h(permission.replaceAll('_',' '))}</label>`).join('');
+  return `<div class="card" style="margin-bottom:10px;" id="user-editor-${index}"><div class="card-body">
+    <div class="form-row"><div class="form-group"><label class="form-label">Username</label><input class="form-input" data-user-name value="${h(user.username)}" ${isNew?'':'readonly'}></div>
+    <div class="form-group"><label class="form-label">Role</label><select class="form-input" data-user-role><option value="user" ${user.role==='user'?'selected':''}>User</option><option value="admin" ${user.role==='admin'?'selected':''}>Administrator</option></select></div></div>
+    <div class="form-group"><label class="form-label">${isNew?'Password':'New password (leave blank to keep)'}</label><input class="form-input" type="password" data-user-password autocomplete="new-password"></div>
+    <div class="form-group"><div class="form-label">Page and feature access</div><div style="display:flex;flex-wrap:wrap;gap:8px 14px;">${permissions}</div></div>
+    <div style="display:flex;gap:8px;"><button class="btn btn-primary btn-sm" onclick="saveUser(${index},${isNew})">Save user</button>${isNew?'':`<button class="btn btn-danger btn-sm" onclick="deleteUser(${index})">Delete</button>`}</div>
+  </div></div>`;
+}
+
+function renderUsers() {
+  const target = document.getElementById('user-management');
+  target.innerHTML = (_usersData.users || []).map((user,index) => userEditor(user,index)).join('') || '<div class="empty-msg">No multi-user accounts. The legacy administrator login remains active.</div>';
+}
+
+function addUserForm() {
+  if (!_usersData) return;
+  const index = _usersData.users.length;
+  document.getElementById('user-management').insertAdjacentHTML('beforeend', userEditor({username:'',role:'user',permissions:['dashboard','mark_watched']},index,true));
+}
+
+async function saveUser(index, isNew) {
+  const editor = document.getElementById(`user-editor-${index}`);
+  const payload = {
+    username:editor.querySelector('[data-user-name]').value.trim(),
+    password:editor.querySelector('[data-user-password]').value,
+    role:editor.querySelector('[data-user-role]').value,
+    permissions:[...editor.querySelectorAll('[data-user-permission]:checked')].map(input => input.dataset.userPermission),
+  };
+  const response = await fetch('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const data = await response.json();
+  if (!response.ok) return toast(data.error || 'User could not be saved','fail');
+  toast(`User ${payload.username} saved`,'pass');
+  await loadUsers();
+}
+
+async function deleteUser(index) {
+  const username = _usersData.users[index].username;
+  if (!confirm(`Delete application user "${username}" and their Mark-it-Watched selections?`)) return;
+  const response = await fetch(`/api/users/${encodeURIComponent(username)}`,{method:'DELETE'});
+  const data = await response.json();
+  if (!response.ok) return toast(data.error || 'User could not be deleted','fail');
+  toast(`User ${username} deleted`,'pass');
+  await loadUsers();
+}
+
 function updateAuthBanner(enabled, username) {
   const el = document.getElementById('auth-status-banner');
   if (!el) return;
@@ -4743,17 +4842,26 @@ function moveProtectionControls() {
 if (!_configMissing) {
   moveProtectionControls();
   applyFeatureVisibility();
+  applyPermissionVisibility();
+  if (!canAccess('dashboard')) {
+    const first = [
+      ['mark_watched','mark-watched'], ['trash_removal','mediamender'],
+      ['library_refresh','library-refresh'], ['metadata_health','metadata-audit'],
+      ['timestamp_repair','timestamp-repair'], ['settings','settings'],
+    ].find(([permission]) => canAccess(permission));
+    if (first) showPage(first[1], document.getElementById(`nav-${first[1]}`));
+  }
   applyScheduleLabels();
   selectDashboardView(window.location.hash.slice(1) || 'overview', false);
-  if (_activeFeatures.trash_removal) {
+  if (_activeFeatures.trash_removal && canAccess('trash_removal')) {
     setInterval(fetchStatus, 15000);
     setInterval(fetchHistory, 30000);
     fetchStatus();
     fetchHistory();
   }
-  if (_activeFeatures.metadata_health) loadMetadataAuditStatus();
-  if (_activeFeatures.timestamp_repair) loadRepairStatus();
-  if (_activeFeatures.library_refresh) loadLibraryRefreshStatus();
+  if (_activeFeatures.metadata_health && canAccess('metadata_health')) loadMetadataAuditStatus();
+  if (_activeFeatures.timestamp_repair && canAccess('timestamp_repair')) loadRepairStatus();
+  if (_activeFeatures.library_refresh && canAccess('library_refresh')) loadLibraryRefreshStatus();
   initAuthBanner();
 }
 </script>

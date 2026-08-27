@@ -81,6 +81,14 @@ class MarkWatchedConfig:
     visible_libraries: List[str] = field(default_factory=list)
 
 
+@dataclass
+class AppUser:
+    username: str
+    password_hash: str
+    role: str = "user"
+    permissions: List[str] = field(default_factory=list)
+
+
 # ── Plex instance config ──────────────────────────────────────────────────────
 
 @dataclass
@@ -139,6 +147,7 @@ class AppConfig:
     auth_username: str = ""
     auth_password_hash: str = ""    # bcrypt (or legacy SHA-256) hash, set via Settings UI
     auth_api_token_hash: str = ""   # SHA-256 of a random, independently rotatable API token
+    users: List[AppUser] = field(default_factory=list)
     providers: dict = field(default_factory=dict)  # {realdebrid: {api_key: ...}, ...}
     clean_bundles_before_empty: bool = False
     max_trash_items: int = 1000
@@ -333,6 +342,22 @@ def parse_config(raw: dict, config_missing: bool = False) -> AppConfig:
     auth_username      = auth_raw.get("username", "")
     auth_password_hash = auth_raw.get("password_hash", "")
     auth_api_token_hash = auth_raw.get("api_token_hash", "")
+    users = []
+    for user in auth_raw.get("users", []) if isinstance(auth_raw.get("users", []), list) else []:
+        if not isinstance(user, dict) or not str(user.get("username", "")).strip():
+            continue
+        role = str(user.get("role", "user")).lower()
+        if role not in {"admin", "user"}:
+            role = "user"
+        permissions = user.get("permissions", [])
+        if not isinstance(permissions, list):
+            permissions = []
+        users.append(AppUser(
+            username=str(user["username"]).strip(),
+            password_hash=str(user.get("password_hash", "")),
+            role=role,
+            permissions=[str(value) for value in permissions],
+        ))
 
     providers_raw = raw.get("providers", {})
     features_raw = raw.get("features", {})
@@ -409,6 +434,7 @@ def parse_config(raw: dict, config_missing: bool = False) -> AppConfig:
         auth_username       = auth_username,
         auth_password_hash  = auth_password_hash,
         auth_api_token_hash = auth_api_token_hash,
+        users               = users,
         providers           = providers_raw,
         clean_bundles_before_empty = clean_bundles_before_empty,
         max_trash_items      = max_trash_items,

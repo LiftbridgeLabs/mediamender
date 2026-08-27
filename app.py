@@ -23,7 +23,8 @@ from src.config import (load_config, parse_config, AppConfig,
 from src.plex_client import PlexClient
 from src.auth import (require_auth, auth_enabled, check_credentials,
                       is_authenticated, hash_password, is_locked_out,
-                      has_valid_api_token, generate_api_token, hash_api_token)
+                      has_valid_api_token, generate_api_token, hash_api_token,
+                      authenticate_user, current_identity, has_permission)
 from src import runner
 from src.runner import get_scheduling_enabled, set_scheduling_enabled
 from src.providers import get_account_status, get_api_key
@@ -725,6 +726,40 @@ def protect_state_changes():
         return jsonify({"error": "Invalid or missing CSRF token"}), 403
 
 
+_PERMISSION_PREFIXES = (
+    ("/api/mark-watched", "mark_watched"),
+    ("/api/library-refresh", "library_refresh"),
+    ("/api/metadata-audit", "metadata_health"),
+    ("/api/timestamp-repair", "timestamp_repair"),
+    ("/api/run", "trash_removal"),
+    ("/api/dryrun", "trash_removal"),
+    ("/api/checks", "trash_removal"),
+    ("/api/scheduling", "trash_removal"),
+    ("/api/status", "dashboard"),
+    ("/api/history", "dashboard"),
+    ("/api/config", "settings"),
+    ("/api/providers", "settings"),
+    ("/api/notifications", "settings"),
+    ("/api/plex", "settings"),
+    ("/api/wizard", "settings"),
+    ("/api/logs", "settings"),
+    ("/api/users", "settings"),
+    ("/api/auth", "settings"),
+)
+
+
+@app.before_request
+def enforce_user_permissions():
+    if request.path.startswith("/api/webhooks/sonarr") or has_valid_api_token(config):
+        return None
+    if auth_enabled(config) and not is_authenticated():
+        return None
+    for prefix, permission in _PERMISSION_PREFIXES:
+        if request.path.startswith(prefix) and not has_permission(permission, config):
+            return jsonify({"error": f"Permission required: {permission}"}), 403
+    return None
+
+
 @app.after_request
 def add_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
@@ -828,10 +863,15 @@ def login():
         ip       = request.remote_addr or ""
         if is_locked_out(ip):
             error = "Too many failed attempts — try again in 10 minutes"
-        elif check_credentials(username, password, config, ip=ip):
-            session["authenticated"] = True
-            return redirect(url_for("index"))
         else:
+            identity = authenticate_user(username, password, config, ip=ip)
+        if not error and identity:
+            session["authenticated"] = True
+            session["username"] = identity["username"]
+            session["role"] = identity["role"]
+            session["permissions"] = identity["permissions"]
+            return redirect(url_for("index"))
+        elif not error:
             error = "Invalid username or password"
         session["_login_error"] = error
         return redirect(url_for("login"))
@@ -848,6 +888,7 @@ def logout():
 @require_auth
 def index():
     ui_instances = _build_ui_instances()
+    identity = current_identity(config)
     return render_template("index.html",
         instances=ui_instances,
         instance_count=len(ui_instances),
@@ -862,6 +903,7 @@ def index():
         config_overrides=_active_config_overrides(),
         scheduler_timezone=str(scheduler.timezone),
         product_name=PRODUCT_NAME,
+        current_identity=identity,
     )
 
 
@@ -898,7 +940,11 @@ def _valid_sonarr_webhook_auth() -> bool:
 
 
 def _current_username() -> str:
-    return str(session.get("username") or config.auth_username or "default")
+    return current_identity(config)["username"] or "default"
+
+
+def _is_admin() -> bool:
+    return has_valid_api_token(config) or current_identity(config)["role"] == "admin"
 
 
 def _mark_watched_library(instance_name: str, library_name: str):
@@ -1040,6 +1086,41 @@ def api_mark_watched_rules():
     else:
         return jsonify({"ok": False, "error": "Invalid rule update"}), 400
     return jsonify({"ok": True})
+
+
+@app.route("/api/mark-watched/all", methods=["POST"])
+@require_auth
+def api_mark_watched_all():
+    if not _is_admin():
+        return jsonify({"ok": False, "error": "Administrator role required"}), 403
+    data = request.get_json(silent=True) or {}
+    enabled = data.get("enabled")
+    expected = "ALL ON" if enabled is True else "ALL OFF" if enabled is False else ""
+    if data.get("confirm") != expected:
+        return jsonify({"ok": False, "error": f"Confirmation must be {expected or 'valid'}"}), 400
+    show_keys = []
+    visible = set(config.mark_watched.visible_libraries)
+    for instance in config.instances:
+        plex = plex_clients.get(instance.name)
+        if plex is None:
+            continue
+        for library in instance.libraries:
+            key = f"{instance.name}::{library.name}"
+            if visible and key not in visible:
+                continue
+            section_id = library.section_id or plex.find_section_id(library.name)
+            if not section_id or plex.get_section_type(str(section_id)) != "show":
+                continue
+            for show in plex.list_tv_shows(str(section_id)):
+                show_keys.append((instance.name, library.name, show["rating_key"]))
+    usernames = set(mark_watched_rules.usernames())
+    usernames.update(user.username for user in config.users)
+    usernames.add(_current_username())
+    for username in usernames:
+        mark_watched_rules.set_all(username, show_keys, enabled)
+    return jsonify({"ok": True, "enabled": enabled, "shows": len(show_keys),
+                    "users": len(usernames),
+                    "message": "Future automatic rules updated; Plex history was not changed"})
 
 
 @app.route("/api/mark-watched/poster", methods=["GET"])
@@ -2472,14 +2553,25 @@ def api_wizard_save():
         cfg["providers"] = existing["providers"]
 
     env_vars_needed: list = []
+    existing_tokens = {
+        str(instance.get("name", "")): str(instance.get("token", ""))
+        for instance in existing.get("plex_instances", [])
+        if isinstance(instance, dict)
+    }
+    submitted_instances = []
+    for submitted in data.get("instances", []):
+        item = dict(submitted)
+        if not str(item.get("token", "")):
+            item["token"] = existing_tokens.get(str(item.get("name", "")), "")
+        submitted_instances.append(item)
     cfg["plex_instances"] = [
         _build_instance_cfg(inst, store_tokens, env_vars_needed)
-        for inst in data.get("instances", [])
+        for inst in submitted_instances
     ]
     try:
         runtime_tokens = {
             str(instance.get("name", "")): str(instance.get("token", ""))
-            for instance in data.get("instances", [])
+            for instance in submitted_instances
         }
         # Plex settings can be staged before Trash Removal paths are known.
         # Pathless libraries remain fail-closed in the runner until configured.
@@ -2534,8 +2626,15 @@ def api_config_load():
         if isinstance(raw.get("auth"), dict):
             raw["auth"].pop("password_hash", None)
             raw["auth"].pop("api_token_hash", None)
+            for user in raw["auth"].get("users", []):
+                if isinstance(user, dict):
+                    user.pop("password_hash", None)
         if isinstance(raw.get("mark_watched"), dict):
             raw["mark_watched"].pop("webhook_secret", None)
+        for instance in raw.get("plex_instances", []):
+            if isinstance(instance, dict):
+                instance["token_configured"] = bool(instance.get("token"))
+                instance["token"] = ""
         return jsonify({"ok": True, "config": raw})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -2595,12 +2694,95 @@ def api_providers_save():
 
 
 def _require_browser_auth():
-    if not auth_enabled(config) or not is_authenticated():
+    if not auth_enabled(config) or not is_authenticated() or not _is_admin():
         return jsonify({
             "ok": False,
-            "error": "Sign in through the browser to manage API tokens",
+            "error": "Sign in as an administrator to manage API tokens",
         }), 403
     return None
+
+
+_USER_PERMISSIONS = {
+    "dashboard", "trash_removal", "library_refresh", "mark_watched",
+    "metadata_health", "timestamp_repair", "settings",
+}
+
+
+@app.route("/api/users", methods=["GET"])
+@require_auth
+def api_users():
+    if not _is_admin():
+        return jsonify({"error": "Administrator role required"}), 403
+    return jsonify({"users": [{
+        "username": user.username, "role": user.role,
+        "permissions": user.permissions,
+    } for user in config.users], "permissions": sorted(_USER_PERMISSIONS)})
+
+
+@app.route("/api/users", methods=["POST"])
+@require_auth
+@_serialized_config_write
+def api_users_save():
+    if not _is_admin():
+        return jsonify({"ok": False, "error": "Administrator role required"}), 403
+    data = request.get_json(silent=True) or {}
+    username = str(data.get("username", "")).strip()
+    password = str(data.get("password", ""))
+    role = str(data.get("role", "user")).lower()
+    permissions = data.get("permissions", [])
+    if not username or role not in {"admin", "user"} or not isinstance(permissions, list):
+        return jsonify({"ok": False, "error": "Valid username, role and permissions required"}), 400
+    permissions = sorted(set(str(value) for value in permissions) & _USER_PERMISSIONS)
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as handle:
+            raw = yaml.safe_load(handle) or {}
+        auth = raw.setdefault("auth", {})
+        users = auth.setdefault("users", [])
+        existing = next((user for user in users
+                         if str(user.get("username", "")) == username), None)
+        if existing is None:
+            if len(password) < 8:
+                return jsonify({"ok": False, "error": "New users require an 8-character password"}), 400
+            existing = {"username": username}
+            users.append(existing)
+        elif not password:
+            password_hash = existing.get("password_hash", "")
+        if password:
+            password_hash = hash_password(password)
+        if not password_hash:
+            return jsonify({"ok": False, "error": "Password required"}), 400
+        existing.update({"username": username, "password_hash": password_hash,
+                         "role": role, "permissions": permissions})
+        _save_and_apply(raw, require_paths=False)
+        return jsonify({"ok": True})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/users/<username>", methods=["DELETE"])
+@require_auth
+@_serialized_config_write
+def api_user_delete(username: str):
+    if not _is_admin():
+        return jsonify({"ok": False, "error": "Administrator role required"}), 403
+    if username == _current_username():
+        return jsonify({"ok": False, "error": "You cannot delete your active account"}), 409
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as handle:
+            raw = yaml.safe_load(handle) or {}
+        auth = raw.get("auth", {})
+        users = auth.get("users", []) if isinstance(auth, dict) else []
+        remaining = [user for user in users if str(user.get("username", "")) != username]
+        if len(remaining) == len(users):
+            return jsonify({"ok": False, "error": "User not found"}), 404
+        if not any(user.get("role") == "admin" for user in remaining) and not auth.get("username"):
+            return jsonify({"ok": False, "error": "At least one administrator is required"}), 409
+        auth["users"] = remaining
+        _save_and_apply(raw, require_paths=False)
+        mark_watched_rules.delete_user(username)
+        return jsonify({"ok": True})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 def _update_api_token_hash(token_hash: str = ""):
@@ -2685,6 +2867,8 @@ def api_auth_token_revoke():
 def api_auth_save():
     """Save or clear username/password in config.yml."""
     global config
+    if auth_enabled(config) and not _is_admin():
+        return jsonify({"ok": False, "error": "Administrator role required"}), 403
     data     = request.get_json(silent=True) or {}
     username = data.get("username", "").strip()
     password = data.get("password", "").strip()
@@ -2706,6 +2890,8 @@ def api_auth_save():
                 "username":      username,
                 "password_hash": hash_password(password),
             }
+            if isinstance(existing_auth, dict) and existing_auth.get("users"):
+                raw["auth"]["users"] = existing_auth["users"]
             if isinstance(existing_auth, dict) and existing_auth.get("api_token_hash"):
                 raw["auth"]["api_token_hash"] = existing_auth["api_token_hash"]
 

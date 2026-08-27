@@ -63,7 +63,57 @@ def _get_credentials(config=None):
 
 def auth_enabled(config=None) -> bool:
     u, _ = _get_credentials(config)
-    return bool(u)
+    return bool(u or getattr(config, "users", []))
+
+
+def authenticate_user(username: str, password: str, config=None,
+                      ip: str = "") -> dict | None:
+    """Authenticate environment, multi-user, or legacy credentials."""
+    if ip and _is_locked_out(ip):
+        return None
+    env_user = get_env("MEDIAMENDER_USERNAME")
+    env_pass = get_env("MEDIAMENDER_PASSWORD")
+    if env_user and env_pass:
+        ok = secrets.compare_digest(username, env_user) and secrets.compare_digest(
+            _environment_hash(password), _environment_hash(env_pass),
+        )
+        if ip:
+            _record_attempt(ip, ok)
+        return {"username": env_user, "role": "admin", "permissions": ["*"]} if ok else None
+    for user in getattr(config, "users", []):
+        if secrets.compare_digest(username, user.username) and _verify_password(
+            password, user.password_hash,
+        ):
+            if ip:
+                _record_attempt(ip, True)
+            return {"username": user.username, "role": user.role,
+                    "permissions": list(user.permissions)}
+    configured_user, configured_hash = _get_credentials(config)
+    ok = bool(configured_user and secrets.compare_digest(username, configured_user)
+              and _verify_password(password, configured_hash))
+    if ip:
+        _record_attempt(ip, ok)
+    return ({"username": configured_user, "role": "admin", "permissions": ["*"]}
+            if ok else None)
+
+
+def current_identity(config=None) -> dict:
+    if not auth_enabled(config):
+        return {"username": "default", "role": "admin", "permissions": ["*"]}
+    if session.get("authenticated") is True and not session.get("username"):
+        legacy_username, _ = _get_credentials(config)
+        return {"username": legacy_username or "admin", "role": "admin",
+                "permissions": ["*"]}
+    return {
+        "username": str(session.get("username", "")),
+        "role": str(session.get("role", "user")),
+        "permissions": list(session.get("permissions", [])),
+    }
+
+
+def has_permission(permission: str, config=None) -> bool:
+    identity = current_identity(config)
+    return identity["role"] == "admin" or "*" in identity["permissions"] or permission in identity["permissions"]
 
 
 # ── Brute force protection ────────────────────────────────────────────────────
