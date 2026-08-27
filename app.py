@@ -11,8 +11,8 @@ from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
 from types import SimpleNamespace
-from flask import (Flask, jsonify, render_template, request, redirect, url_for,
-                   session, send_from_directory)
+from flask import (Flask, Response, jsonify, render_template, request, redirect,
+                   url_for, session, send_from_directory)
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -897,6 +897,21 @@ def _valid_sonarr_webhook_auth() -> bool:
     return bool(expected and supplied and secrets.compare_digest(supplied, expected))
 
 
+def _current_username() -> str:
+    return str(session.get("username") or config.auth_username or "default")
+
+
+def _mark_watched_library(instance_name: str, library_name: str):
+    with _runtime_lock:
+        for instance in config.instances:
+            if instance.name != instance_name:
+                continue
+            for library in instance.libraries:
+                if library.name == library_name:
+                    return instance, library, plex_clients.get(instance.name)
+    return None, None, None
+
+
 @app.route("/api/webhooks/sonarr", methods=["POST"])
 def api_sonarr_webhook():
     """Accept only completed imports and hand them to the durable worker."""
@@ -924,6 +939,126 @@ def api_sonarr_webhook():
 @require_auth
 def api_mark_watched_status():
     return jsonify(mark_watched.status())
+
+
+@app.route("/api/mark-watched/libraries", methods=["GET"])
+@require_auth
+def api_mark_watched_libraries():
+    username = _current_username()
+    visible = set(config.mark_watched.visible_libraries)
+    result = []
+    with _runtime_lock:
+        instances = list(config.instances)
+    for instance in instances:
+        plex = plex_clients.get(instance.name)
+        if plex is None:
+            continue
+        for library in instance.libraries:
+            library_key = f"{instance.name}::{library.name}"
+            if visible and library_key not in visible:
+                continue
+            section_id = library.section_id or plex.find_section_id(library.name)
+            if not section_id or plex.get_section_type(str(section_id)) != "show":
+                continue
+            try:
+                shows = plex.list_tv_shows(str(section_id))
+            except Exception as exc:
+                logger.warning("Could not load Mark-it-Watched library %s (%s)",
+                               library_key, type(exc).__name__)
+                result.append({"instance": instance.name, "library": library.name,
+                               "section_id": str(section_id), "shows": [],
+                               "error": "Plex library could not be loaded"})
+                continue
+            for show in shows:
+                rule = mark_watched_rules.rule(
+                    username, instance.name, library.name, show["rating_key"], 0,
+                )
+                show["rule_enabled"] = rule["show_enabled"]
+                show["poster_url"] = url_for(
+                    "api_mark_watched_poster", instance_name=instance.name,
+                    key=show.get("thumb", ""),
+                ) if show.get("thumb") else ""
+                show.pop("thumb", None)
+            result.append({"instance": instance.name, "library": library.name,
+                           "section_id": str(section_id), "shows": shows})
+    return jsonify({"libraries": result, "jobs": mark_watched.status(10)["jobs"]})
+
+
+@app.route("/api/mark-watched/seasons", methods=["GET"])
+@require_auth
+def api_mark_watched_seasons():
+    instance_name = request.args.get("instance", "")
+    library_name = request.args.get("library", "")
+    show_key = request.args.get("show", "")
+    _instance, _library, plex = _mark_watched_library(instance_name, library_name)
+    if plex is None or not show_key.isdigit():
+        return jsonify({"error": "Unknown Plex show"}), 404
+    try:
+        seasons = plex.list_show_seasons(show_key)
+        username = _current_username()
+        for season in seasons:
+            rule = mark_watched_rules.rule(
+                username, instance_name, library_name, show_key, season["index"],
+            )
+            season["rule"] = rule
+            season["poster_url"] = url_for(
+                "api_mark_watched_poster", instance_name=instance_name,
+                key=season.get("thumb", ""),
+            ) if season.get("thumb") else ""
+            season.pop("thumb", None)
+        return jsonify({"seasons": seasons})
+    except Exception as exc:
+        return jsonify({"error": f"Could not load Plex seasons: {type(exc).__name__}"}), 502
+
+
+@app.route("/api/mark-watched/rules", methods=["POST"])
+@require_auth
+def api_mark_watched_rules():
+    data = request.get_json(silent=True) or {}
+    instance_name = str(data.get("instance", ""))
+    library_name = str(data.get("library", ""))
+    show_key = str(data.get("show_rating_key", ""))
+    _instance, _library, plex = _mark_watched_library(instance_name, library_name)
+    if plex is None or not show_key.isdigit():
+        return jsonify({"ok": False, "error": "Unknown Plex show"}), 404
+    username = _current_username()
+    if data.get("scope") == "show" and isinstance(data.get("enabled"), bool):
+        mark_watched_rules.set_show(
+            username, instance_name, library_name, show_key, data["enabled"],
+        )
+    elif data.get("scope") == "season" and (
+        isinstance(data.get("enabled"), bool) or data.get("enabled") is None
+    ):
+        try:
+            season_index = int(data["season_index"])
+        except (KeyError, TypeError, ValueError):
+            return jsonify({"ok": False, "error": "Valid season_index required"}), 400
+        mark_watched_rules.set_season(
+            username, instance_name, library_name, show_key,
+            season_index, data.get("enabled"),
+        )
+    else:
+        return jsonify({"ok": False, "error": "Invalid rule update"}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/api/mark-watched/poster", methods=["GET"])
+@require_auth
+def api_mark_watched_poster():
+    instance_name = request.args.get("instance_name", "")
+    artwork_key = request.args.get("key", "")
+    plex = plex_clients.get(instance_name)
+    if plex is None:
+        return "", 404
+    try:
+        artwork = plex.get_artwork(artwork_key)
+        return Response(
+            artwork.content,
+            content_type=artwork.headers.get("Content-Type", "image/jpeg"),
+            headers={"Cache-Control": "private, max-age=3600"},
+        )
+    except Exception:
+        return "", 404
 
 
 @app.route("/api/history", methods=["GET"])

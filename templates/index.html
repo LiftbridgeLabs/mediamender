@@ -841,6 +841,9 @@ dialog.overlay::backdrop{background:transparent;}
 .repair-db-options{display:grid;gap:10px;margin-top:12px;}
 .repair-db-option{width:100%;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 15px;text-align:left;border:1px solid var(--border2);border-radius:8px;background:var(--bg);color:var(--bright);font-size:16px;cursor:pointer;overflow-wrap:anywhere;}
 .repair-db-option:hover{border-color:var(--accent);background:var(--accent-faint);}.repair-db-option span{color:var(--accent2);font-weight:700;white-space:nowrap;}
+.mw-library{margin:22px 0 30px;}.mw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:18px;}
+.mw-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;min-width:0;}.mw-poster{aspect-ratio:2/3;width:100%;object-fit:cover;background:var(--surface2);display:block;}.mw-poster-empty{aspect-ratio:2/3;display:grid;place-items:center;background:var(--surface2);color:var(--muted);font-size:14px;}
+.mw-card-body{padding:13px;}.mw-title{font-weight:750;color:var(--bright);font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}.mw-meta{color:var(--muted);font-size:12px;margin:4px 0 11px;}.mw-rule{width:100%;justify-content:center;}.mw-rule.on{border-color:var(--pass-line);background:var(--pass-soft);color:var(--pass2);}.mw-seasons{grid-column:1/-1;padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--bg);display:none;}.mw-seasons.open{display:block;}.mw-season-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:13px;}.mw-season{border:1px solid var(--border);border-radius:9px;padding:10px;background:var(--surface);}.mw-season img{width:54px;aspect-ratio:2/3;object-fit:cover;border-radius:5px;float:left;margin-right:10px;}.mw-source{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:5px 0 9px;}.mw-season-actions{display:flex;gap:4px;clear:both;padding-top:9px;}.mw-season-actions .btn{flex:1;padding:4px;font-size:10px;}
 @media(max-width:1050px){.rollup-grid{grid-template-columns:1fr;}.rollup-card{min-height:235px;}}
 @media(max-width:1180px){.repair-instance-grid,.repair-folder-grid{grid-template-columns:1fr;}}
 @media(max-width:700px){
@@ -875,6 +878,9 @@ dialog.overlay::backdrop{background:transparent;}
     </button>
     <button class="nav-link" data-feature="library_refresh" onclick="showPage('library-refresh',this)" id="nav-library-refresh">
       Library Refresh
+    </button>
+    <button class="nav-link" data-feature="mark_watched" onclick="showPage('mark-watched',this)" id="nav-mark-watched">
+      Mark-it-Watched
     </button>
     <button class="nav-link" data-feature="metadata_health" onclick="showPage('metadata-audit',this)" id="nav-metadata-health">
       Metadata Health
@@ -1122,6 +1128,18 @@ dialog.overlay::backdrop{background:transparent;}
   <div class="repair-history-list" id="library-refresh-history"><div class="empty-msg">No refresh requests yet</div></div>
 </div>
 
+<!-- MARK-IT-WATCHED PAGE -->
+<div class="page" data-feature="mark_watched" id="page-mark-watched">
+  <div class="repair-page-head">
+    <div><div class="eyebrow">Automatic Plex watch rules</div><h1 class="dashboard-title">Mark-it-Watched</h1><div class="dashboard-subtitle">Choose shows or override individual seasons. Rules affect only future finalized Sonarr imports.</div></div>
+    <button class="btn btn-secondary" onclick="loadMarkWatched()">&#8635;&nbsp; Refresh Plex</button>
+  </div>
+  <div class="repair-warning" style="border-color:var(--accent-line);background:var(--accent-faint);color:var(--text2);">This page never rewrites existing Plex history. A matching episode is marked watched only after Sonarr finishes importing it and Plex has scanned and matched it.</div>
+  <div id="mark-watched-libraries"><div class="empty-msg">Open this tab to load Plex TV libraries.</div></div>
+  <div class="repair-section-heading"><h2 class="repair-section-title">Recent webhook work</h2><div class="repair-section-line"></div></div>
+  <div class="repair-history-list" id="mark-watched-jobs"><div class="empty-msg">No webhook jobs yet.</div></div>
+</div>
+
 <!-- ── METADATA HEALTH PAGE ── -->
 <div class="page" data-feature="metadata_health" id="page-metadata-audit">
   <div class="repair-page-head">
@@ -1314,6 +1332,7 @@ dialog.overlay::backdrop{background:transparent;}
           <div class="metadata-setting-row"><div><strong>Metadata Health</strong><br><span>Manual checks for unmatched Plex movies and shows.</span></div><button type="button" class="metadata-setting-toggle" id="feature-metadata-health" onclick="toggleFeatureSetting('metadata_health')"></button></div>
           <div class="metadata-setting-row"><div><strong>Timestamp Repair</strong><br><span>Manual repair of invalid Plex media-part timestamps.</span></div><button type="button" class="metadata-setting-toggle" id="feature-timestamp-repair" onclick="toggleFeatureSetting('timestamp_repair')"></button></div>
           <div class="metadata-setting-row"><div><strong>Library Refresh</strong><br><span>Manual and scheduled full-library Plex refresh requests.</span></div><button type="button" class="metadata-setting-toggle" id="feature-library-refresh" onclick="toggleFeatureSetting('library_refresh')"></button></div>
+          <div class="metadata-setting-row"><div><strong>Mark-it-Watched</strong><br><span>Future Sonarr imports and per-show or season Plex watch rules.</span></div><button type="button" class="metadata-setting-toggle" id="feature-mark-watched" onclick="toggleFeatureSetting('mark_watched')"></button></div>
         </div>
         <div style="margin-top:18px;"><button class="btn btn-primary" onclick="settingsSave('features')" id="settings-save-btn-features">Save Feature Settings</button><span id="settings-save-result-features" style="margin-left:12px;"></span></div>
       </div>
@@ -1821,6 +1840,7 @@ let _activeFeatures = {
   metadata_health: {{ 'true' if config.features.metadata_health else 'false' }},
   timestamp_repair: {{ 'true' if config.features.timestamp_repair else 'false' }},
   library_refresh: {{ 'true' if config.features.library_refresh else 'false' }},
+  mark_watched: {{ 'true' if config.features.mark_watched else 'false' }},
 };
 let _history = [], _filter = 'all', _expanded = new Set();
 
@@ -1846,6 +1866,7 @@ function showPage(name, btn) {
   if (name === 'timestamp-repair' && _activeFeatures.timestamp_repair) { loadRepairStatus(); }
   if (name === 'metadata-audit' && _activeFeatures.metadata_health) { loadMetadataAuditStatus(); }
   if (name === 'library-refresh' && _activeFeatures.library_refresh) { loadLibraryRefreshStatus(); }
+  if (name === 'mark-watched' && _activeFeatures.mark_watched) { loadMarkWatched(); }
   if (name === 'dashboard') {
     if (_activeFeatures.metadata_health) loadMetadataAuditStatus();
     if (_activeFeatures.timestamp_repair) loadRepairStatus();
@@ -1854,6 +1875,119 @@ function showPage(name, btn) {
   }
   if (name === 'settings') { loadSettings(); }
   if (name !== 'settings') { stopLogViewer(); }
+}
+
+// Mark-it-Watched
+let _markWatchedData = null;
+
+async function loadMarkWatched() {
+  const container = document.getElementById('mark-watched-libraries');
+  if (!container) return;
+  container.innerHTML = '<div class="empty-msg"><span class="spin"></span> Loading Plex TV libraries and posters&hellip;</div>';
+  try {
+    const response = await fetch('/api/mark-watched/libraries');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Plex libraries could not be loaded');
+    _markWatchedData = data;
+    renderMarkWatchedLibraries();
+    renderMarkWatchedJobs(data.jobs || []);
+  } catch (error) {
+    container.innerHTML = `<div class="empty-msg">${h(error.message)}</div>`;
+  }
+}
+
+function renderMarkWatchedLibraries() {
+  const container = document.getElementById('mark-watched-libraries');
+  const libraries = _markWatchedData?.libraries || [];
+  if (!libraries.length) {
+    container.innerHTML = '<div class="empty-msg">No visible Plex TV libraries are configured.</div>';
+    return;
+  }
+  container.innerHTML = libraries.map((library, libraryIndex) => `
+    <section class="mw-library">
+      <div class="repair-section-heading"><h2 class="repair-section-title">${h(library.library)}</h2><span class="inst-chip">${h(library.instance)}</span><div class="repair-section-line"></div></div>
+      ${library.error ? `<div class="repair-warning">${h(library.error)}</div>` : ''}
+      <div class="mw-grid">
+        ${(library.shows || []).map((show, showIndex) => `
+          <article class="mw-card">
+            ${show.poster_url ? `<img class="mw-poster" loading="lazy" src="${h(show.poster_url)}" alt="Poster for ${h(show.title)}">` : '<div class="mw-poster-empty">No poster</div>'}
+            <div class="mw-card-body">
+              <div class="mw-title" title="${h(show.title)}">${h(show.title)}</div>
+              <div class="mw-meta">${show.year || 'Year unknown'} &middot; ${show.viewed_leaf_count}/${show.leaf_count} watched</div>
+              <button class="btn btn-secondary btn-sm mw-rule ${show.rule_enabled?'on':''}" onclick="setShowRule(${libraryIndex},${showIndex},${show.rule_enabled?'false':'true'})">Auto-watch ${show.rule_enabled?'On':'Off'}</button>
+              <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:7px;" onclick="toggleMarkWatchedSeasons(${libraryIndex},${showIndex})">Season overrides</button>
+            </div>
+          </article>
+          <div class="mw-seasons" id="mw-seasons-${libraryIndex}-${showIndex}"></div>
+        `).join('') || '<div class="empty-msg">No shows found in this library.</div>'}
+      </div>
+    </section>`).join('');
+}
+
+async function setShowRule(libraryIndex, showIndex, enabled) {
+  const library = _markWatchedData.libraries[libraryIndex];
+  const show = library.shows[showIndex];
+  const response = await fetch('/api/mark-watched/rules', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({scope:'show', enabled, instance:library.instance,
+      library:library.library, show_rating_key:show.rating_key}),
+  });
+  const data = await response.json();
+  if (!response.ok) return toast(data.error || 'Rule could not be saved', 'fail');
+  show.rule_enabled = enabled;
+  renderMarkWatchedLibraries();
+  toast(`${show.title}: future imports will ${enabled?'':'not '}be marked watched`, 'pass');
+}
+
+async function toggleMarkWatchedSeasons(libraryIndex, showIndex) {
+  const target = document.getElementById(`mw-seasons-${libraryIndex}-${showIndex}`);
+  if (target.classList.contains('open')) { target.classList.remove('open'); return; }
+  const library = _markWatchedData.libraries[libraryIndex];
+  const show = library.shows[showIndex];
+  target.classList.add('open');
+  target.innerHTML = '<div class="empty-msg"><span class="spin"></span> Loading seasons&hellip;</div>';
+  const query = new URLSearchParams({instance:library.instance, library:library.library, show:show.rating_key});
+  try {
+    const response = await fetch(`/api/mark-watched/seasons?${query}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Seasons could not be loaded');
+    target.innerHTML = `<div class="mw-season-grid">${data.seasons.map(season => `
+      <article class="mw-season">
+        ${season.poster_url ? `<img loading="lazy" src="${h(season.poster_url)}" alt="Poster for ${h(season.title)}">` : ''}
+        <div class="mw-title">${h(season.title)}</div>
+        <div class="mw-meta">${season.viewed_leaf_count}/${season.leaf_count} watched</div>
+        <div class="mw-source">${season.rule.source==='season'?'Explicit season override':`Inherited from show: ${season.rule.enabled?'On':'Off'}`}</div>
+        <div class="mw-season-actions">
+          <button class="btn ${season.rule.source==='show'?'btn-primary':'btn-secondary'}" onclick="setSeasonRule(${libraryIndex},${showIndex},${season.index},null)">Inherit</button>
+          <button class="btn ${season.rule.source==='season'&&season.rule.enabled?'btn-primary':'btn-secondary'}" onclick="setSeasonRule(${libraryIndex},${showIndex},${season.index},true)">On</button>
+          <button class="btn ${season.rule.source==='season'&&!season.rule.enabled?'btn-primary':'btn-secondary'}" onclick="setSeasonRule(${libraryIndex},${showIndex},${season.index},false)">Off</button>
+        </div>
+      </article>`).join('') || '<div class="empty-msg">No seasons found.</div>'}</div>`;
+  } catch (error) { target.innerHTML = `<div class="empty-msg">${h(error.message)}</div>`; }
+}
+
+async function setSeasonRule(libraryIndex, showIndex, seasonIndex, enabled) {
+  const library = _markWatchedData.libraries[libraryIndex];
+  const show = library.shows[showIndex];
+  const response = await fetch('/api/mark-watched/rules', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({scope:'season', enabled, season_index:seasonIndex,
+      instance:library.instance, library:library.library, show_rating_key:show.rating_key}),
+  });
+  const data = await response.json();
+  if (!response.ok) return toast(data.error || 'Season rule could not be saved', 'fail');
+  const target = document.getElementById(`mw-seasons-${libraryIndex}-${showIndex}`);
+  target.classList.remove('open');
+  await toggleMarkWatchedSeasons(libraryIndex, showIndex);
+  toast('Season rule saved', 'pass');
+}
+
+function renderMarkWatchedJobs(jobs) {
+  const target = document.getElementById('mark-watched-jobs');
+  if (!target) return;
+  target.innerHTML = jobs.length ? jobs.map(job => `
+    <div class="repair-history-item"><div><strong>${h(job.event?.series?.title || 'Sonarr import')}</strong><div class="repair-history-meta">${h(job.message || '')}</div></div><span class="badge ${job.status==='succeeded'?'success':job.status==='failed'?'error':'skipped'}">${h(job.status)}</span></div>
+  `).join('') : '<div class="empty-msg">No webhook jobs yet.</div>';
 }
 
 // Plex library refresh
@@ -2785,7 +2919,7 @@ async function refreshLogView() {
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
-let _settingsData = { instances: [], repair_workers: [], features: {trash_removal:true,metadata_health:true,timestamp_repair:true,library_refresh:true}, default_cron: '0 * * * *', discord_webhook: '', notification_destinations: [], log_level: 'INFO', log_max_file_size_mb: 5, log_max_total_size_mb: 50, log_retention_days: 14, max_trash_items: 1000, max_trash_percent: 25, notify_emptied: true, notify_health_fail: true, notify_error: true, notify_clean: false, notify_skip: false };
+let _settingsData = { instances: [], repair_workers: [], features: {trash_removal:true,metadata_health:true,timestamp_repair:true,library_refresh:true,mark_watched:true}, default_cron: '0 * * * *', discord_webhook: '', notification_destinations: [], log_level: 'INFO', log_max_file_size_mb: 5, log_max_total_size_mb: 50, log_retention_days: 14, max_trash_items: 1000, max_trash_percent: 25, notify_emptied: true, notify_health_fail: true, notify_error: true, notify_clean: false, notify_skip: false };
 let _trashSettingsInstance = 0;
 
 async function loadSettings() {
@@ -2812,6 +2946,7 @@ async function loadSettings() {
       metadata_health: cfg.features?.metadata_health !== false,
       timestamp_repair: cfg.features?.timestamp_repair !== false,
       library_refresh: cfg.features?.library_refresh !== false,
+      mark_watched: cfg.features?.mark_watched !== false,
     };
     _settingsData.max_trash_items    = cfg.max_trash_items ?? 1000;
     _settingsData.max_trash_percent  = cfg.max_trash_percent ?? 25;

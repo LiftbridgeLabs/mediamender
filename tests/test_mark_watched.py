@@ -58,11 +58,69 @@ class SonarrWebhookApiTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 400)
 
+
+class MarkWatchedUiApiTests(unittest.TestCase):
+    def _client(self):
+        client = app.app.test_client()
+        with client.session_transaction() as browser_session:
+            browser_session["_csrf_token"] = "known-token"
+        return client
+
+    def test_library_api_returns_proxy_posters_without_plex_token(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "top-secret-token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.list_tv_shows.return_value = [{
+            "rating_key": "10", "title": "Example Show", "year": 2024,
+            "thumb": "/library/metadata/10/thumb/1", "leaf_count": 8,
+            "viewed_leaf_count": 2,
+        }]
+        with patch.object(app, "config", config), \
+             patch.object(app, "plex_clients", {"Plex": plex}), \
+             patch.object(app.mark_watched_rules, "rule", return_value={
+                 "show_enabled": True,
+             }):
+            response = self._client().get("/api/mark-watched/libraries")
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("/api/mark-watched/poster", body)
+        self.assertNotIn("top-secret-token", body)
+
+    def test_season_rule_api_persists_explicit_override(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        with patch.object(app, "config", config), \
+             patch.object(app, "plex_clients", {"Plex": Mock()}), \
+             patch.object(app.mark_watched_rules, "set_season") as save:
+            response = self._client().post(
+                "/api/mark-watched/rules",
+                json={"scope": "season", "enabled": False, "season_index": 2,
+                      "instance": "Plex", "library": "TV", "show_rating_key": "10"},
+                headers={"X-CSRF-Token": "known-token"},
+            )
+        self.assertEqual(response.status_code, 200)
+        save.assert_called_once_with("default", "Plex", "TV", "10", 2, False)
+
+    def test_page_has_navigation_poster_and_inheritance_controls(self):
+        html = Path("templates/index.html").read_text(encoding="utf-8")
+        self.assertIn('id="nav-mark-watched"', html)
+        self.assertIn('id="page-mark-watched"', html)
+        self.assertIn("Explicit season override", html)
+        self.assertIn("Inherited from show", html)
+
     def test_download_without_episode_file_is_rejected(self):
         payload = sonarr_download()
         payload.pop("episodeFile")
-        with patch.object(app, "config", self.config):
-            response = self.client.post(
+        webhook_config = AppConfig(
+            instances=[], mark_watched=MarkWatchedConfig(webhook_secret="sonarr-secret"),
+        )
+        with patch.object(app, "config", webhook_config):
+            response = self._client().post(
                 "/api/webhooks/sonarr", json=payload,
                 headers={"X-Sonarr-Webhook-Secret": "sonarr-secret"},
             )
