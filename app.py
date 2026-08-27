@@ -991,7 +991,8 @@ def api_mark_watched_status():
 @require_auth
 def api_mark_watched_libraries():
     username = _current_username()
-    visible = set(config.mark_watched.visible_libraries)
+    configured_visibility = config.mark_watched.visible_libraries
+    visible = set(configured_visibility or [])
     result = []
     with _runtime_lock:
         instances = list(config.instances)
@@ -1001,7 +1002,7 @@ def api_mark_watched_libraries():
             continue
         for library in instance.libraries:
             library_key = f"{instance.name}::{library.name}"
-            if visible and library_key not in visible:
+            if configured_visibility is not None and library_key not in visible:
                 continue
             section_id = library.section_id or plex.find_section_id(library.name)
             if not section_id or plex.get_section_type(str(section_id)) != "show":
@@ -1099,14 +1100,15 @@ def api_mark_watched_all():
     if data.get("confirm") != expected:
         return jsonify({"ok": False, "error": f"Confirmation must be {expected or 'valid'}"}), 400
     show_keys = []
-    visible = set(config.mark_watched.visible_libraries)
+    configured_visibility = config.mark_watched.visible_libraries
+    visible = set(configured_visibility or [])
     for instance in config.instances:
         plex = plex_clients.get(instance.name)
         if plex is None:
             continue
         for library in instance.libraries:
             key = f"{instance.name}::{library.name}"
-            if visible and key not in visible:
+            if configured_visibility is not None and key not in visible:
                 continue
             section_id = library.section_id or plex.find_section_id(library.name)
             if not section_id or plex.get_section_type(str(section_id)) != "show":
@@ -2472,10 +2474,24 @@ def api_wizard_save():
         if isinstance(existing.get("logging", {}), dict)
         else {}
     )
+    existing_mark_watched = (
+        existing.get("mark_watched", {})
+        if isinstance(existing.get("mark_watched", {}), dict) else {}
+    )
+    submitted_mark_watched = data.get("mark_watched", existing_mark_watched)
+    if not isinstance(submitted_mark_watched, dict):
+        submitted_mark_watched = {}
+    merged_mark_watched = {**existing_mark_watched, **submitted_mark_watched}
+    merged_mark_watched.pop("webhook_secret_configured", None)
+    if not str(submitted_mark_watched.get("webhook_secret", "")):
+        if existing_mark_watched.get("webhook_secret"):
+            merged_mark_watched["webhook_secret"] = existing_mark_watched["webhook_secret"]
+        else:
+            merged_mark_watched.pop("webhook_secret", None)
 
     cfg = {
         "features": data.get("features", existing.get("features", {})),
-        "mark_watched": data.get("mark_watched", existing.get("mark_watched", {})),
+        "mark_watched": merged_mark_watched,
         "discord_webhook": data.get("discord_webhook", ""),
         "log_level": data.get("log_level", existing.get("log_level", "INFO")),
         "notify": {
@@ -2629,8 +2645,14 @@ def api_config_load():
             for user in raw["auth"].get("users", []):
                 if isinstance(user, dict):
                     user.pop("password_hash", None)
-        if isinstance(raw.get("mark_watched"), dict):
-            raw["mark_watched"].pop("webhook_secret", None)
+        mark_settings = raw.get("mark_watched", {})
+        if not isinstance(mark_settings, dict):
+            mark_settings = {}
+        raw["mark_watched"] = mark_settings
+        mark_settings["webhook_secret_configured"] = bool(
+            config.mark_watched.webhook_secret
+        )
+        mark_settings.pop("webhook_secret", None)
         for instance in raw.get("plex_instances", []):
             if isinstance(instance, dict):
                 instance["token_configured"] = bool(instance.get("token"))

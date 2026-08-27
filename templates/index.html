@@ -844,6 +844,7 @@ dialog.overlay::backdrop{background:transparent;}
 .mw-library{margin:22px 0 30px;}.mw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:18px;}
 .mw-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;min-width:0;}.mw-poster{aspect-ratio:2/3;width:100%;object-fit:cover;background:var(--surface2);display:block;}.mw-poster-empty{aspect-ratio:2/3;display:grid;place-items:center;background:var(--surface2);color:var(--muted);font-size:14px;}
 .mw-card-body{padding:13px;}.mw-title{font-weight:750;color:var(--bright);font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}.mw-meta{color:var(--muted);font-size:12px;margin:4px 0 11px;}.mw-rule{width:100%;justify-content:center;}.mw-rule.on{border-color:var(--pass-line);background:var(--pass-soft);color:var(--pass2);}.mw-seasons{grid-column:1/-1;padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--bg);display:none;}.mw-seasons.open{display:block;}.mw-season-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:13px;}.mw-season{border:1px solid var(--border);border-radius:9px;padding:10px;background:var(--surface);}.mw-season img{width:54px;aspect-ratio:2/3;object-fit:cover;border-radius:5px;float:left;margin-right:10px;}.mw-source{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:5px 0 9px;}.mw-season-actions{display:flex;gap:4px;clear:both;padding-top:9px;}.mw-season-actions .btn{flex:1;padding:4px;font-size:10px;}
+.library-refresh-control-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr));gap:10px;align-items:end;width:100%;min-width:0;}.library-refresh-control-grid>*{min-width:0;max-width:100%;}
 @media(max-width:1050px){.rollup-grid{grid-template-columns:1fr;}.rollup-card{min-height:235px;}}
 @media(max-width:1180px){.repair-instance-grid,.repair-folder-grid{grid-template-columns:1fr;}}
 @media(max-width:700px){
@@ -1228,6 +1229,9 @@ dialog.overlay::backdrop{background:transparent;}
         <button class="settings-nav-item" data-feature="library_refresh" onclick="showSettingsSection('library-refresh',this)">
           &#8635;&#65039; Library Refresh
         </button>
+        <button class="settings-nav-item" data-feature="mark_watched" onclick="showSettingsSection('mark-watched',this)">
+          &#10003; Mark-it-Watched
+        </button>
         <button class="settings-nav-item" onclick="showSettingsSection('features',this)">
           🎛️ Features
         </button>
@@ -1344,6 +1348,16 @@ dialog.overlay::backdrop{background:transparent;}
         <div class="repair-warning" style="border-color:var(--accent-line);background:var(--accent-faint);color:var(--text2);">The safety hold delays Empty Trash only for the refreshed library. It does not claim Plex has finished scanning.</div>
         <div id="library-refresh-settings"></div>
         <div style="margin-top:18px;"><button class="btn btn-primary" onclick="settingsSave('library-refresh')" id="settings-save-btn-library-refresh">Save Library Refresh Settings</button><span id="settings-save-result-library-refresh" style="margin-left:12px;font-size:14px;"></span></div>
+      </div>
+
+      <!-- Mark-it-Watched -->
+      <div class="settings-section" id="ss-mark-watched">
+        <div class="settings-section-title">Mark-it-Watched</div>
+        <div class="settings-section-desc">Choose which configured Plex libraries appear on the rule page and set a dedicated Sonarr webhook secret.</div>
+        <div class="card"><div class="card-body"><div class="form-group"><label class="form-label">Sonarr webhook secret</label><input class="form-input" id="mark-watched-webhook-secret" type="password" autocomplete="new-password" placeholder="Leave blank to keep the existing secret"><div class="form-hint" id="mark-watched-secret-status">Use this as X-Sonarr-Webhook-Secret or a Bearer token. The secret is never returned by the API.</div></div></div></div>
+        <div class="repair-section-heading"><h3 class="repair-section-title">Library visibility</h3><div class="repair-section-line"></div><button class="btn btn-secondary btn-sm" onclick="useAllMarkWatchedLibraries()">Use all configured</button></div>
+        <div id="mark-watched-settings"></div>
+        <div style="margin-top:18px;"><button class="btn btn-primary" onclick="settingsSave('mark-watched')" id="settings-save-btn-mark-watched">Save Mark-it-Watched Settings</button><span id="settings-save-result-mark-watched" style="margin-left:12px;font-size:14px;"></span></div>
       </div>
 
       <!-- Metadata Health -->
@@ -2524,6 +2538,7 @@ function showSettingsSection(name, btn) {
   if (name === 'timestamp-repair') renderRepairSettings();
   if (name === 'trash-removal') { renderTrashRemovalSettings(); loadGlobalScheduleControls(); }
   if (name === 'library-refresh') renderLibraryRefreshSettings();
+  if (name === 'mark-watched') renderMarkWatchedSettings();
   if (name === 'features') renderFeatureSettings();
   if (name === 'metadata-health') renderMetadataHealthSettings();
   if (name === 'general') startLogViewer();
@@ -2959,7 +2974,7 @@ async function refreshLogView() {
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
-let _settingsData = { instances: [], repair_workers: [], features: {trash_removal:true,metadata_health:true,timestamp_repair:true,library_refresh:true,mark_watched:true}, default_cron: '0 * * * *', discord_webhook: '', notification_destinations: [], log_level: 'INFO', log_max_file_size_mb: 5, log_max_total_size_mb: 50, log_retention_days: 14, max_trash_items: 1000, max_trash_percent: 25, notify_emptied: true, notify_health_fail: true, notify_error: true, notify_clean: false, notify_skip: false };
+let _settingsData = { instances: [], repair_workers: [], features: {trash_removal:true,metadata_health:true,timestamp_repair:true,library_refresh:true,mark_watched:true}, mark_watched:{visible_libraries:null,webhook_secret:'',webhook_secret_configured:false}, default_cron: '0 * * * *', discord_webhook: '', notification_destinations: [], log_level: 'INFO', log_max_file_size_mb: 5, log_max_total_size_mb: 50, log_retention_days: 14, max_trash_items: 1000, max_trash_percent: 25, notify_emptied: true, notify_health_fail: true, notify_error: true, notify_clean: false, notify_skip: false };
 let _trashSettingsInstance = 0;
 
 async function loadSettings() {
@@ -2987,6 +3002,12 @@ async function loadSettings() {
       timestamp_repair: cfg.features?.timestamp_repair !== false,
       library_refresh: cfg.features?.library_refresh !== false,
       mark_watched: cfg.features?.mark_watched !== false,
+    };
+    _settingsData.mark_watched = {
+      visible_libraries: Array.isArray(cfg.mark_watched?.visible_libraries) ? cfg.mark_watched.visible_libraries : null,
+      webhook_secret: '',
+      webhook_secret_configured: cfg.mark_watched?.webhook_secret_configured === true,
+      retry_delays: cfg.mark_watched?.retry_delays || [10,30,60,120,300],
     };
     _settingsData.max_trash_items    = cfg.max_trash_items ?? 1000;
     _settingsData.max_trash_percent  = cfg.max_trash_percent ?? 25;
@@ -3041,6 +3062,7 @@ async function loadSettings() {
     renderMetadataHealthSettings();
     renderLibraryRefreshSettings();
     renderFeatureSettings();
+    renderMarkWatchedSettings();
     applyFeatureVisibility(_settingsData.features);
     loadGlobalScheduleControls();
     // Populate notification fields
@@ -3325,8 +3347,42 @@ function renderLibraryRefreshSettings() {
   if (!target) return;
   target.innerHTML=(_settingsData.instances||[]).map((instance,instanceIndex)=>`<section class="card" style="margin-top:18px;"><div class="card-header"><div><div class="card-title">${h(instance.name)}</div><div class="form-hint">Enable schedules only for libraries that need ${PRODUCT_NAME} to trigger Plex discovery.</div></div></div><div class="card-body"><div class="metadata-settings-list">${(instance.libraries||[]).map((library,libraryIndex)=>{
     const selected=refreshScheduleValue(library.refresh_cron);
-    return `<div class="metadata-setting-row" style="align-items:center;"><div><strong>${h(library.name)}</strong><br><span>${library.refresh_enabled?`${h(cronDescription(library.refresh_cron))} &middot; ${Number(library.refresh_guard_minutes)} minute trash hold`:'Manual refresh only'}</span></div><div style="display:grid;grid-template-columns:minmax(170px,1fr) 130px auto;gap:10px;align-items:end;min-width:min(100%,560px);"><label><span class="form-label">Refresh schedule</span><select class="form-input" onchange="setLibraryRefreshSchedule(${instanceIndex},${libraryIndex},this.value)"><option value="*/30 * * * *" ${selected==='*/30 * * * *'?'selected':''}>Every 30 minutes</option><option value="0 * * * *" ${selected==='0 * * * *'?'selected':''}>Every hour</option><option value="0 */2 * * *" ${selected==='0 */2 * * *'?'selected':''}>Every 2 hours</option><option value="0 */6 * * *" ${selected==='0 */6 * * *'?'selected':''}>Every 6 hours</option><option value="0 2 * * *" ${selected==='0 2 * * *'?'selected':''}>Daily at 2 AM</option><option value="custom" ${selected==='custom'?'selected':''}>Custom schedule</option></select></label><label><span class="form-label">Trash hold (minutes)</span><input class="form-input" type="number" min="1" max="240" value="${Number(library.refresh_guard_minutes)}" onchange="_settingsData.instances[${instanceIndex}].libraries[${libraryIndex}].refresh_guard_minutes=Number(this.value)"></label><button type="button" class="metadata-setting-toggle ${library.refresh_enabled?'':'ignored'}" onclick="_settingsData.instances[${instanceIndex}].libraries[${libraryIndex}].refresh_enabled=!_settingsData.instances[${instanceIndex}].libraries[${libraryIndex}].refresh_enabled;renderLibraryRefreshSettings()"><span>${library.refresh_enabled?'Scheduled':'Manual only'}</span><span>${library.refresh_enabled?'Automatic refresh on':'Automatic refresh off'}</span></button>${selected==='custom'?`<label style="grid-column:1 / 3;"><span class="form-label">Custom cron expression</span><input class="form-input" value="${h(library.refresh_cron)}" placeholder="0 3 * * *" onchange="_settingsData.instances[${instanceIndex}].libraries[${libraryIndex}].refresh_cron=this.value.trim()"></label><span class="form-hint">minute hour day month weekday</span>`:''}</div></div>`;
+    return `<div class="metadata-setting-row" style="align-items:center;"><div><strong>${h(library.name)}</strong><br><span>${library.refresh_enabled?`${h(cronDescription(library.refresh_cron))} &middot; ${Number(library.refresh_guard_minutes)} minute trash hold`:'Manual refresh only'}</span></div><div class="library-refresh-control-grid"><label><span class="form-label">Refresh schedule</span><select class="form-input" onchange="setLibraryRefreshSchedule(${instanceIndex},${libraryIndex},this.value)"><option value="*/30 * * * *" ${selected==='*/30 * * * *'?'selected':''}>Every 30 minutes</option><option value="0 * * * *" ${selected==='0 * * * *'?'selected':''}>Every hour</option><option value="0 */2 * * *" ${selected==='0 */2 * * *'?'selected':''}>Every 2 hours</option><option value="0 */6 * * *" ${selected==='0 */6 * * *'?'selected':''}>Every 6 hours</option><option value="0 2 * * *" ${selected==='0 2 * * *'?'selected':''}>Daily at 2 AM</option><option value="custom" ${selected==='custom'?'selected':''}>Custom schedule</option></select></label><label><span class="form-label">Trash hold (minutes)</span><input class="form-input" type="number" min="1" max="240" value="${Number(library.refresh_guard_minutes)}" onchange="_settingsData.instances[${instanceIndex}].libraries[${libraryIndex}].refresh_guard_minutes=Number(this.value)"></label><button type="button" class="metadata-setting-toggle ${library.refresh_enabled?'':'ignored'}" onclick="_settingsData.instances[${instanceIndex}].libraries[${libraryIndex}].refresh_enabled=!_settingsData.instances[${instanceIndex}].libraries[${libraryIndex}].refresh_enabled;renderLibraryRefreshSettings()"><span>${library.refresh_enabled?'Scheduled':'Manual only'}</span><span>${library.refresh_enabled?'Automatic refresh on':'Automatic refresh off'}</span></button>${selected==='custom'?`<label><span class="form-label">Custom cron expression</span><input class="form-input" value="${h(library.refresh_cron)}" placeholder="0 3 * * *" onchange="_settingsData.instances[${instanceIndex}].libraries[${libraryIndex}].refresh_cron=this.value.trim()"></label><span class="form-hint">minute hour day month weekday</span>`:''}</div></div>`;
   }).join('')||'<div class="empty-msg">No libraries configured.</div>'}</div></div></section>`).join('')||'<div class="empty-msg">No Plex instances configured.</div>';
+}
+
+function renderMarkWatchedSettings() {
+  const target = document.getElementById('mark-watched-settings');
+  if (!target) return;
+  const configured = _settingsData.mark_watched.visible_libraries;
+  target.innerHTML = (_settingsData.instances || []).map((instance, instanceIndex) => `
+    <section class="card" style="margin-top:14px;"><div class="card-header"><span class="card-title">${h(instance.name)}</span></div><div class="card-body"><div class="metadata-settings-list">
+      ${(instance.libraries || []).map((library, libraryIndex) => {
+        const key = `${instance.name}::${library.name}`;
+        const visible = configured === null || configured.includes(key);
+        return `<div class="metadata-setting-row"><div><strong>${h(library.name)}</strong><br><span>${visible?'Shown on Mark-it-Watched':'Hidden from Mark-it-Watched'}</span></div><button type="button" class="metadata-setting-toggle ${visible?'':'ignored'}" onclick="setMarkWatchedLibraryVisibility(${instanceIndex},${libraryIndex},${!visible})"><span>${visible?'Visible':'Hidden'}</span><span>${visible?'Users can set rules':'Excluded from rules page'}</span></button></div>`;
+      }).join('') || '<div class="empty-msg">No libraries configured.</div>'}
+    </div></div></section>`).join('') || '<div class="empty-msg">No Plex instances configured.</div>';
+  const status = document.getElementById('mark-watched-secret-status');
+  if (status) status.textContent = `${_settingsData.mark_watched.webhook_secret_configured?'A secret is configured. ':''}Use X-Sonarr-Webhook-Secret or Bearer authentication. The secret is never returned by the API.`;
+}
+
+function setMarkWatchedLibraryVisibility(instanceIndex, libraryIndex, visible) {
+  if (_settingsData.mark_watched.visible_libraries === null) {
+    _settingsData.mark_watched.visible_libraries = _settingsData.instances.flatMap(instance =>
+      instance.libraries.map(library => `${instance.name}::${library.name}`));
+  }
+  const instance = _settingsData.instances[instanceIndex];
+  const key = `${instance.name}::${instance.libraries[libraryIndex].name}`;
+  const values = new Set(_settingsData.mark_watched.visible_libraries);
+  if (visible) values.add(key); else values.delete(key);
+  _settingsData.mark_watched.visible_libraries = [...values];
+  renderMarkWatchedSettings();
+}
+
+function useAllMarkWatchedLibraries() {
+  _settingsData.mark_watched.visible_libraries = null;
+  renderMarkWatchedSettings();
 }
 
 function renderRepairSettings() {
@@ -3866,6 +3922,11 @@ async function testNotificationDestination(index) {
 }
 
 async function settingsSave(stayOnSection = '') {
+  if (!stayOnSection) {
+    stayOnSection = document.querySelector('.settings-section.active')?.id.replace('ss-','') || 'plex';
+  }
+  const webhookSecret = document.getElementById('mark-watched-webhook-secret')?.value || '';
+  _settingsData.mark_watched.webhook_secret = webhookSecret;
   // Collect notification settings
   _settingsData.discord_webhook   = document.getElementById('s-discord').value.trim();
   _settingsData.log_level         = document.getElementById('s-log-level')?.value || 'INFO';
@@ -3881,7 +3942,7 @@ async function settingsSave(stayOnSection = '') {
   _settingsData.notify_skip       = document.getElementById('s-notify-skip').checked;
   _settingsData.notification_destinations.forEach((_, index) => syncNotificationDestination(index));
 
-  ['settings-save-btn','settings-save-btn2','settings-save-btn-repair','settings-save-btn-metadata','settings-save-btn-trash','settings-save-btn-features','settings-save-btn-library-refresh'].forEach(id => {
+  ['settings-save-btn','settings-save-btn2','settings-save-btn-repair','settings-save-btn-metadata','settings-save-btn-trash','settings-save-btn-features','settings-save-btn-library-refresh','settings-save-btn-mark-watched'].forEach(id => {
     const b = document.getElementById(id);
     if (b) { b.dataset.saveLabel ||= b.innerHTML; b.disabled = true; b.innerHTML = `<span class="spin"></span> saving…`; }
   });
@@ -3893,7 +3954,7 @@ async function settingsSave(stayOnSection = '') {
       body: JSON.stringify({ ..._settingsData, store_tokens: true, save_scope: stayOnSection })
     });
     const d = await r.json();
-    ['settings-save-result','settings-save-result2','settings-save-result-general','settings-save-result-repair','settings-save-result-metadata','settings-save-result-trash','settings-save-result-features','settings-save-result-library-refresh'].forEach(id => {
+    ['settings-save-result','settings-save-result2','settings-save-result-general','settings-save-result-repair','settings-save-result-metadata','settings-save-result-trash','settings-save-result-features','settings-save-result-library-refresh','settings-save-result-mark-watched'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.innerHTML = d.ok
         ? `<span style="color:var(--pass);">✓ Saved and applied</span>`
@@ -3904,19 +3965,15 @@ async function settingsSave(stayOnSection = '') {
       if (stayOnSection === 'features') {
         applyFeatureVisibility(_settingsData.features);
       }
-      if (stayOnSection) {
-        await loadSettings();
-        const sectionButton = [...document.querySelectorAll('.settings-nav-item')].find(item => (item.getAttribute('onclick')||'').includes(`'${stayOnSection}'`));
-        showSettingsSection(stayOnSection, sectionButton);
-      } else {
-        setTimeout(() => location.reload(), 500);
-      }
+      await loadSettings();
+      const sectionButton = [...document.querySelectorAll('.settings-nav-item')].find(item => (item.getAttribute('onclick')||'').includes(`'${stayOnSection}'`));
+      showSettingsSection(stayOnSection, sectionButton);
     }
     else toast(d.error, 'fail');
   } catch(e) {
     toast('Save failed', 'fail');
   } finally {
-    ['settings-save-btn','settings-save-btn2','settings-save-btn-repair','settings-save-btn-metadata','settings-save-btn-trash','settings-save-btn-features','settings-save-btn-library-refresh'].forEach(id => {
+    ['settings-save-btn','settings-save-btn2','settings-save-btn-repair','settings-save-btn-metadata','settings-save-btn-trash','settings-save-btn-features','settings-save-btn-library-refresh','settings-save-btn-mark-watched'].forEach(id => {
       const b = document.getElementById(id);
       if (b) { b.disabled = false; b.innerHTML = b.dataset.saveLabel || 'Save Configuration'; }
     });

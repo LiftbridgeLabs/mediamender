@@ -78,7 +78,7 @@ class FeatureConfig:
 class MarkWatchedConfig:
     webhook_secret: str = ""
     retry_delays: List[int] = field(default_factory=lambda: [10, 30, 60, 120, 300])
-    visible_libraries: List[str] = field(default_factory=list)
+    visible_libraries: Optional[List[str]] = None
 
 
 @dataclass
@@ -382,7 +382,11 @@ def parse_config(raw: dict, config_missing: bool = False) -> AppConfig:
             str(mark_raw.get("webhook_secret", "")),
         ),
         retry_delays=[max(0, int(value)) for value in retry_delays[:10]],
-        visible_libraries=[str(value) for value in mark_raw.get("visible_libraries", [])],
+        visible_libraries=(
+            [str(value) for value in mark_raw.get("visible_libraries", [])]
+            if "visible_libraries" in mark_raw and isinstance(mark_raw.get("visible_libraries"), list)
+            else None
+        ),
     )
     clean_bundles_before_empty = bool(raw.get("clean_bundles_before_empty", False))
     max_trash_items = int(raw.get("max_trash_items", 1000))

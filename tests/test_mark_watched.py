@@ -2,6 +2,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import yaml
+
 import app
 from src.auth import hash_password
 from src.config import AppConfig, AppUser, LibraryConfig, MarkWatchedConfig, PlexInstanceConfig
@@ -309,6 +311,78 @@ class MarkWatchedPermissionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertGreaterEqual(set_all.call_count, 1)
         plex.mark_watched.assert_not_called()
+
+
+class MarkWatchedSettingsTests(unittest.TestCase):
+    def setUp(self):
+        self.path = Path("tests/.mark-watched-settings.yml")
+        self.path.unlink(missing_ok=True)
+
+    def tearDown(self):
+        self.path.unlink(missing_ok=True)
+
+    def _client(self):
+        client = app.app.test_client()
+        with client.session_transaction() as browser_session:
+            browser_session["_csrf_token"] = "known-token"
+        return client
+
+    def test_config_load_redacts_plex_token_and_webhook_secret(self):
+        self.path.write_text(yaml.safe_dump({
+            "mark_watched": {"webhook_secret": "webhook-sensitive"},
+            "plex_instances": [{"name": "Plex", "url": "http://plex",
+                                 "token": "plex-sensitive", "libraries": []}],
+        }), encoding="utf-8")
+        runtime = AppConfig(
+            instances=[], mark_watched=MarkWatchedConfig(webhook_secret="webhook-sensitive"),
+        )
+        with patch.object(app, "CONFIG_PATH", str(self.path)), patch.object(app, "config", runtime):
+            response = self._client().get("/api/config/load")
+        body = response.get_data(as_text=True)
+        self.assertNotIn("plex-sensitive", body)
+        self.assertNotIn("webhook-sensitive", body)
+        self.assertTrue(response.get_json()["config"]["plex_instances"][0]["token_configured"])
+
+    def test_settings_save_preserves_blank_redacted_secrets_and_visibility(self):
+        self.path.write_text(yaml.safe_dump({
+            "mark_watched": {"webhook_secret": "keep-webhook"},
+            "plex_instances": [{"name": "Plex", "url": "http://plex",
+                                 "token": "keep-plex", "libraries": []}],
+        }), encoding="utf-8")
+        payload = {
+            "store_tokens": True, "save_scope": "mark-watched",
+            "mark_watched": {"webhook_secret": "", "visible_libraries": []},
+            "instances": [{"name": "Plex", "url": "http://plex", "token": "",
+                           "libraries": []}],
+        }
+        with patch.object(app, "CONFIG_PATH", str(self.path)), \
+             patch.object(app, "_save_and_apply") as save:
+            response = self._client().post(
+                "/api/wizard/save", json=payload,
+                headers={"X-CSRF-Token": "known-token"},
+            )
+        self.assertEqual(response.status_code, 200)
+        saved = save.call_args.args[0]
+        self.assertEqual(saved["mark_watched"]["webhook_secret"], "keep-webhook")
+        self.assertEqual(saved["mark_watched"]["visible_libraries"], [])
+        self.assertEqual(saved["plex_instances"][0]["token"], "keep-plex")
+
+    def test_settings_navigation_does_not_call_plex(self):
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [LibraryConfig("TV", "physical", [])],
+        )])
+        plex = Mock()
+        with patch.object(app, "config", config), patch.object(app, "plex_clients", {"Plex": plex}):
+            response = self._client().get("/")
+        self.assertEqual(response.status_code, 200)
+        plex.assert_not_called()
+        plex._get.assert_not_called()
+
+    def test_settings_ui_keeps_active_section_and_uses_non_overlapping_refresh_grid(self):
+        html = Path("templates/index.html").read_text(encoding="utf-8")
+        self.assertIn("document.querySelector('.settings-section.active')", html)
+        self.assertIn('class="library-refresh-control-grid"', html)
+        self.assertIn('id="ss-mark-watched"', html)
 
 
 if __name__ == "__main__":

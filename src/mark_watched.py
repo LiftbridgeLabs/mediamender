@@ -329,14 +329,15 @@ def process_plex_event(event: dict, app_config, clients: dict,
     """Find imported episodes across configured TV sections, then apply rules."""
     matched = []
     marked = []
-    visible = set(app_config.mark_watched.visible_libraries)
+    configured_visibility = app_config.mark_watched.visible_libraries
+    visible = set(configured_visibility or [])
     for instance in app_config.instances:
         plex = clients.get(instance.name)
         if plex is None:
             continue
         for library in instance.libraries:
             library_key = f"{instance.name}::{library.name}"
-            if visible and library_key not in visible:
+            if configured_visibility is not None and library_key not in visible:
                 continue
             section_id = library.section_id or plex.find_section_id(library.name)
             if not section_id or plex.get_section_type(str(section_id)) != "show":
