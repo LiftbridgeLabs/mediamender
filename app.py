@@ -1305,6 +1305,9 @@ def api_mark_watched_shows():
     """Return one bounded page from one explicitly selected Plex TV library."""
     instance_name = str(request.args.get("instance", "")).strip()
     library_name = str(request.args.get("library", "")).strip()
+    search = str(request.args.get("q", "")).strip()
+    if len(search) > 100:
+        return jsonify({"error": "Show search cannot exceed 100 characters"}), 400
     try:
         page = max(1, int(request.args.get("page", 1)))
         page_size = int(request.args.get("page_size", 12))
@@ -1324,9 +1327,15 @@ def api_mark_watched_shows():
     if not section_id or plex.get_section_type(str(section_id)) != "show":
         return jsonify({"error": "Mark-it-Watched supports TV libraries only"}), 400
     try:
-        result = plex.list_tv_shows_page(
-            str(section_id), (page - 1) * page_size, page_size,
-        )
+        if search:
+            result = plex.list_tv_shows_page(
+                str(section_id), (page - 1) * page_size, page_size,
+                query=search,
+            )
+        else:
+            result = plex.list_tv_shows_page(
+                str(section_id), (page - 1) * page_size, page_size,
+            )
     except Exception as exc:
         logger.warning("Could not load Mark-it-Watched page for %s::%s (%s)",
                        instance_name, library_name, type(exc).__name__)
@@ -1354,6 +1363,7 @@ def api_mark_watched_shows():
         "page_size": page_size,
         "pages": pages,
         "total": total,
+        "search": search,
         "rule_user": username,
     })
 

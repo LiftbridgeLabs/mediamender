@@ -844,7 +844,7 @@ dialog.overlay::backdrop{background:transparent;}
 .mw-library{margin:22px 0 30px;}.mw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:18px;}
 .mw-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;min-width:0;}.mw-poster{aspect-ratio:2/3;width:100%;object-fit:cover;background:var(--surface2);display:block;}.mw-poster-empty{aspect-ratio:2/3;display:grid;place-items:center;background:var(--surface2);color:var(--muted);font-size:14px;}
 .mw-card-body{padding:13px;}.mw-title{font-weight:750;color:var(--bright);font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}.mw-meta{color:var(--muted);font-size:12px;margin:4px 0 11px;}.mw-rule{width:100%;justify-content:center;}.mw-rule.on{border-color:var(--pass-line);background:var(--pass-soft);color:var(--pass2);}.mw-seasons{grid-column:1/-1;padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--bg);display:none;}.mw-seasons.open{display:block;}.mw-season-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:13px;}.mw-season{border:1px solid var(--border);border-radius:9px;padding:10px;background:var(--surface);}.mw-season img{width:54px;aspect-ratio:2/3;object-fit:cover;border-radius:5px;float:left;margin-right:10px;}.mw-source{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:5px 0 9px;}.mw-season-actions{display:flex;gap:4px;clear:both;padding-top:9px;}.mw-season-actions .btn{flex:1;padding:4px;font-size:10px;}
-.mw-browser-toolbar{display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,1.4fr) minmax(120px,.5fr);gap:12px;align-items:end;margin:18px 0;}.mw-pagination{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin:22px 0;}.mw-pagination-summary{font-size:12px;color:var(--muted);min-width:190px;text-align:center;}@media(max-width:780px){.mw-browser-toolbar{grid-template-columns:1fr;}}
+.mw-browser-toolbar{display:grid;grid-template-columns:minmax(160px,1fr) minmax(190px,1.2fr) minmax(120px,.5fr) minmax(180px,1fr);gap:12px;align-items:end;margin:18px 0;}.mw-pagination{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin:22px 0;}.mw-pagination-summary{font-size:12px;color:var(--muted);min-width:190px;text-align:center;}@media(max-width:980px){.mw-browser-toolbar{grid-template-columns:repeat(2,minmax(0,1fr));}}@media(max-width:600px){.mw-browser-toolbar{grid-template-columns:1fr;}}
 .library-refresh-control-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr));gap:10px;align-items:end;width:100%;min-width:0;}.library-refresh-control-grid>*{min-width:0;max-width:100%;}
 @media(max-width:1050px){.rollup-grid{grid-template-columns:1fr;}.rollup-card{min-height:235px;}}
 @media(max-width:1180px){.repair-instance-grid,.repair-folder-grid{grid-template-columns:1fr;}}
@@ -1141,9 +1141,11 @@ dialog.overlay::backdrop{background:transparent;}
     <label><span class="form-label">Plex server</span><select class="form-input" id="mark-watched-instance" onchange="selectMarkWatchedInstance(this.value)"><option>Loading&hellip;</option></select></label>
     <label><span class="form-label">TV library</span><select class="form-input" id="mark-watched-library" onchange="selectMarkWatchedLibrary(this.value)"><option>Select a server</option></select></label>
     <label><span class="form-label">Shows per page</span><select class="form-input" id="mark-watched-page-size" onchange="setMarkWatchedPageSize(this.value)"><option value="12" selected>12</option><option value="24">24</option><option value="36">36</option><option value="48">48</option></select></label>
+    <label><span class="form-label">Search shows</span><input class="form-input" id="mark-watched-search" type="search" placeholder="Search this TV library" oninput="queueMarkWatchedSearch(this.value)"></label>
   </div></div>
+  <div class="mw-pagination" id="mark-watched-pagination-top"></div>
   <div id="mark-watched-libraries"><div class="empty-msg">Open this tab to load Plex TV libraries.</div></div>
-  <div class="mw-pagination" id="mark-watched-pagination"></div>
+  <div class="mw-pagination" id="mark-watched-pagination-bottom"></div>
   <div class="repair-section-heading"><h2 class="repair-section-title">Recent webhook work</h2><div class="repair-section-line"></div></div>
   <div class="repair-history-list" id="mark-watched-jobs"><div class="empty-msg">No webhook jobs yet.</div></div>
 </div>
@@ -1933,9 +1935,10 @@ function showPage(name, btn) {
 // Mark-it-Watched
 let _markWatchedData = {
   instances: [], libraries: [], instance: '', library: '', shows: [],
-  page: 1, page_size: 12, pages: 1, total: 0, rule_user: '', loaded: false,
+  page: 1, page_size: 12, pages: 1, total: 0, search: '', rule_user: '', loaded: false,
 };
 let _markWatchedAbort = null;
+let _markWatchedSearchTimer = null;
 
 function markWatchedStorageKey(name) {
   return `mediamender-mark-watched-${_identity.username || 'default'}-${name}`;
@@ -2007,7 +2010,8 @@ async function loadMarkWatchedLibraryOptions(force = false) {
   renderMarkWatchedSelectors();
   if (!_markWatchedData.library) {
     container.innerHTML = '<div class="empty-msg">No visible TV libraries are configured for this Plex server. Movie libraries are intentionally excluded.</div>';
-    document.getElementById('mark-watched-pagination').innerHTML = '';
+    document.getElementById('mark-watched-pagination-top').innerHTML = '';
+    document.getElementById('mark-watched-pagination-bottom').innerHTML = '';
     return;
   }
   await loadMarkWatchedPage(force ? 1 : _markWatchedData.page);
@@ -2022,10 +2026,17 @@ async function selectMarkWatchedLibrary(value) {
 
 async function setMarkWatchedPageSize(value) {
   _markWatchedData.page_size = Number(value) || 12;
-  await loadMarkWatchedPage(1);
+  await loadMarkWatchedPage(1, true);
 }
 
-async function loadMarkWatchedPage(page = 1) {
+function queueMarkWatchedSearch(value) {
+  _markWatchedData.search = String(value || '').trim();
+  _markWatchedData.page = 1;
+  clearTimeout(_markWatchedSearchTimer);
+  _markWatchedSearchTimer = setTimeout(() => loadMarkWatchedPage(1), 300);
+}
+
+async function loadMarkWatchedPage(page = 1, scrollToControls = false) {
   const container = document.getElementById('mark-watched-libraries');
   if (!_markWatchedData.instance || !_markWatchedData.library) return;
   if (_markWatchedAbort) _markWatchedAbort.abort();
@@ -2035,6 +2046,7 @@ async function loadMarkWatchedPage(page = 1) {
     instance: _markWatchedData.instance, library: _markWatchedData.library,
     page: String(Math.max(1, page)), page_size: String(_markWatchedData.page_size),
   });
+  if (_markWatchedData.search) query.set('q', _markWatchedData.search);
   try {
     const response = await fetch(`/api/mark-watched/shows?${query}`, {signal:_markWatchedAbort.signal});
     const data = await response.json();
@@ -2042,6 +2054,9 @@ async function loadMarkWatchedPage(page = 1) {
     Object.assign(_markWatchedData, data, {loaded:true});
     renderMarkWatchedLibraries();
     renderMarkWatchedPagination();
+    if (scrollToControls) {
+      document.getElementById('mark-watched-pagination-top')?.scrollIntoView({behavior:'smooth',block:'start'});
+    }
   } catch (error) {
     if (error.name !== 'AbortError') container.innerHTML = `<div class="empty-msg">${h(error.message)}</div>`;
   }
@@ -2065,18 +2080,21 @@ function renderMarkWatchedLibraries() {
             </div>
           </article>
           <div class="mw-seasons" id="mw-seasons-${showIndex}"></div>
-        `).join('') || '<div class="empty-msg">No shows found on this page.</div>'}
+        `).join('') || `<div class="empty-msg">${_markWatchedData.search?`No shows match “${h(_markWatchedData.search)}”.`:'No shows found on this page.'}</div>`}
       </div>
     </section>`;
 }
 
 function renderMarkWatchedPagination() {
-  const target = document.getElementById('mark-watched-pagination');
   const page = Number(_markWatchedData.page || 1);
   const pages = Number(_markWatchedData.pages || 1);
   const start = _markWatchedData.total ? ((page - 1) * _markWatchedData.page_size) + 1 : 0;
   const end = Math.min(page * _markWatchedData.page_size, _markWatchedData.total || 0);
-  target.innerHTML = `<button class="btn btn-secondary btn-sm" ${page<=1?'disabled':''} onclick="loadMarkWatchedPage(1)">First</button><button class="btn btn-secondary btn-sm" ${page<=1?'disabled':''} onclick="loadMarkWatchedPage(${page-1})">Previous</button><span class="mw-pagination-summary">Page ${page} of ${pages} &middot; ${start}-${end} of ${_markWatchedData.total} shows</span><button class="btn btn-secondary btn-sm" ${page>=pages?'disabled':''} onclick="loadMarkWatchedPage(${page+1})">Next</button><button class="btn btn-secondary btn-sm" ${page>=pages?'disabled':''} onclick="loadMarkWatchedPage(${pages})">Last</button>`;
+  const controls = `<button class="btn btn-secondary btn-sm" ${page<=1?'disabled':''} onclick="loadMarkWatchedPage(1,true)">First</button><button class="btn btn-secondary btn-sm" ${page<=1?'disabled':''} onclick="loadMarkWatchedPage(${page-1},true)">Previous</button><span class="mw-pagination-summary">Page ${page} of ${pages} &middot; ${start}-${end} of ${_markWatchedData.total} shows</span><button class="btn btn-secondary btn-sm" ${page>=pages?'disabled':''} onclick="loadMarkWatchedPage(${page+1},true)">Next</button><button class="btn btn-secondary btn-sm" ${page>=pages?'disabled':''} onclick="loadMarkWatchedPage(${pages},true)">Last</button>`;
+  ['mark-watched-pagination-top','mark-watched-pagination-bottom'].forEach(id => {
+    const target = document.getElementById(id);
+    if (target) target.innerHTML = controls;
+  });
 }
 
 async function setShowRule(showIndex, enabled) {

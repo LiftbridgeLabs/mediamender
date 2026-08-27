@@ -91,13 +91,21 @@ class PlexClient:
         return self.list_tv_shows_page(section_id, 0, 100000)["shows"]
 
     def list_tv_shows_page(self, section_id: str, start: int = 0,
-                           size: int = 24) -> Dict:
+                           size: int = 24, query: str = "") -> Dict:
         """Return one Plex-native page of shows without loading the library."""
+        path = f"/library/sections/{section_id}/all"
+        params = {
+            "type": 2,
+            "sort": "titleSort:asc",
+            "X-Plex-Container-Start": max(0, int(start)),
+            "X-Plex-Container-Size": max(1, min(int(size), 100000)),
+        }
+        if query:
+            path = f"/library/sections/{section_id}/search"
+            params["query"] = str(query)
         response = self._get(
-            f"/library/sections/{section_id}/all",
-            params={"type": 2, "sort": "titleSort:asc",
-                    "X-Plex-Container-Start": max(0, int(start)),
-                    "X-Plex-Container-Size": max(1, min(int(size), 100000))},
+            path,
+            params=params,
             timeout=30,
         )
         response.raise_for_status()

@@ -155,6 +155,32 @@ class MarkWatchedUiApiTests(unittest.TestCase):
         plex.list_tv_shows_page.assert_called_once_with("7", 24, 24)
         self.assertNotIn("secret-token", response.get_data(as_text=True))
 
+    def test_show_search_uses_plex_section_search_with_pagination(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.list_tv_shows_page.return_value = {"shows": [], "total": 0}
+        with patch.object(app, "config", config), \
+             patch.object(app, "plex_clients", {"Plex": plex}):
+            response = self._client().get(
+                "/api/mark-watched/shows?instance=Plex&library=TV"
+                "&page=2&page_size=12&q=Star%20Trek"
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["search"], "Star Trek")
+        plex.list_tv_shows_page.assert_called_once_with(
+            "7", 12, 12, query="Star Trek",
+        )
+
+    def test_show_search_rejects_unbounded_query(self):
+        response = self._client().get(
+            "/api/mark-watched/shows?instance=Plex&library=TV&q=" + ("x" * 101),
+        )
+        self.assertEqual(response.status_code, 400)
+
     def test_season_rule_api_persists_explicit_override(self):
         library = LibraryConfig("TV", "physical", [], section_id="7")
         config = AppConfig(instances=[PlexInstanceConfig(
@@ -181,6 +207,9 @@ class MarkWatchedUiApiTests(unittest.TestCase):
         self.assertNotIn("Application Users", html)
         self.assertIn("Plex: ${h(_markWatchedData.instance)}", html)
         self.assertIn("removeSonarrConnection", html)
+        self.assertIn('id="mark-watched-search"', html)
+        self.assertIn('id="mark-watched-pagination-top"', html)
+        self.assertIn('id="mark-watched-pagination-bottom"', html)
 
     def test_download_without_episode_file_is_rejected(self):
         payload = sonarr_download()
@@ -384,6 +413,20 @@ class PlexMarkWatchedClientTests(unittest.TestCase):
         self.assertEqual(len(result["shows"]), 1)
         self.assertEqual(get.call_args.kwargs["params"]["X-Plex-Container-Start"], 24)
         self.assertEqual(get.call_args.kwargs["params"]["X-Plex-Container-Size"], 24)
+
+    def test_list_tv_shows_page_searches_within_selected_section(self):
+        client = PlexClient("http://plex", "token")
+        response = Mock()
+        response.json.return_value = {"MediaContainer": {
+            "totalSize": 1,
+            "Metadata": [{"ratingKey": "10", "title": "Star Trek"}],
+        }}
+        with patch.object(client, "_get", return_value=response) as get:
+            result = client.list_tv_shows_page("7", 0, 12, query="Star Trek")
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(get.call_args.args[0], "/library/sections/7/search")
+        self.assertEqual(get.call_args.kwargs["params"]["query"], "Star Trek")
+        self.assertEqual(get.call_args.kwargs["params"]["type"], 2)
 
 
 class MarkWatchedPermissionTests(unittest.TestCase):

@@ -424,7 +424,8 @@ Recent success, retry, and failure state is shown on the Mark-it-Watched page.
 The non-secret Sonarr connection status is stored in `data/sonarr-webhook.json`.
 The rule browser loads one selected Plex server and TV library at a time. Shows
 use Plex-native pagination (12, 24, 36, or 48 per page); movie libraries are not
-shown.
+shown. Search is scoped to the entire selected Plex TV library, and page controls
+are available both above and below the poster grid.
 
 Settings controls which shared Plex TV libraries are visible. All On and All Off
 update the single future rule set only; they never rewrite existing Plex watch
