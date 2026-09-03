@@ -1451,11 +1451,14 @@ dialog.overlay::backdrop{background:transparent;}
         <div class="settings-section-title">Features</div>
         <div class="settings-section-desc">Show and run only the functionality you use. Disabled features disappear from navigation, settings, and the dashboard.</div>
         <div class="metadata-settings-list">
-          <div class="metadata-setting-row"><div><strong>Trash Removal</strong><br><span>Protected Plex Empty Trash scheduling and manual runs.</span></div><button type="button" class="metadata-setting-toggle" id="feature-trash-removal" onclick="toggleFeatureSetting('trash_removal')"></button></div>
-          <div class="metadata-setting-row"><div><strong>Metadata Health</strong><br><span>Manual checks for unmatched Plex movies and shows.</span></div><button type="button" class="metadata-setting-toggle" id="feature-metadata-health" onclick="toggleFeatureSetting('metadata_health')"></button></div>
-          <div class="metadata-setting-row"><div><strong>Timestamp Repair</strong><br><span>Manual repair of invalid Plex media-part timestamps.</span></div><button type="button" class="metadata-setting-toggle" id="feature-timestamp-repair" onclick="toggleFeatureSetting('timestamp_repair')"></button></div>
-          <div class="metadata-setting-row"><div><strong>Library Refresh</strong><br><span>Manual and scheduled full-library Plex refresh requests.</span></div><button type="button" class="metadata-setting-toggle" id="feature-library-refresh" onclick="toggleFeatureSetting('library_refresh')"></button></div>
-          <div class="metadata-setting-row"><div><strong>Mark-it-Watched</strong><br><span>Future Sonarr imports and per-show or season Plex watch rules.</span></div><button type="button" class="metadata-setting-toggle" id="feature-mark-watched" onclick="toggleFeatureSetting('mark_watched')"></button></div>
+          {% for feature in feature_registry %}
+          <div class="metadata-setting-row">
+            <div><strong>{{ feature.label }}</strong><br><span>{{ feature.description }}</span></div>
+            <button type="button" class="metadata-setting-toggle"
+                    id="feature-{{ feature.key | replace('_', '-') }}"
+                    onclick="toggleFeatureSetting('{{ feature.key }}')"></button>
+          </div>
+          {% endfor %}
         </div>
         <div style="margin-top:18px;"><button class="btn btn-primary" onclick="settingsSave('features')" id="settings-save-btn-features">Save Feature Settings</button><span id="settings-save-result-features" style="margin-left:12px;"></span></div>
       </div>

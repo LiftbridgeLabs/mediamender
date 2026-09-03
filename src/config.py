@@ -364,13 +364,12 @@ def parse_config(raw: dict, config_missing: bool = False) -> AppConfig:
     features_raw = raw.get("features", {})
     if not isinstance(features_raw, dict):
         features_raw = {}
-    features = FeatureConfig(
-        trash_removal=features_raw.get("trash_removal", True) is not False,
-        metadata_health=features_raw.get("metadata_health", True) is not False,
-        timestamp_repair=features_raw.get("timestamp_repair", True) is not False,
-        library_refresh=features_raw.get("library_refresh", True) is not False,
-        mark_watched=features_raw.get("mark_watched", True) is not False,
-    )
+    # Every feature defaults to on, so a config written before a feature
+    # existed keeps working without naming it.
+    features = FeatureConfig(**{
+        key: features_raw.get(key, True) is not False
+        for key in vars(FeatureConfig())
+    })
     mark_raw = raw.get("mark_watched", {})
     if not isinstance(mark_raw, dict):
         mark_raw = {}

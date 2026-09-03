@@ -38,6 +38,26 @@ class FeatureRegistryTests(unittest.TestCase):
         )
         self.assertEqual(resolved, "mark_watched")
 
+    def test_a_config_predating_a_feature_defaults_it_on(self):
+        import app as _app
+        parsed = _app._validate_raw_config({
+            "features": {"mark_watched": False},
+            "plex_instances": [],
+        }, require_paths=False)
+        self.assertFalse(parsed.features.mark_watched)
+        for key in FEATURES_BY_KEY:
+            if key != "mark_watched":
+                self.assertTrue(
+                    getattr(parsed.features, key),
+                    f"{key} should default on when the config predates it",
+                )
+
+    def test_the_ui_renders_a_toggle_for_every_feature(self):
+        html = app.app.test_client().get("/").get_data(as_text=True)
+        for feature in FEATURES:
+            self.assertIn(f"toggleFeatureSetting('{feature.key}')", html)
+            self.assertIn(feature.label, html)
+
     def test_label_falls_back_for_an_unknown_key(self):
         self.assertEqual(feature_label("mark_watched"), "Mark-it-Watched")
         self.assertEqual(feature_label("some_new_thing"), "Some New Thing")
