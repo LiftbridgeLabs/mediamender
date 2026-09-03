@@ -142,7 +142,8 @@ class LibraryRefreshApiTests(unittest.TestCase):
         self.assertIn('id="page-library-refresh"', html)
         self.assertIn("Refresh all scheduled", html)
         self.assertIn("refresh_guard_minutes", html)
-        self.assertIn('id="ss-library-refresh"', html)
+        self.assertIn('id="tab-library-refresh-configure"', html)
+        self.assertNotIn('id="ss-library-refresh"', html)
 
     def test_refresh_only_configuration_needs_no_media_mount(self):
         parsed = app._validate_raw_config({

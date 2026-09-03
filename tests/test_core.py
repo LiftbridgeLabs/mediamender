@@ -649,7 +649,9 @@ class MetadataAuditTests(unittest.TestCase):
     def test_settings_are_split_and_features_have_visibility_hooks(self):
         html = app.app.test_client().get("/").get_data(as_text=True)
         self.assertIn('id="ss-plex"', html)
-        self.assertIn('id="ss-trash-removal"', html)
+        # Trash Removal is configured on its own page, not inside Settings.
+        self.assertIn('id="tab-mediamender-configure"', html)
+        self.assertNotIn('id="ss-trash-removal"', html)
         self.assertIn('id="ss-features"', html)
         self.assertIn('data-feature="trash_removal"', html)
         self.assertIn('data-feature="metadata_health"', html)

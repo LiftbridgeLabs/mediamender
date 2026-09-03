@@ -496,6 +496,16 @@ table.htable{width:100%;border-collapse:collapse;}
 .settings-content{}
 .settings-section{display:none;}
 .settings-section.active{display:block;}
+/* A feature page's tabs: what it does, and how it is configured. */
+.feature-panel{display:none;}
+.feature-panel.active{display:block;}
+.feature-tabs{display:flex;gap:2px;margin:0 0 22px;border-bottom:1px solid var(--border);}
+.feature-tab{appearance:none;background:none;border:0;border-bottom:2px solid transparent;
+  color:var(--text2);font:inherit;font-size:14px;font-weight:600;cursor:pointer;
+  padding:9px 16px;margin-bottom:-1px;border-radius:6px 6px 0 0;}
+.feature-tab:hover{color:var(--bright);background:var(--surface);}
+.feature-tab.active{color:var(--accent2);border-bottom-color:var(--accent);}
+.feature-tab:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
 .settings-section-title{font-size:27px;font-weight:750;color:var(--bright);letter-spacing:-.7px;margin-bottom:5px;}
 .settings-section-desc{font-size:14px;color:var(--text2);margin-bottom:24px;}
 
@@ -972,6 +982,11 @@ dialog.overlay::backdrop{background:transparent;}
 
 <!-- ── MEDIAMENDER PROTECTION PAGE ── -->
 <div class="page" data-feature="trash_removal" id="page-mediamender">
+  <div class="feature-tabs" role="tablist">
+    <button class="feature-tab active" role="tab" aria-selected="true" data-tab="main" onclick="showFeatureTab('mediamender','main')" id="tab-btn-mediamender-main">Libraries</button>
+    <button class="feature-tab" role="tab" aria-selected="false" data-tab="configure" onclick="showFeatureTab('mediamender','configure')" id="tab-btn-mediamender-configure">Configure</button>
+  </div>
+  <div class="feature-panel active" id="tab-mediamender-main" data-tab="main">
   {% if not config_missing %}
   <div class="dashboard-intro">
     <div>
@@ -1124,180 +1139,9 @@ dialog.overlay::backdrop{background:transparent;}
   </div>
   {% endfor %}
   {% endif %}
-</div>
 
-<!-- LIBRARY REFRESH PAGE -->
-<div class="page" data-feature="library_refresh" id="page-library-refresh">
-  <div class="repair-page-head">
-    <div><div class="eyebrow">Scheduled Plex discovery</div><h1 class="dashboard-title">Library Refresh</h1><div class="dashboard-subtitle">Request full Plex scans for libraries that do not have an external scan trigger.</div></div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;"><button class="btn btn-secondary" onclick="openLibraryRefreshSettings()">Settings</button><button class="btn btn-secondary" onclick="loadLibraryRefreshStatus()">&#8635;&nbsp; Refresh status</button><button class="btn btn-primary" id="refresh-run-enabled" onclick="runEnabledLibraryRefreshes()">Refresh all scheduled</button></div>
   </div>
-  <div class="repair-warning" style="border-color:var(--accent-line);background:var(--accent-faint);color:var(--text2);">Plex performs refresh requests asynchronously. {{ product_name }} reports when Plex accepts a request, then holds Empty Trash for that library for the configured safety period.</div>
-  <div id="library-refresh-queue"></div>
-  <div class="repair-section-heading"><h2 class="repair-section-title">Plex libraries</h2><div class="repair-section-line"></div></div>
-  <div class="repair-instance-grid" id="library-refresh-grid"><div class="empty-msg">Loading library refresh status&hellip;</div></div>
-  <div class="repair-section-heading"><h2 class="repair-section-title">Recent refresh requests</h2><div class="repair-section-line"></div></div>
-  <div class="repair-history-list" id="library-refresh-history"><div class="empty-msg">No refresh requests yet</div></div>
-</div>
-
-<!-- MARK-IT-WATCHED PAGE -->
-<div class="page" data-feature="mark_watched" id="page-mark-watched">
-  <div class="repair-page-head">
-    <div><div class="eyebrow">Automatic Plex watch rules</div><h1 class="dashboard-title">Mark-it-Watched</h1><div class="dashboard-subtitle">Choose future import rules or explicitly apply watched state to an existing show or season.</div></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-secondary" onclick="loadMarkWatched(true)">&#8635;&nbsp; Refresh Plex</button><button class="btn btn-primary" onclick="setAllMarkWatched(true)">All On</button><button class="btn btn-danger" onclick="setAllMarkWatched(false)">All Off</button></div>
-  </div>
-  <div class="repair-warning" style="border-color:var(--accent-line);background:var(--accent-faint);color:var(--text2);">Automatic rules affect only future finalized Sonarr imports. The separate <strong>Mark watched now</strong> actions modify existing Plex history only after an explicit confirmation.</div>
-  <div class="card"><div class="card-body mw-browser-toolbar">
-    <label><span class="form-label">Plex server</span><select class="form-input" id="mark-watched-instance" onchange="selectMarkWatchedInstance(this.value)"><option>Loading&hellip;</option></select></label>
-    <label><span class="form-label">TV library</span><select class="form-input" id="mark-watched-library" onchange="selectMarkWatchedLibrary(this.value)"><option>Select a server</option></select></label>
-    <label><span class="form-label">Shows per page</span><select class="form-input" id="mark-watched-page-size" onchange="setMarkWatchedPageSize(this.value)"><option value="12" selected>12</option><option value="24">24</option><option value="36">36</option><option value="48">48</option></select></label>
-    <label><span class="form-label">Search shows</span><input class="form-input" id="mark-watched-search" type="search" placeholder="Search this TV library" oninput="queueMarkWatchedSearch(this.value)"></label>
-  </div></div>
-  <div class="mw-pagination" id="mark-watched-pagination-top"></div>
-  <div id="mark-watched-libraries"><div class="empty-msg">Open this tab to load Plex TV libraries.</div></div>
-  <div class="mw-pagination" id="mark-watched-pagination-bottom"></div>
-  <div class="repair-section-heading"><h2 class="repair-section-title">Mark-it-Watched activity</h2><div class="repair-section-line"></div><button class="btn btn-primary btn-sm" id="mark-watched-retry" onclick="retryMarkWatchedJobs(this)" title="Re-queue every job that has not succeeded yet">&#8635;&nbsp; Run pending jobs now</button><button class="btn btn-secondary btn-sm" onclick="loadMarkWatchedJobs()">Refresh activity</button></div>
-  <div class="repair-history-list" id="mark-watched-jobs"><div class="empty-msg">No automatic or manual jobs yet.</div></div>
-</div>
-
-<!-- ── METADATA HEALTH PAGE ── -->
-<div class="page" data-feature="metadata_health" id="page-metadata-audit">
-  <div class="repair-page-head">
-    <div>
-      <div class="eyebrow">Plex metadata health</div>
-      <h1 class="dashboard-title">Metadata Health</h1>
-      <div class="dashboard-subtitle">Find movies and shows Plex has not matched to a real metadata source, then open each item directly in Plex.</div>
-    </div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;"><button class="btn btn-secondary" onclick="openMetadataHealthSettings()">Settings</button><button class="btn btn-secondary" onclick="collapseAllMetadata()">Collapse all</button><button class="btn btn-secondary" onclick="loadMetadataAuditStatus()">&#8635;&nbsp; Refresh results</button><button class="btn btn-primary" id="metadata-scan-all" onclick="scanAllMetadata(this)">Scan all servers</button></div>
-  </div>
-  <div class="repair-warning" style="border-color:var(--accent-line);background:var(--accent-faint);color:var(--text2);">This scan is read-only. It does not scan files, change Plex metadata, or affect Empty Trash safety decisions. Libraries excluded in Metadata Health settings are skipped.</div>
-  <div class="repair-section-heading"><h2 class="repair-section-title" id="metadata-section-title">Plex servers</h2><div class="repair-section-line"></div></div>
-  <div class="repair-instance-grid" id="metadata-audit-grid"><div class="empty-msg">Loading saved metadata audits&hellip;</div></div>
-</div>
-
-<div class="page" data-feature="timestamp_repair" id="page-timestamp-repair">
-  <div id="repair-overview">
-    <div class="repair-page-head">
-      <div>
-        <div class="eyebrow">Manual Plex maintenance</div>
-        <h1 class="dashboard-title">Timestamp repair</h1>
-        <div class="dashboard-subtitle">Find invalid Plex part timestamps and repair one reviewed movie or season folder at a time.</div>
-      </div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;"><button class="btn btn-secondary" onclick="setAllRepairDetails(true)">Expand all</button><button class="btn btn-secondary" onclick="setAllRepairDetails(false)">Collapse all</button><button class="btn btn-secondary" onclick="loadRepairStatus()">&#8635;&nbsp; Refresh status</button></div>
-    </div>
-    <div class="repair-warning">Timestamp repair is manual only. Empty Trash is locked out while a repair or recovery transaction is active.</div>
-    <div id="repair-active"></div>
-    <div class="repair-section-heading"><h2 class="repair-section-title">Plex instances</h2><div class="repair-section-line"></div></div>
-    <div class="repair-instance-grid" id="repair-summary-grid">
-      <div class="empty-msg">Loading timestamp repair configuration&hellip;</div>
-    </div>
-    <div class="repair-section-heading"><h2 class="repair-section-title">Recent repairs</h2><div class="repair-section-line"></div></div>
-    <div class="repair-history-list" id="repair-history"><div class="empty-msg">No repair transactions yet</div></div>
-  </div>
-  <div id="repair-detail" style="display:none;">
-    <button class="text-link" onclick="closeRepairLibrary()">&larr; Back to servers</button>
-    <div class="repair-toolbar" style="margin-top:12px;">
-      <div>
-        <div class="eyebrow" id="repair-detail-instance"></div>
-        <h1 class="dashboard-title" id="repair-detail-title">Affected folders</h1>
-        <div class="dashboard-subtitle" id="repair-detail-subtitle"></div>
-      </div>
-      <div class="repair-batch-actions"><button class="btn btn-secondary" id="repair-select-all" onclick="selectAllRepairFolders()">Select all</button><button class="btn btn-primary" id="repair-selected" onclick="runSelectedRepairFolders()" disabled>Repair selected (0)</button></div>
-    </div>
-    <div class="repair-folder-grid" id="repair-folder-grid"></div>
-  </div>
-</div>
-
-<div class="page" id="page-history">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-    <div class="filters">
-      <button class="filter-btn active" onclick="setFilter('all',this)">All</button>
-      <button class="filter-btn" onclick="setFilter('success',this)">Success</button>
-      <button class="filter-btn" onclick="setFilter('skipped',this)">Skipped</button>
-      <button class="filter-btn" onclick="setFilter('dry_run',this)">Dry Run</button>
-      <button class="filter-btn" onclick="setFilter('error',this)">Error</button>
-    </div>
-    <span style="font-family:var(--mono);font-size:11px;color:var(--muted);" id="hcount">0 runs</span>
-  </div>
-  <div class="htable-wrap">
-    <table class="htable">
-      <thead>
-        <tr>
-          <th>Time</th><th>Instance</th><th>Library</th>
-          <th>Status</th><th>Checks</th><th>Message</th><th>Removed</th>
-        </tr>
-      </thead>
-      <tbody id="htbody">
-        <tr><td colspan="7"><div class="empty-msg">⏳ No runs yet</div></td></tr>
-      </tbody>
-    </table>
-  </div>
-</div>
-
-<!-- ── SETTINGS PAGE ── -->
-<div class="page" id="page-settings">
-  <div class="settings-layout">
-    <div>
-      <div class="settings-nav">
-        <button class="settings-nav-item active" data-section="plex" onclick="showSettingsSection('plex',this)">
-          📺 Plex Instances
-        </button>
-        <button class="settings-nav-item" data-feature="trash_removal" data-section="trash-removal" onclick="showSettingsSection('trash-removal',this)">
-          🗑️ Trash Removal
-        </button>
-        <button class="settings-nav-item" data-feature="library_refresh" data-section="library-refresh" onclick="showSettingsSection('library-refresh',this)">
-          &#8635;&#65039; Library Refresh
-        </button>
-        <button class="settings-nav-item" data-feature="mark_watched" data-section="mark-watched" onclick="showSettingsSection('mark-watched',this)">
-          &#10003; Mark-it-Watched
-        </button>
-        <button class="settings-nav-item" data-section="features" onclick="showSettingsSection('features',this)">
-          🎛️ Features
-        </button>
-        <button class="settings-nav-item" data-feature="metadata_health" data-section="metadata-health" onclick="showSettingsSection('metadata-health',this)">
-          🔎 Metadata Health
-        </button>
-        <button class="settings-nav-item" data-feature="timestamp_repair" data-section="timestamp-repair" onclick="showSettingsSection('timestamp-repair',this)">
-          🛠️ Timestamp Repair
-        </button>
-        <button class="settings-nav-item" data-section="providers" onclick="showSettingsSection('providers',this)">
-          ☁️ Providers
-        </button>
-        <button class="settings-nav-item" data-section="notifications" onclick="showSettingsSection('notifications',this)">
-          🔔 Notifications
-        </button>
-        <button class="settings-nav-item" data-section="general" onclick="showSettingsSection('general',this)">
-          ⚙️ General
-        </button>
-        <button class="settings-nav-item" data-section="security" onclick="showSettingsSection('security',this)">
-          🔒 Security
-        </button>
-        <button class="settings-nav-item" data-section="about" onclick="showSettingsSection('about',this)">
-          ℹ️ About
-        </button>
-      </div>
-    </div>
-    <div class="settings-content">
-
-      <!-- Plex Instances -->
-      <div class="settings-section active" id="ss-plex">
-        <div class="settings-section-title">Plex Instances</div>
-        <div class="settings-section-desc">Connect and manage Plex servers. Library behavior is configured separately for each feature.</div>
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px;">
-          <button class="btn btn-primary" onclick="connectPlexAccount('settings')">Connect Plex Account</button>
-          <span style="font-size:11px;color:var(--muted);">Discover Plex servers through sign-in</span>
-        </div>
-        <div id="plex-discovery-settings" style="margin-bottom:16px;"></div>
-        <div id="settings-instances-list"><div class="empty-msg" style="padding:20px 0;">Loading&hellip;</div></div>
-        <button class="btn btn-secondary" onclick="settingsAddInstance()">+ Add Plex Instance</button>
-        <hr class="divider"/>
-        <button class="btn btn-primary" onclick="settingsSave('plex')" id="settings-save-btn-plex">💾 Save Plex Settings</button>
-        <span id="settings-save-result-plex" style="margin-left:12px;font-size:12px;"></span>
-      </div>
-
-      <!-- Trash Removal -->
-      <div class="settings-section" id="ss-trash-removal">
-        <div class="settings-section-title">Trash Removal</div>
+  <div class="feature-panel" id="tab-mediamender-configure" data-tab="configure">
         <div class="settings-section-desc">Choose a Plex server, then configure its monitored libraries, safety paths, checks, and automatic schedule.</div>
         <div class="form-group" style="max-width:520px;">
           <label class="form-label" for="trash-settings-instance">Plex instance</label>
@@ -1364,33 +1208,61 @@ dialog.overlay::backdrop{background:transparent;}
         <button class="btn btn-primary" onclick="settingsSave('trash-removal')" id="settings-save-btn-trash-removal">💾 Save Trash Removal Settings</button>
         <span id="settings-save-result-trash-removal" style="margin-left:12px;font-size:12px;"></span>
       </div>
+</div>
 
-      <!-- Features -->
-      <div class="settings-section" id="ss-features">
-        <div class="settings-section-title">Features</div>
-        <div class="settings-section-desc">Show and run only the functionality you use. Disabled features disappear from navigation, settings, and the dashboard.</div>
-        <div class="metadata-settings-list">
-          <div class="metadata-setting-row"><div><strong>Trash Removal</strong><br><span>Protected Plex Empty Trash scheduling and manual runs.</span></div><button type="button" class="metadata-setting-toggle" id="feature-trash-removal" onclick="toggleFeatureSetting('trash_removal')"></button></div>
-          <div class="metadata-setting-row"><div><strong>Metadata Health</strong><br><span>Manual checks for unmatched Plex movies and shows.</span></div><button type="button" class="metadata-setting-toggle" id="feature-metadata-health" onclick="toggleFeatureSetting('metadata_health')"></button></div>
-          <div class="metadata-setting-row"><div><strong>Timestamp Repair</strong><br><span>Manual repair of invalid Plex media-part timestamps.</span></div><button type="button" class="metadata-setting-toggle" id="feature-timestamp-repair" onclick="toggleFeatureSetting('timestamp_repair')"></button></div>
-          <div class="metadata-setting-row"><div><strong>Library Refresh</strong><br><span>Manual and scheduled full-library Plex refresh requests.</span></div><button type="button" class="metadata-setting-toggle" id="feature-library-refresh" onclick="toggleFeatureSetting('library_refresh')"></button></div>
-          <div class="metadata-setting-row"><div><strong>Mark-it-Watched</strong><br><span>Future Sonarr imports and per-show or season Plex watch rules.</span></div><button type="button" class="metadata-setting-toggle" id="feature-mark-watched" onclick="toggleFeatureSetting('mark_watched')"></button></div>
-        </div>
-        <div style="margin-top:18px;"><button class="btn btn-primary" onclick="settingsSave('features')" id="settings-save-btn-features">Save Feature Settings</button><span id="settings-save-result-features" style="margin-left:12px;"></span></div>
-      </div>
+<!-- LIBRARY REFRESH PAGE -->
+<div class="page" data-feature="library_refresh" id="page-library-refresh">
+  <div class="repair-page-head">
+    <div><div class="eyebrow">Scheduled Plex discovery</div><h1 class="dashboard-title">Library Refresh</h1><div class="dashboard-subtitle">Request full Plex scans for libraries that do not have an external scan trigger.</div></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;"><button class="btn btn-secondary" onclick="openLibraryRefreshSettings()">Settings</button><button class="btn btn-secondary" onclick="loadLibraryRefreshStatus()">&#8635;&nbsp; Refresh status</button><button class="btn btn-primary" id="refresh-run-enabled" onclick="runEnabledLibraryRefreshes()">Refresh all scheduled</button></div>
+  </div>
+  <div class="feature-tabs" role="tablist">
+    <button class="feature-tab active" role="tab" aria-selected="true" data-tab="main" onclick="showFeatureTab('library-refresh','main')" id="tab-btn-library-refresh-main">Activity</button>
+    <button class="feature-tab" role="tab" aria-selected="false" data-tab="configure" onclick="showFeatureTab('library-refresh','configure')" id="tab-btn-library-refresh-configure">Configure</button>
+  </div>
+  <div class="feature-panel active" id="tab-library-refresh-main" data-tab="main">
+  <div class="repair-warning" style="border-color:var(--accent-line);background:var(--accent-faint);color:var(--text2);">Plex performs refresh requests asynchronously. {{ product_name }} reports when Plex accepts a request, then holds Empty Trash for that library for the configured safety period.</div>
+  <div id="library-refresh-queue"></div>
+  <div class="repair-section-heading"><h2 class="repair-section-title">Plex libraries</h2><div class="repair-section-line"></div></div>
+  <div class="repair-instance-grid" id="library-refresh-grid"><div class="empty-msg">Loading library refresh status&hellip;</div></div>
+  <div class="repair-section-heading"><h2 class="repair-section-title">Recent refresh requests</h2><div class="repair-section-line"></div></div>
+  <div class="repair-history-list" id="library-refresh-history"><div class="empty-msg">No refresh requests yet</div></div>
 
-      <!-- Library Refresh -->
-      <div class="settings-section" id="ss-library-refresh">
-        <div class="settings-section-title">Library Refresh</div>
+  </div>
+  <div class="feature-panel" id="tab-library-refresh-configure" data-tab="configure">
         <div class="settings-section-desc">Choose exactly which Plex libraries receive scheduled refresh requests. Every configured library remains available for a manual refresh.</div>
         <div class="repair-warning" style="border-color:var(--accent-line);background:var(--accent-faint);color:var(--text2);">The safety hold delays Empty Trash only for the refreshed library. It does not claim Plex has finished scanning.</div>
         <div id="library-refresh-settings"></div>
         <div style="margin-top:18px;"><button class="btn btn-primary" onclick="settingsSave('library-refresh')" id="settings-save-btn-library-refresh">Save Library Refresh Settings</button><span id="settings-save-result-library-refresh" style="margin-left:12px;font-size:14px;"></span></div>
       </div>
+</div>
 
-      <!-- Mark-it-Watched -->
-      <div class="settings-section" id="ss-mark-watched">
-        <div class="settings-section-title">Mark-it-Watched</div>
+<!-- MARK-IT-WATCHED PAGE -->
+<div class="page" data-feature="mark_watched" id="page-mark-watched">
+  <div class="repair-page-head">
+    <div><div class="eyebrow">Automatic Plex watch rules</div><h1 class="dashboard-title">Mark-it-Watched</h1><div class="dashboard-subtitle">Choose future import rules or explicitly apply watched state to an existing show or season.</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-secondary" onclick="loadMarkWatched(true)">&#8635;&nbsp; Refresh Plex</button><button class="btn btn-primary" onclick="setAllMarkWatched(true)">All On</button><button class="btn btn-danger" onclick="setAllMarkWatched(false)">All Off</button></div>
+  </div>
+  <div class="feature-tabs" role="tablist">
+    <button class="feature-tab active" role="tab" aria-selected="true" data-tab="main" onclick="showFeatureTab('mark-watched','main')" id="tab-btn-mark-watched-main">Rules</button>
+    <button class="feature-tab" role="tab" aria-selected="false" data-tab="configure" onclick="showFeatureTab('mark-watched','configure')" id="tab-btn-mark-watched-configure">Configure</button>
+  </div>
+  <div class="feature-panel active" id="tab-mark-watched-main" data-tab="main">
+  <div class="repair-warning" style="border-color:var(--accent-line);background:var(--accent-faint);color:var(--text2);">Automatic rules affect only future finalized Sonarr imports. The separate <strong>Mark watched now</strong> actions modify existing Plex history only after an explicit confirmation.</div>
+  <div class="card"><div class="card-body mw-browser-toolbar">
+    <label><span class="form-label">Plex server</span><select class="form-input" id="mark-watched-instance" onchange="selectMarkWatchedInstance(this.value)"><option>Loading&hellip;</option></select></label>
+    <label><span class="form-label">TV library</span><select class="form-input" id="mark-watched-library" onchange="selectMarkWatchedLibrary(this.value)"><option>Select a server</option></select></label>
+    <label><span class="form-label">Shows per page</span><select class="form-input" id="mark-watched-page-size" onchange="setMarkWatchedPageSize(this.value)"><option value="12" selected>12</option><option value="24">24</option><option value="36">36</option><option value="48">48</option></select></label>
+    <label><span class="form-label">Search shows</span><input class="form-input" id="mark-watched-search" type="search" placeholder="Search this TV library" oninput="queueMarkWatchedSearch(this.value)"></label>
+  </div></div>
+  <div class="mw-pagination" id="mark-watched-pagination-top"></div>
+  <div id="mark-watched-libraries"><div class="empty-msg">Open this tab to load Plex TV libraries.</div></div>
+  <div class="mw-pagination" id="mark-watched-pagination-bottom"></div>
+  <div class="repair-section-heading"><h2 class="repair-section-title">Mark-it-Watched activity</h2><div class="repair-section-line"></div><button class="btn btn-primary btn-sm" id="mark-watched-retry" onclick="retryMarkWatchedJobs(this)" title="Re-queue every job that has not succeeded yet">&#8635;&nbsp; Run pending jobs now</button><button class="btn btn-secondary btn-sm" onclick="loadMarkWatchedJobs()">Refresh activity</button></div>
+  <div class="repair-history-list" id="mark-watched-jobs"><div class="empty-msg">No automatic or manual jobs yet.</div></div>
+
+  </div>
+  <div class="feature-panel" id="tab-mark-watched-configure" data-tab="configure">
         <div class="settings-section-desc">Choose which configured Plex libraries appear on the rule page and connect Sonarr to finalized import processing.</div>
         {% if current_identity.role == 'admin' %}
         <div class="card"><div class="card-header"><div><div class="card-title">Sonarr Webhook Connections</div><div class="form-hint">Configured Sonarr instances appear below. Install or repair each webhook directly from mediaMender.</div></div></div><div class="card-body">
@@ -1409,19 +1281,75 @@ dialog.overlay::backdrop{background:transparent;}
         <div id="mark-watched-settings"></div>
         <div style="margin-top:18px;"><button class="btn btn-primary" onclick="settingsSave('mark-watched')" id="settings-save-btn-mark-watched">Save Mark-it-Watched Settings</button><span id="settings-save-result-mark-watched" style="margin-left:12px;font-size:14px;"></span></div>
       </div>
+</div>
 
-      <!-- Metadata Health -->
-      <div class="settings-section" id="ss-metadata-health">
-        <div class="settings-section-title">Metadata Health</div>
+<!-- ── METADATA HEALTH PAGE ── -->
+<div class="page" data-feature="metadata_health" id="page-metadata-audit">
+  <div class="repair-page-head">
+    <div>
+      <div class="eyebrow">Plex metadata health</div>
+      <h1 class="dashboard-title">Metadata Health</h1>
+      <div class="dashboard-subtitle">Find movies and shows Plex has not matched to a real metadata source, then open each item directly in Plex.</div>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;"><button class="btn btn-secondary" onclick="openMetadataHealthSettings()">Settings</button><button class="btn btn-secondary" onclick="collapseAllMetadata()">Collapse all</button><button class="btn btn-secondary" onclick="loadMetadataAuditStatus()">&#8635;&nbsp; Refresh results</button><button class="btn btn-primary" id="metadata-scan-all" onclick="scanAllMetadata(this)">Scan all servers</button></div>
+  </div>
+  <div class="feature-tabs" role="tablist">
+    <button class="feature-tab active" role="tab" aria-selected="true" data-tab="main" onclick="showFeatureTab('metadata-audit','main')" id="tab-btn-metadata-audit-main">Results</button>
+    <button class="feature-tab" role="tab" aria-selected="false" data-tab="configure" onclick="showFeatureTab('metadata-audit','configure')" id="tab-btn-metadata-audit-configure">Configure</button>
+  </div>
+  <div class="feature-panel active" id="tab-metadata-audit-main" data-tab="main">
+  <div class="repair-warning" style="border-color:var(--accent-line);background:var(--accent-faint);color:var(--text2);">This scan is read-only. It does not scan files, change Plex metadata, or affect Empty Trash safety decisions. Libraries excluded in Metadata Health settings are skipped.</div>
+  <div class="repair-section-heading"><h2 class="repair-section-title" id="metadata-section-title">Plex servers</h2><div class="repair-section-line"></div></div>
+  <div class="repair-instance-grid" id="metadata-audit-grid"><div class="empty-msg">Loading saved metadata audits&hellip;</div></div>
+
+  </div>
+  <div class="feature-panel" id="tab-metadata-audit-configure" data-tab="configure">
         <div class="settings-section-desc">Exclude libraries that intentionally use local-only metadata, such as YouTube libraries. Excluded libraries are never requested during a metadata scan.</div>
         <div class="repair-warning" style="border-color:var(--accent-line);background:var(--accent-faint);color:var(--text2);">Movie and TV libraries are included by default. Check <strong>Ignore</strong> only when local metadata is expected and a Plex match would not be useful.</div>
         <div id="metadata-health-settings"></div>
         <div style="margin-top:18px;"><button class="btn btn-primary" onclick="settingsSave('metadata-health')" id="settings-save-btn-metadata-health">Save Metadata Health Settings</button><span id="settings-save-result-metadata-health" style="margin-left:12px;font-size:14px;"></span></div>
       </div>
+</div>
 
-      <!-- Timestamp Repair -->
-      <div class="settings-section" id="ss-timestamp-repair">
-        <div class="settings-section-title">Timestamp Repair</div>
+<div class="page" data-feature="timestamp_repair" id="page-timestamp-repair">
+  <div id="repair-overview">
+    <div class="repair-page-head">
+      <div>
+        <div class="eyebrow">Manual Plex maintenance</div>
+        <h1 class="dashboard-title">Timestamp repair</h1>
+        <div class="dashboard-subtitle">Find invalid Plex part timestamps and repair one reviewed movie or season folder at a time.</div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;"><button class="btn btn-secondary" onclick="setAllRepairDetails(true)">Expand all</button><button class="btn btn-secondary" onclick="setAllRepairDetails(false)">Collapse all</button><button class="btn btn-secondary" onclick="loadRepairStatus()">&#8635;&nbsp; Refresh status</button></div>
+    </div>
+  <div class="feature-tabs" role="tablist">
+    <button class="feature-tab active" role="tab" aria-selected="true" data-tab="main" onclick="showFeatureTab('timestamp-repair','main')" id="tab-btn-timestamp-repair-main">Repairs</button>
+    <button class="feature-tab" role="tab" aria-selected="false" data-tab="configure" onclick="showFeatureTab('timestamp-repair','configure')" id="tab-btn-timestamp-repair-configure">Configure</button>
+  </div>
+  <div class="feature-panel active" id="tab-timestamp-repair-main" data-tab="main">
+    <div class="repair-warning">Timestamp repair is manual only. Empty Trash is locked out while a repair or recovery transaction is active.</div>
+    <div id="repair-active"></div>
+    <div class="repair-section-heading"><h2 class="repair-section-title">Plex instances</h2><div class="repair-section-line"></div></div>
+    <div class="repair-instance-grid" id="repair-summary-grid">
+      <div class="empty-msg">Loading timestamp repair configuration&hellip;</div>
+    </div>
+    <div class="repair-section-heading"><h2 class="repair-section-title">Recent repairs</h2><div class="repair-section-line"></div></div>
+    <div class="repair-history-list" id="repair-history"><div class="empty-msg">No repair transactions yet</div></div>
+  </div>
+  <div id="repair-detail" style="display:none;">
+    <button class="text-link" onclick="closeRepairLibrary()">&larr; Back to servers</button>
+    <div class="repair-toolbar" style="margin-top:12px;">
+      <div>
+        <div class="eyebrow" id="repair-detail-instance"></div>
+        <h1 class="dashboard-title" id="repair-detail-title">Affected folders</h1>
+        <div class="dashboard-subtitle" id="repair-detail-subtitle"></div>
+      </div>
+      <div class="repair-batch-actions"><button class="btn btn-secondary" id="repair-select-all" onclick="selectAllRepairFolders()">Select all</button><button class="btn btn-primary" id="repair-selected" onclick="runSelectedRepairFolders()" disabled>Repair selected (0)</button></div>
+    </div>
+    <div class="repair-folder-grid" id="repair-folder-grid"></div>
+  </div>
+
+  </div>
+  <div class="feature-panel" id="tab-timestamp-repair-configure" data-tab="configure">
         <div class="settings-section-desc">Configure local Plex databases or pair one repair-only worker. Empty Trash remains controlled by this main {{ product_name }} instance.</div>
         <div class="repair-warning">
           Docker mounts cannot be created from inside {{ product_name }}. Add each Plex database directory read-only and only the specific symlink folders you approve read/write, then use Discover databases below.
@@ -1441,6 +1369,108 @@ dialog.overlay::backdrop{background:transparent;}
         <button class="btn btn-primary" onclick="settingsSave('timestamp-repair')" id="settings-save-btn-timestamp-repair">💾 Save Timestamp Repair Setup</button>
         <span id="settings-save-result-timestamp-repair" style="margin-left:12px;font-size:13px;"></span>
       </div>
+</div>
+
+<div class="page" id="page-history">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+    <div class="filters">
+      <button class="filter-btn active" onclick="setFilter('all',this)">All</button>
+      <button class="filter-btn" onclick="setFilter('success',this)">Success</button>
+      <button class="filter-btn" onclick="setFilter('skipped',this)">Skipped</button>
+      <button class="filter-btn" onclick="setFilter('dry_run',this)">Dry Run</button>
+      <button class="filter-btn" onclick="setFilter('error',this)">Error</button>
+    </div>
+    <span style="font-family:var(--mono);font-size:11px;color:var(--muted);" id="hcount">0 runs</span>
+  </div>
+  <div class="htable-wrap">
+    <table class="htable">
+      <thead>
+        <tr>
+          <th>Time</th><th>Instance</th><th>Library</th>
+          <th>Status</th><th>Checks</th><th>Message</th><th>Removed</th>
+        </tr>
+      </thead>
+      <tbody id="htbody">
+        <tr><td colspan="7"><div class="empty-msg">⏳ No runs yet</div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ── SETTINGS PAGE ── -->
+<div class="page" id="page-settings">
+  <div class="settings-layout">
+    <div>
+      <div class="settings-nav">
+        <button class="settings-nav-item active" data-section="plex" onclick="showSettingsSection('plex',this)">
+          📺 Plex Instances
+        </button>
+        <button class="settings-nav-item" data-section="features" onclick="showSettingsSection('features',this)">
+          🎛️ Features
+        </button>
+        <button class="settings-nav-item" data-section="providers" onclick="showSettingsSection('providers',this)">
+          ☁️ Providers
+        </button>
+        <button class="settings-nav-item" data-section="notifications" onclick="showSettingsSection('notifications',this)">
+          🔔 Notifications
+        </button>
+        <button class="settings-nav-item" data-section="general" onclick="showSettingsSection('general',this)">
+          ⚙️ General
+        </button>
+        <button class="settings-nav-item" data-section="security" onclick="showSettingsSection('security',this)">
+          🔒 Security
+        </button>
+        <button class="settings-nav-item" data-section="about" onclick="showSettingsSection('about',this)">
+          ℹ️ About
+        </button>
+      </div>
+    </div>
+    <div class="settings-content">
+
+      <!-- Plex Instances -->
+      <div class="settings-section active" id="ss-plex">
+        <div class="settings-section-title">Plex Instances</div>
+        <div class="settings-section-desc">Connect and manage Plex servers. Library behavior is configured separately for each feature.</div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px;">
+          <button class="btn btn-primary" onclick="connectPlexAccount('settings')">Connect Plex Account</button>
+          <span style="font-size:11px;color:var(--muted);">Discover Plex servers through sign-in</span>
+        </div>
+        <div id="plex-discovery-settings" style="margin-bottom:16px;"></div>
+        <div id="settings-instances-list"><div class="empty-msg" style="padding:20px 0;">Loading&hellip;</div></div>
+        <button class="btn btn-secondary" onclick="settingsAddInstance()">+ Add Plex Instance</button>
+        <hr class="divider"/>
+        <button class="btn btn-primary" onclick="settingsSave('plex')" id="settings-save-btn-plex">💾 Save Plex Settings</button>
+        <span id="settings-save-result-plex" style="margin-left:12px;font-size:12px;"></span>
+      </div>
+
+      <!-- Trash Removal -->
+
+
+      <!-- Features -->
+      <div class="settings-section" id="ss-features">
+        <div class="settings-section-title">Features</div>
+        <div class="settings-section-desc">Show and run only the functionality you use. Disabled features disappear from navigation, settings, and the dashboard.</div>
+        <div class="metadata-settings-list">
+          <div class="metadata-setting-row"><div><strong>Trash Removal</strong><br><span>Protected Plex Empty Trash scheduling and manual runs.</span></div><button type="button" class="metadata-setting-toggle" id="feature-trash-removal" onclick="toggleFeatureSetting('trash_removal')"></button></div>
+          <div class="metadata-setting-row"><div><strong>Metadata Health</strong><br><span>Manual checks for unmatched Plex movies and shows.</span></div><button type="button" class="metadata-setting-toggle" id="feature-metadata-health" onclick="toggleFeatureSetting('metadata_health')"></button></div>
+          <div class="metadata-setting-row"><div><strong>Timestamp Repair</strong><br><span>Manual repair of invalid Plex media-part timestamps.</span></div><button type="button" class="metadata-setting-toggle" id="feature-timestamp-repair" onclick="toggleFeatureSetting('timestamp_repair')"></button></div>
+          <div class="metadata-setting-row"><div><strong>Library Refresh</strong><br><span>Manual and scheduled full-library Plex refresh requests.</span></div><button type="button" class="metadata-setting-toggle" id="feature-library-refresh" onclick="toggleFeatureSetting('library_refresh')"></button></div>
+          <div class="metadata-setting-row"><div><strong>Mark-it-Watched</strong><br><span>Future Sonarr imports and per-show or season Plex watch rules.</span></div><button type="button" class="metadata-setting-toggle" id="feature-mark-watched" onclick="toggleFeatureSetting('mark_watched')"></button></div>
+        </div>
+        <div style="margin-top:18px;"><button class="btn btn-primary" onclick="settingsSave('features')" id="settings-save-btn-features">Save Feature Settings</button><span id="settings-save-result-features" style="margin-left:12px;"></span></div>
+      </div>
+
+      <!-- Library Refresh -->
+
+
+      <!-- Mark-it-Watched -->
+
+
+      <!-- Metadata Health -->
+
+
+      <!-- Timestamp Repair -->
+
 
       <!-- Providers -->
       <div class="settings-section" id="ss-providers">
@@ -1985,6 +2015,7 @@ function applyRoute() {
     if (!sub) return;
     if (name === 'settings') showSettingsSection(sub, settingsNavButton(sub));
     else if (name === 'dashboard') selectDashboardView(sub);
+    else if (hasFeatureTabs(name)) showFeatureTab(name, sub);
   } finally {
     _applyingRoute = false;
   }
@@ -2004,6 +2035,7 @@ function showPage(name, btn) {
   document.getElementById(`page-${name}`).classList.add('active');
   (btn || document.getElementById(`nav-${name}`))?.classList.add('active');
   setRoute(name, '', true);
+  if (hasFeatureTabs(name)) showFeatureTab(name, 'main');
   if (name !== 'settings') stopLogViewer();
   PAGE_LOADERS[name]?.();
 }
@@ -2832,6 +2864,43 @@ function settingsNavButton(section) {
 function goToSettings(section) {
   showPage('settings', document.getElementById('nav-settings'));
   showSettingsSection(section, settingsNavButton(section));
+}
+
+// A feature's configuration lives on the feature's own page, as a tab, so
+// changing how something behaves no longer means a trip to another page.
+const FEATURE_TAB_LOADERS = {
+  'mediamender/configure': () => { renderTrashRemovalSettings(); loadGlobalScheduleControls(); },
+  'library-refresh/configure': () => renderLibraryRefreshSettings(),
+  'mark-watched/configure': () => {
+    renderMarkWatchedSettings();
+    if (_identity.role === 'admin') loadSonarrConnectionStatus();
+  },
+  'metadata-audit/configure': () => renderMetadataHealthSettings(),
+  'timestamp-repair/configure': () => renderRepairSettings(),
+};
+
+function hasFeatureTabs(page) {
+  return !!document.querySelector(`#page-${page} .feature-tabs`);
+}
+
+function showFeatureTab(page, tab = 'main') {
+  const host = document.getElementById(`page-${page}`);
+  if (!host) return;
+  if (!document.getElementById(`tab-${page}-${tab}`)) tab = 'main';
+  host.querySelectorAll('.feature-panel').forEach(panel => {
+    panel.classList.toggle('active', panel.dataset.tab === tab);
+  });
+  host.querySelectorAll('.feature-tab').forEach(button => {
+    const active = button.dataset.tab === tab;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  setRoute(page, tab === 'main' ? '' : tab);
+  if (tab === 'configure') {
+    // The Configure panels read from the same settings payload the Settings
+    // page uses, so it still has to be loaded before they render.
+    loadSettings().then(() => FEATURE_TAB_LOADERS[`${page}/${tab}`]?.());
+  }
 }
 
 function showSettingsSection(name, btn) {

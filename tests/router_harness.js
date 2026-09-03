@@ -38,6 +38,24 @@ nodes.set('dashboard-panel-overview', el('dashboard-panel-overview'));
 nodes.set('dashboard-panel-server-0', el('dashboard-panel-server-0'));
 nodes.set('toast', el('toast'));
 
+const tabbedPages = ['mediamender','library-refresh','mark-watched',
+                     'metadata-audit','timestamp-repair'];
+const tabPanels = new Map();
+for (const page of tabbedPages) {
+  for (const tab of ['main','configure']) {
+    const panel = el(`tab-${page}-${tab}`, {dataset: {tab}});
+    if (tab === 'main') panel.classList.add('active');
+    nodes.set(panel.id, panel);
+    tabPanels.set(`${page}/${tab}`, panel);
+  }
+  const host = nodes.get(`page-${page}`);
+  host.querySelectorAll = sel => {
+    if (sel === '.feature-panel') return ['main','configure'].map(t => tabPanels.get(`${page}/${t}`));
+    if (sel === '.feature-tab') return [];
+    return [];
+  };
+}
+
 const sectionButtons = sections.map(name => {
   const button = el(`ssnav-${name}`, {dataset: {section: name}});
   return button;
@@ -60,6 +78,8 @@ global.document = {
   querySelector: sel => {
     const m = /\.settings-nav-item\[data-section="([a-z-]+)"\]/.exec(sel);
     if (m) return sectionButtons.find(b => b.dataset.section === m[1]) || null;
+    const tabbed = /^#page-([a-z-]+) \.feature-tabs$/.exec(sel);
+    if (tabbed) return tabbedPages.includes(tabbed[1]) ? el('feature-tabs') : null;
     return null;
   },
   querySelectorAll: sel => {
@@ -82,7 +102,7 @@ global.clearTimeout = noop;
 const api = new Function(src + `
   return {showPage, showSettingsSection, applyRoute, currentRoute,
           firstAvailablePage, pageIsAvailable, goToSettings, PAGES,
-          selectDashboardView,
+          selectDashboardView, showFeatureTab, hasFeatureTabs,
           set permissions(list) {
             canAccess = p => list.includes('*') || list.includes(p);
           },
@@ -150,6 +170,34 @@ api.permissions = ['mark_watched'];
 check('permitted page available', api.pageIsAvailable('mark-watched'), true);
 check('unpermitted page unavailable', api.pageIsAvailable('settings'), false);
 check('first available respects permission', api.firstAvailablePage(), 'mark-watched');
+
+// A feature's Configure tab is addressable, and returns to the operate tab
+// when the page is reopened from the navigation.
+function activeTab(page) {
+  for (const tab of ['main','configure']) {
+    if (tabPanels.get(`${page}/${tab}`).classList.contains('active')) return tab;
+  }
+  return null;
+}
+api.permissions = ['*'];
+api.showPage('mark-watched', nodes.get('nav-mark-watched'));
+check('page opens on its main tab', activeTab('mark-watched'), 'main');
+api.showFeatureTab('mark-watched', 'configure');
+check('configure tab sets hash', window.location.hash, '#mark-watched/configure');
+check('configure tab active', activeTab('mark-watched'), 'configure');
+
+window.location.hash = '#timestamp-repair/configure';
+api.applyRoute();
+check('deep link opens configure tab', activeTab('timestamp-repair'), 'configure');
+check('deep link page is correct', activePage(), 'timestamp-repair');
+
+api.showPage('timestamp-repair', nodes.get('nav-timestamp-repair'));
+check('reopening returns to main tab', activeTab('timestamp-repair'), 'main');
+
+api.showFeatureTab('mark-watched', 'not-a-tab');
+check('unknown tab falls back to main', activeTab('mark-watched'), 'main');
+
+check('settings page has no feature tabs', api.hasFeatureTabs('settings'), false);
 
 const failed = results.filter(r => !r.ok);
 for (const r of results) {
