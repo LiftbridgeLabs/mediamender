@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import app
+from ui_source import ui_text
 from src import runner
 from src.config import AppConfig, FeatureConfig, LibraryConfig, PlexInstanceConfig
 from src.library_refresh import LibraryRefreshManager
@@ -138,7 +139,7 @@ class LibraryRefreshApiTests(unittest.TestCase):
         )
 
     def test_page_exposes_manual_and_scheduled_refresh_controls(self):
-        html = Path("templates/index.html").read_text(encoding="utf-8")
+        html = ui_text()
         self.assertIn('id="page-library-refresh"', html)
         self.assertIn("Refresh all scheduled", html)
         self.assertIn("refresh_guard_minutes", html)

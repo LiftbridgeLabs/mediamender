@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import app
+from ui_source import rendered_ui
 from src.config import (AppConfig, PlexInstanceConfig, RepairWorkerConfig,
                         TimestampRepairConfig, parse_config)
 from src.worker_auth import SignatureVerifier, signed_headers
@@ -353,7 +354,7 @@ class RepairWorkerControllerTests(unittest.TestCase):
             ))
 
     def test_settings_render_worker_setup_without_config_file_editing(self):
-        html = app.app.test_client().get("/").get_data(as_text=True)
+        html = rendered_ui(app.app.test_client())
         self.assertIn("Remote repair workers", html)
         self.assertIn("Copy worker Compose", html)
         self.assertIn("Discover databases", html)
@@ -369,7 +370,7 @@ class RepairWorkerControllerTests(unittest.TestCase):
         self.assertIn("Complete both path fields to unlock Compose", html)
 
     def test_repair_dashboard_uses_large_instance_metric_layout(self):
-        html = app.app.test_client().get("/").get_data(as_text=True)
+        html = rendered_ui(app.app.test_client())
         self.assertIn('class="repair-instance-grid"', html)
         self.assertIn("Affected files", html)
         self.assertIn("Files fixed", html)

@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 import yaml
 
 import app
+from ui_source import ui_text
 from src.auth import hash_password
 from src.config import AppConfig, AppUser, LibraryConfig, MarkWatchedConfig, PlexInstanceConfig
 from src.mark_watched import (
@@ -258,7 +259,7 @@ class MarkWatchedUiApiTests(unittest.TestCase):
         plex.mark_watched.assert_not_called()
 
     def test_page_has_navigation_poster_and_inheritance_controls(self):
-        html = Path("templates/index.html").read_text(encoding="utf-8")
+        html = ui_text()
         self.assertIn('id="nav-mark-watched"', html)
         self.assertIn('id="page-mark-watched"', html)
         self.assertIn("Explicit season override", html)
@@ -1028,7 +1029,7 @@ class MarkWatchedSettingsTests(unittest.TestCase):
         plex._get.assert_not_called()
 
     def test_settings_ui_keeps_active_section_and_uses_non_overlapping_refresh_grid(self):
-        html = Path("templates/index.html").read_text(encoding="utf-8")
+        html = ui_text()
         self.assertIn("document.querySelector('.settings-section.active')", html)
         self.assertIn('class="library-refresh-control-grid"', html)
         self.assertIn('id="tab-mark-watched-configure"', html)

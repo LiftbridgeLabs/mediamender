@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import app
+from ui_source import rendered_ui
 from src.config import (AppConfig, LibraryConfig, PathConfig,
                         PlexInstanceConfig, RepairWorkerConfig,
                         TimestampRepairConfig, parse_config)
@@ -363,7 +364,7 @@ class TimestampRepairConfigTests(unittest.TestCase):
 
 class TimestampRepairApiTests(unittest.TestCase):
     def test_repair_ui_explains_scope_evidence_and_phases(self):
-        html = app.app.test_client().get("/").get_data(as_text=True)
+        html = rendered_ui(app.app.test_client())
         self.assertIn("Repair movie folder", html)
         self.assertIn("Repair season folder", html)
         self.assertIn("Filesystem timestamp", html)

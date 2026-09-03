@@ -34,7 +34,9 @@ jobs:
       - name: Validate Python and rendered JavaScript
         run: |
           python -m compileall -q app.py worker.py src tests
-          python -c "import re, app; html=app.app.test_client().get('/').get_data(as_text=True); print('\n'.join(re.findall(r'<script>(.*?)</script>', html, re.S)))" | node -e "new Function(require('fs').readFileSync(0,'utf8'))"
+          python tests/render_js.py rendered.js
+          node -e "new Function(require('fs').readFileSync('rendered.js','utf8'))"
+          node tests/router_harness.js rendered.js
 
       - name: Validate configuration artifacts
         run: |

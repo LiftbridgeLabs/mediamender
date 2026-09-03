@@ -18,6 +18,7 @@ os.environ.setdefault("STATE_FILE", str(_TEST_ROOT / ".runtime-state.json"))
 os.environ.setdefault("PLEX_CLIENT_ID_FILE", str(_TEST_ROOT / ".runtime-client.json"))
 
 import app
+from ui_source import rendered_ui
 from src.checks import check_debrid_mount, check_file_threshold, check_mountpoint
 from src.config import (AppConfig, FeatureConfig, LibraryConfig, PathConfig,
                         PlexInstanceConfig, ProviderCheck, parse_config)
@@ -407,7 +408,7 @@ class PlexAuthTests(unittest.TestCase):
         self.assertNotIn(secret, response.get_data(as_text=True))
 
     def test_auth_ui_cancels_closed_popup_and_requests_real_popup(self):
-        html = app.app.test_client().get("/").get_data(as_text=True)
+        html = rendered_ui(app.app.test_client())
         self.assertIn("popup=yes,width=720,height=760", html)
         self.assertIn("const popupWasClosed = Boolean(popup && popup.closed)", html)
         self.assertIn("if (popupWasClosed)", html)
@@ -625,7 +626,7 @@ class MetadataAuditTests(unittest.TestCase):
         plex.empty_trash.assert_not_called()
 
     def test_match_audit_ui_is_explicitly_manual_and_read_only(self):
-        html = app.app.test_client().get("/").get_data(as_text=True)
+        html = rendered_ui(app.app.test_client())
         self.assertIn("Metadata Health", html)
         self.assertIn("Scan all servers", html)
         self.assertIn("Collapse all", html)
@@ -647,7 +648,7 @@ class MetadataAuditTests(unittest.TestCase):
         self.assertIn("affect Empty Trash safety decisions", html)
 
     def test_settings_are_split_and_features_have_visibility_hooks(self):
-        html = app.app.test_client().get("/").get_data(as_text=True)
+        html = rendered_ui(app.app.test_client())
         self.assertIn('id="ss-plex"', html)
         # Trash Removal is configured on its own page, not inside Settings.
         self.assertIn('id="tab-mediamender-configure"', html)
@@ -710,7 +711,7 @@ class MetadataAuditTests(unittest.TestCase):
         plex.get_unmatched_items.assert_called_once_with("1")
 
     def test_navigation_and_startup_progress_match_feature_layout(self):
-        html = app.app.test_client().get("/").get_data(as_text=True)
+        html = rendered_ui(app.app.test_client())
         labels = ["Dashboard", "Empty Trash", "Metadata Health",
                   "Timestamp Repair", "Settings"]
         positions = [html.index(f">\n      {label}\n") for label in labels]
