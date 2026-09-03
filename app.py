@@ -35,6 +35,7 @@ from src.logging_manager import LogManager
 from src import plex_auth
 from src import notifications
 from src.version import __version__
+from src.features import FEATURES, feature_label, permission_prefixes
 from src.timestamp_repair import TimestampRepairManager
 from src.library_refresh import LibraryRefreshManager
 from src.mark_watched import (
@@ -737,26 +738,27 @@ def protect_state_changes():
         return jsonify({"error": "Invalid or missing CSRF token"}), 403
 
 
-_PERMISSION_PREFIXES = (
-    ("/api/mark-watched", "mark_watched"),
-    ("/api/library-refresh", "library_refresh"),
-    ("/api/metadata-audit", "metadata_health"),
-    ("/api/timestamp-repair", "timestamp_repair"),
-    ("/api/run", "trash_removal"),
-    ("/api/dryrun", "trash_removal"),
-    ("/api/checks", "trash_removal"),
-    ("/api/scheduling", "trash_removal"),
-    ("/api/status", "dashboard"),
-    ("/api/history", "dashboard"),
-    ("/api/config", "settings"),
-    ("/api/providers", "settings"),
-    ("/api/notifications", "settings"),
-    ("/api/plex", "settings"),
-    ("/api/wizard", "settings"),
-    ("/api/logs", "settings"),
-    ("/api/users", "settings"),
-    ("/api/auth", "settings"),
-)
+_PERMISSION_PREFIXES = permission_prefixes()
+
+
+def requires_feature(*keys: str):
+    """Refuse a request when every feature owning the route is switched off.
+
+    Feature checks used to be written inline in individual handlers, which
+    meant a new route was unguarded by default. Applying this decorator keeps
+    the check next to the route it protects and impossible to forget silently.
+    """
+    def decorate(view):
+        @wraps(view)
+        def guarded(*args, **kwargs):
+            for key in keys:
+                if getattr(config.features, key, True):
+                    return view(*args, **kwargs)
+            labels = " or ".join(feature_label(key) for key in keys)
+            return jsonify({"error": f"{labels} is disabled"}), 409
+        guarded._required_features = keys
+        return guarded
+    return decorate
 
 
 @app.before_request
@@ -993,6 +995,10 @@ def api_sonarr_webhook():
     """Accept only completed imports and hand them to the durable worker."""
     if not _valid_sonarr_webhook_auth():
         return jsonify({"ok": False, "error": "Unauthorized Sonarr webhook"}), 401
+    # Checked after the secret so an unauthenticated caller cannot learn
+    # which features this install has switched on.
+    if not config.features.mark_watched:
+        return jsonify({"ok": False, "error": "Mark-it-Watched is disabled"}), 409
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"ok": False, "error": "A JSON webhook payload is required"}), 400
@@ -1021,6 +1027,7 @@ def api_sonarr_webhook():
 
 @app.route("/api/mark-watched/status", methods=["GET"])
 @require_auth
+@requires_feature("mark_watched")
 def api_mark_watched_status():
     return jsonify({
         **mark_watched.status(),
@@ -1031,6 +1038,7 @@ def api_mark_watched_status():
 
 @app.route("/api/mark-watched/retry", methods=["POST"])
 @require_auth
+@requires_feature("mark_watched")
 def api_mark_watched_retry():
     """Force every job that has not succeeded back onto the durable queue."""
     try:
@@ -1136,6 +1144,7 @@ def _missing_sonarr_api_key_message(sonarr_url: str) -> str:
 
 @app.route("/api/mark-watched/sonarr", methods=["GET"])
 @require_auth
+@requires_feature("mark_watched")
 def api_mark_watched_sonarr_status():
     try:
         return _mark_watched_sonarr_status_response()
@@ -1187,6 +1196,7 @@ def _mark_watched_sonarr_status_response():
 @app.route("/api/mark-watched/sonarr/connect", methods=["POST"])
 @require_auth
 @_serialized_config_write
+@requires_feature("mark_watched")
 def api_mark_watched_sonarr_connect():
     """Use a Sonarr API key once to test and provision the managed webhook."""
     data = request.get_json(silent=True) or {}
@@ -1246,6 +1256,7 @@ def api_mark_watched_sonarr_connect():
 
 @app.route("/api/mark-watched/sonarr", methods=["DELETE"])
 @require_auth
+@requires_feature("mark_watched")
 def api_mark_watched_sonarr_remove():
     """Remove the managed Sonarr webhook, then forget its local status."""
     data = request.get_json(silent=True) or {}
@@ -1300,6 +1311,7 @@ def api_mark_watched_sonarr_remove():
 
 @app.route("/api/mark-watched/libraries", methods=["GET"])
 @require_auth
+@requires_feature("mark_watched")
 def api_mark_watched_libraries():
     configured_visibility = config.mark_watched.visible_libraries
     visible = set(configured_visibility or [])
@@ -1343,6 +1355,7 @@ def api_mark_watched_libraries():
 
 @app.route("/api/mark-watched/options", methods=["GET"])
 @require_auth
+@requires_feature("mark_watched")
 def api_mark_watched_options():
     """List configured servers, then TV libraries for one selected server."""
     requested = str(request.args.get("instance", "")).strip()
@@ -1394,6 +1407,7 @@ def api_mark_watched_options():
 
 @app.route("/api/mark-watched/shows", methods=["GET"])
 @require_auth
+@requires_feature("mark_watched")
 def api_mark_watched_shows():
     """Return one bounded page from one explicitly selected Plex TV library."""
     instance_name = str(request.args.get("instance", "")).strip()
@@ -1461,6 +1475,7 @@ def api_mark_watched_shows():
 
 @app.route("/api/mark-watched/seasons", methods=["GET"])
 @require_auth
+@requires_feature("mark_watched")
 def api_mark_watched_seasons():
     instance_name = request.args.get("instance", "")
     library_name = request.args.get("library", "")
@@ -1487,6 +1502,7 @@ def api_mark_watched_seasons():
 
 @app.route("/api/mark-watched/rules", methods=["POST"])
 @require_auth
+@requires_feature("mark_watched")
 def api_mark_watched_rules():
     data = request.get_json(silent=True) or {}
     instance_name = str(data.get("instance", ""))
@@ -1517,6 +1533,7 @@ def api_mark_watched_rules():
 
 @app.route("/api/mark-watched/apply", methods=["POST"])
 @require_auth
+@requires_feature("mark_watched")
 def api_mark_watched_apply():
     """Queue an explicit one-time update to existing Plex watch history."""
     data = request.get_json(silent=True) or {}
@@ -1564,6 +1581,7 @@ def api_mark_watched_apply():
 
 @app.route("/api/mark-watched/all", methods=["POST"])
 @require_auth
+@requires_feature("mark_watched")
 def api_mark_watched_all():
     data = request.get_json(silent=True) or {}
     enabled = data.get("enabled")
@@ -1593,6 +1611,7 @@ def api_mark_watched_all():
 
 @app.route("/api/mark-watched/poster", methods=["GET"])
 @require_auth
+@requires_feature("mark_watched")
 def api_mark_watched_poster():
     instance_name = request.args.get("instance_name", "")
     artwork_key = request.args.get("key", "")
@@ -1618,6 +1637,7 @@ def api_history():
 
 @app.route("/api/library-refresh/status", methods=["GET"])
 @require_auth
+@requires_feature("library_refresh")
 def api_library_refresh_status():
     try:
         return _library_refresh_status_response()
@@ -1652,9 +1672,8 @@ def _library_refresh_status_response():
 
 @app.route("/api/library-refresh/run", methods=["POST"])
 @require_auth
+@requires_feature("library_refresh")
 def api_library_refresh_run():
-    if not config.features.library_refresh:
-        return jsonify({"error": "Library Refresh is disabled"}), 409
     data = request.get_json(silent=True) or {}
     requested = data.get("libraries")
     if not isinstance(requested, list):
@@ -1739,6 +1758,7 @@ def api_library_refresh_run():
 
 @app.route("/api/metadata-audit/status", methods=["GET"])
 @require_auth
+@requires_feature("metadata_health")
 def api_metadata_audit_status():
     with _runtime_lock:
         instances = [instance.name for instance in config.instances]
@@ -1763,9 +1783,8 @@ def api_metadata_audit_status():
 
 @app.route("/api/metadata-audit/run", methods=["POST"])
 @require_auth
+@requires_feature("metadata_health")
 def api_metadata_audit_run():
-    if not config.features.metadata_health:
-        return jsonify({"ok": False, "error": "Metadata Health is disabled"}), 409
     requested = str((request.get_json(silent=True) or {}).get("instance", ""))
     with _runtime_lock:
         instance = next((item for item in config.instances
@@ -2038,6 +2057,7 @@ def _repair_readiness(instance) -> tuple[bool, str]:
 
 @app.route("/api/timestamp-repair/status", methods=["GET"])
 @require_auth
+@requires_feature("timestamp_repair")
 def api_timestamp_repair_status():
     status = timestamp_repair.status()
     with _repair_batch_lock:
@@ -2139,9 +2159,8 @@ def api_timestamp_repair_status():
 
 @app.route("/api/timestamp-repair/audit", methods=["POST"])
 @require_auth
+@requires_feature("timestamp_repair")
 def api_timestamp_repair_audit():
-    if not config.features.timestamp_repair:
-        return jsonify({"error": "Timestamp Repair is disabled"}), 409
     data = request.get_json(silent=True) or {}
     instance, _, plex = _timestamp_runtime(str(data.get("instance", "")))
     if not instance:
@@ -2167,9 +2186,8 @@ def api_timestamp_repair_audit():
 
 @app.route("/api/timestamp-repair/run", methods=["POST"])
 @require_auth
+@requires_feature("timestamp_repair")
 def api_timestamp_repair_run():
-    if not config.features.timestamp_repair:
-        return jsonify({"error": "Timestamp Repair is disabled"}), 409
     data = request.get_json(silent=True) or {}
     instance_name = str(data.get("instance", ""))
     requested = data.get("folders")
@@ -2369,6 +2387,7 @@ def api_timestamp_repair_run():
 
 @app.route("/api/timestamp-repair/cancel", methods=["POST"])
 @require_auth
+@requires_feature("timestamp_repair")
 def api_timestamp_repair_cancel():
     with _repair_batch_lock:
         if _repair_batch.get("running"):
@@ -2388,6 +2407,7 @@ def api_timestamp_repair_cancel():
 
 @app.route("/api/timestamp-repair/recover", methods=["POST"])
 @require_auth
+@requires_feature("timestamp_repair")
 def api_timestamp_repair_recover():
     result = timestamp_repair.recover()
     if result.get("ok") and result.get("message") == "No recovery is required":
@@ -2417,6 +2437,7 @@ def api_timestamp_repair_recover():
 
 
 @app.route("/api/timestamp-repair/worker-scan/<run_id>", methods=["POST"])
+@requires_feature("timestamp_repair")
 def api_timestamp_repair_worker_scan(run_id: str):
     with _remote_repair_lock:
         context = _worker_scan_contexts.get(run_id)
@@ -2440,6 +2461,7 @@ def api_timestamp_repair_worker_scan(run_id: str):
 
 @app.route("/api/timestamp-repair/worker-test", methods=["POST"])
 @require_auth
+@requires_feature("timestamp_repair")
 def api_timestamp_repair_worker_test():
     data = request.get_json(silent=True) or {}
     worker = SimpleNamespace(
@@ -2457,6 +2479,7 @@ def api_timestamp_repair_worker_test():
 
 @app.route("/api/timestamp-repair/databases", methods=["POST"])
 @require_auth
+@requires_feature("timestamp_repair")
 def api_timestamp_repair_databases():
     data = request.get_json(silent=True) or {}
     worker_name = str(data.get("worker", "local")) or "local"
@@ -2525,6 +2548,7 @@ def api_log_download(filename: str):
 
 @app.route("/api/checks", methods=["GET"])
 @require_auth
+@requires_feature("trash_removal")
 def api_checks():
     results = {}
     with _runtime_lock:
@@ -2539,6 +2563,7 @@ def api_checks():
 
 @app.route("/api/scheduling", methods=["POST"])
 @require_auth
+@requires_feature("trash_removal")
 def api_scheduling():
     data    = request.get_json(silent=True) or {}
     enabled = bool(data.get("enabled", True))
@@ -2574,9 +2599,8 @@ def _trigger(instance_name: str, library_name: str, dry_run: bool = False):
 
 @app.route("/api/run/<instance_name>/<library_name>", methods=["POST"])
 @require_auth
+@requires_feature("trash_removal")
 def api_run_library(instance_name: str, library_name: str):
-    if not config.features.trash_removal:
-        return jsonify({"error": "Trash Removal is disabled"}), 409
     if _trigger(instance_name, library_name):
         return jsonify({"status": "triggered"})
     return jsonify({"error": "not found"}), 404
@@ -2584,9 +2608,8 @@ def api_run_library(instance_name: str, library_name: str):
 
 @app.route("/api/dryrun/<instance_name>/<library_name>", methods=["POST"])
 @require_auth
+@requires_feature("trash_removal")
 def api_dryrun_library(instance_name: str, library_name: str):
-    if not config.features.trash_removal:
-        return jsonify({"error": "Trash Removal is disabled"}), 409
     if _trigger(instance_name, library_name, dry_run=True):
         return jsonify({"status": "dry_run_triggered"})
     return jsonify({"error": "not found"}), 404
@@ -2594,9 +2617,8 @@ def api_dryrun_library(instance_name: str, library_name: str):
 
 @app.route("/api/run/all", methods=["POST"])
 @require_auth
+@requires_feature("trash_removal")
 def api_run_all():
-    if not config.features.trash_removal:
-        return jsonify({"error": "Trash Removal is disabled"}), 409
     def _run():
         with _runtime_lock:
             live_config = config
@@ -2615,9 +2637,8 @@ def api_run_all():
 
 @app.route("/api/dryrun/all", methods=["POST"])
 @require_auth
+@requires_feature("trash_removal")
 def api_dryrun_all():
-    if not config.features.trash_removal:
-        return jsonify({"error": "Trash Removal is disabled"}), 409
     def _run():
         with _runtime_lock:
             live_config = config
