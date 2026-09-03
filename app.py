@@ -918,6 +918,16 @@ def index():
         scheduler_timezone=str(scheduler.timezone),
         product_name=PRODUCT_NAME,
         current_identity=identity,
+        feature_registry=[
+            {
+                "key": feature.key,
+                "label": feature.label,
+                "page": feature.page,
+                "description": feature.description,
+                "enabled": getattr(config.features, feature.key, True),
+            }
+            for feature in FEATURES
+        ],
     )
 
 

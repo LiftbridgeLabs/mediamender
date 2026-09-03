@@ -897,6 +897,9 @@ dialog.overlay::backdrop{background:transparent;}
     <button class="nav-link" data-feature="timestamp_repair" onclick="showPage('timestamp-repair',this)" id="nav-timestamp-repair">
       Timestamp Repair
     </button>
+    <button class="nav-link" onclick="showPage('history',this)" id="nav-history">
+      Activity
+    </button>
     <button class="nav-link" onclick="showPage('settings',this)" id="nav-settings">
       Settings
     </button>
@@ -981,7 +984,7 @@ dialog.overlay::backdrop{background:transparent;}
     </div>
     <div class="dashboard-intro-actions">
       <div id="mediamender-global-controls" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"></div>
-      <button class="btn btn-secondary" onclick="showPage('history',null)">View activity</button>
+      <button class="btn btn-secondary" onclick="showPage('history',document.getElementById('nav-history'))">View activity</button>
       <button class="btn btn-primary" onclick="showPage('settings',document.getElementById('nav-settings'))">Manage libraries</button>
     </div>
   </div>
@@ -1034,7 +1037,7 @@ dialog.overlay::backdrop{background:transparent;}
     <section class="recent-overview">
       <div class="recent-overview-header">
         <div class="overview-label">Recent activity</div>
-        <button class="text-link" onclick="showPage('history',null)">See all →</button>
+        <button class="text-link" onclick="showPage('history',document.getElementById('nav-history'))">See all →</button>
       </div>
       <div class="activity-list" id="dashboard-activity">
         <div class="empty-msg" style="padding:28px 0;">No runs recorded yet</div>
@@ -1873,13 +1876,12 @@ window.fetch = function(input, init = {}) {
 const _instances = {{ instances | tojson }};
 const _configMissing = {{ 'true' if config_missing else 'false' }};
 const _identity = {{ current_identity | tojson }};
-let _activeFeatures = {
-  trash_removal: {{ 'true' if config.features.trash_removal else 'false' }},
-  metadata_health: {{ 'true' if config.features.metadata_health else 'false' }},
-  timestamp_repair: {{ 'true' if config.features.timestamp_repair else 'false' }},
-  library_refresh: {{ 'true' if config.features.library_refresh else 'false' }},
-  mark_watched: {{ 'true' if config.features.mark_watched else 'false' }},
-};
+// Rendered from src/features.py so the browser and the server cannot disagree
+// about which features exist, what they are called, or whether they are on.
+const FEATURE_REGISTRY = {{ feature_registry | tojson }};
+let _activeFeatures = Object.fromEntries(
+  FEATURE_REGISTRY.map(feature => [feature.key, feature.enabled])
+);
 let _history = [], _filter = 'all', _expanded = new Set();
 
 function applyFeatureVisibility(features = _activeFeatures) {
@@ -1907,32 +1909,105 @@ function applyPermissionVisibility() {
 }
 
 // ── Page routing ─────────────────────────────────────────────────────────────
-function showPage(name, btn) {
-  const permissions = {dashboard:'dashboard',mediamender:'trash_removal','library-refresh':'library_refresh','mark-watched':'mark_watched','metadata-audit':'metadata_health','timestamp-repair':'timestamp_repair',settings:'settings'};
-  if (permissions[name] && !canAccess(permissions[name])) return toast('You do not have access to that page', 'fail');
-  const target = document.getElementById(`page-${name}`);
-  if (!target || (target.dataset.feature && _activeFeatures[target.dataset.feature] === false)) {
-    name = 'dashboard';
-    btn = document.getElementById('nav-dashboard');
-  }
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.nav-link').forEach(b => b.classList.remove('active'));
-  document.getElementById(`page-${name}`).classList.add('active');
-  if (btn) btn.classList.add('active');
-  if (name === 'history') { fetchHistory(); }
-  if (name === 'timestamp-repair' && _activeFeatures.timestamp_repair) { loadRepairStatus(); }
-  if (name === 'metadata-audit' && _activeFeatures.metadata_health) { loadMetadataAuditStatus(); }
-  if (name === 'library-refresh' && _activeFeatures.library_refresh) { loadLibraryRefreshStatus(); }
-  if (name === 'mark-watched' && _activeFeatures.mark_watched) { loadMarkWatched(); }
-  if (name === 'dashboard') {
+// ── Routing ───────────────────────────────────────────────────────────────────
+// Pages are addressable as #page or #page/subview, so the back button retraces
+// steps, a reload returns where you were, and a screen can be linked to.
+const PAGE_LOADERS = {
+  'dashboard': () => {
     if (_activeFeatures.metadata_health) loadMetadataAuditStatus();
     if (_activeFeatures.timestamp_repair) loadRepairStatus();
     if (_activeFeatures.library_refresh) loadLibraryRefreshStatus();
     if (_activeFeatures.trash_removal) fetchStatus();
-  }
-  if (name === 'settings') { loadSettings(); }
-  if (name !== 'settings') { stopLogViewer(); }
+  },
+  'history': () => fetchHistory(),
+  'settings': () => loadSettings(),
+  'timestamp-repair': () => loadRepairStatus(),
+  'metadata-audit': () => loadMetadataAuditStatus(),
+  'library-refresh': () => loadLibraryRefreshStatus(),
+  'mark-watched': () => loadMarkWatched(),
+};
+
+const PAGES = (() => {
+  const byPage = Object.fromEntries(
+    FEATURE_REGISTRY.map(f => [f.page, {permission: f.key, feature: f.key}])
+  );
+  return {
+    ...byPage,
+    'dashboard': {permission: 'dashboard', feature: null},
+    'history':   {permission: 'dashboard', feature: null},
+    'settings':  {permission: 'settings',  feature: null},
+    // Trash Removal's page id predates the feature naming; keep the old id
+    // working as an alias so existing links do not break.
+    'mediamender': byPage['trash-removal'] || {permission: 'trash_removal', feature: 'trash_removal'},
+  };
+})();
+
+let _applyingRoute = false;
+
+function pageIsAvailable(name) {
+  const page = PAGES[name];
+  if (!page) return false;
+  if (page.permission && !canAccess(page.permission)) return false;
+  if (page.feature && _activeFeatures[page.feature] === false) return false;
+  return true;
 }
+
+function firstAvailablePage() {
+  return ['dashboard', ...FEATURE_REGISTRY.map(f => f.page), 'settings']
+    .find(pageIsAvailable) || 'dashboard';
+}
+
+function currentRoute() {
+  const [page, sub] = decodeURIComponent(window.location.hash.slice(1)).split('/');
+  return {page: page || '', sub: sub || ''};
+}
+
+function setRoute(page, sub = '', replace = false) {
+  if (_applyingRoute) return;
+  const hash = `#${sub ? `${page}/${sub}` : page}`;
+  if (window.location.hash === hash) return;
+  if (replace) history.replaceState(null, '', hash);
+  else history.pushState(null, '', hash);
+}
+
+function applyRoute() {
+  const {page, sub} = currentRoute();
+  _applyingRoute = true;
+  try {
+    // A bare dashboard view name is how this app used to write its hash.
+    if (page && !PAGES[page] && document.getElementById(`dashboard-panel-${page}`)) {
+      showPage('dashboard', document.getElementById('nav-dashboard'));
+      selectDashboardView(page);
+      return;
+    }
+    const name = pageIsAvailable(page) ? page : firstAvailablePage();
+    showPage(name, document.getElementById(`nav-${name}`));
+    if (!sub) return;
+    if (name === 'settings') showSettingsSection(sub, settingsNavButton(sub));
+    else if (name === 'dashboard') selectDashboardView(sub);
+  } finally {
+    _applyingRoute = false;
+  }
+}
+
+function showPage(name, btn) {
+  const page = PAGES[name];
+  if (page && page.permission && !canAccess(page.permission)) {
+    return toast('You do not have access to that page', 'fail');
+  }
+  if (!document.getElementById(`page-${name}`) || !pageIsAvailable(name)) {
+    name = firstAvailablePage();
+    btn = document.getElementById(`nav-${name}`);
+  }
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-link').forEach(b => b.classList.remove('active'));
+  document.getElementById(`page-${name}`).classList.add('active');
+  (btn || document.getElementById(`nav-${name}`))?.classList.add('active');
+  setRoute(name, '', true);
+  if (name !== 'settings') stopLogViewer();
+  PAGE_LOADERS[name]?.();
+}
+
 
 // Mark-it-Watched
 let _markWatchedData = {
@@ -2760,10 +2835,12 @@ function goToSettings(section) {
 }
 
 function showSettingsSection(name, btn) {
+  if (!document.getElementById(`ss-${name}`)) name = 'plex';
   document.querySelectorAll('.settings-section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.settings-nav-item').forEach(b => b.classList.remove('active'));
   document.getElementById(`ss-${name}`).classList.add('active');
-  if (btn) btn.classList.add('active');
+  (btn || settingsNavButton(name))?.classList.add('active');
+  setRoute('settings', name);
   if (name === 'providers') loadProviderStatus();
   if (name === 'security')  { loadApiToken(); }
   if (name === 'timestamp-repair') renderRepairSettings();
@@ -2841,9 +2918,7 @@ function selectDashboardView(requestedView, updateLocation = true) {
   });
   const select = document.getElementById('dashboard-server-select');
   if (select) select.value = view;
-  if (updateLocation && window.location.hash !== `#${view}`) {
-    history.replaceState(null, '', `#${view}`);
-  }
+  if (updateLocation) setRoute('dashboard', view);
 }
 
 // ── Scheduling ────────────────────────────────────────────────────────────────
@@ -5235,15 +5310,13 @@ if (!_configMissing) {
   applyFeatureVisibility();
   applyPermissionVisibility();
   if (!canAccess('dashboard')) {
-    const first = [
-      ['mark_watched','mark-watched'], ['trash_removal','mediamender'],
-      ['library_refresh','library-refresh'], ['metadata_health','metadata-audit'],
-      ['timestamp_repair','timestamp-repair'], ['settings','settings'],
-    ].find(([permission]) => canAccess(permission));
-    if (first) showPage(first[1], document.getElementById(`nav-${first[1]}`));
+    const first = firstAvailablePage();
+    showPage(first, document.getElementById(`nav-${first}`));
   }
   applyScheduleLabels();
-  selectDashboardView(window.location.hash.slice(1) || 'overview', false);
+  selectDashboardView('overview', false);
+  window.addEventListener('hashchange', applyRoute);
+  if (window.location.hash.length > 1) applyRoute();
   if (_activeFeatures.trash_removal && canAccess('trash_removal')) {
     setInterval(fetchStatus, 15000);
     setInterval(fetchHistory, 30000);
