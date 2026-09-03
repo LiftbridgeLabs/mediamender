@@ -985,28 +985,36 @@ class MarkWatchedSettingsTests(unittest.TestCase):
         self.assertEqual(saved["mark_watched"]["visible_libraries"], [])
         self.assertEqual(saved["plex_instances"][0]["token"], "keep-plex")
 
-    def test_non_plex_save_cannot_erase_instances_after_ui_load_failure(self):
-        self.path.write_text(yaml.safe_dump({"plex_instances": []}), encoding="utf-8")
+    def test_mark_watched_save_cannot_erase_instances_after_ui_load_failure(self):
+        # The section save owns only the mark_watched block, so an instance
+        # list the browser failed to render is simply not its to write.
+        self.path.write_text(yaml.safe_dump({
+            "plex_instances": [{
+                "name": "Live Plex", "url": "http://plex", "token": "stored-token",
+                "libraries": [{"name": "TV", "type": "physical", "paths": []}],
+            }],
+            "mark_watched": {"webhook_secret": "keep-me"},
+        }), encoding="utf-8")
         runtime = AppConfig(instances=[PlexInstanceConfig(
             "Live Plex", "http://plex", "runtime-token",
             [LibraryConfig("TV", "physical", [], section_id="7")],
         )])
-        payload = {
-            "store_tokens": True, "save_scope": "mark-watched",
-            "mark_watched": {"visible_libraries": []}, "instances": [],
-        }
         with patch.object(app, "CONFIG_PATH", str(self.path)), \
              patch.object(app, "config", runtime), \
              patch.object(app, "_save_and_apply") as save:
-            response = self._client().post(
-                "/api/wizard/save", json=payload,
+            response = self._client().patch(
+                "/api/settings/mark-watched",
+                json={"mark_watched": {"visible_libraries": []}, "plex_instances": []},
                 headers={"X-CSRF-Token": "known-token"},
             )
         self.assertEqual(response.status_code, 200)
         saved = save.call_args.args[0]
         self.assertEqual(len(saved["plex_instances"]), 1)
         self.assertEqual(saved["plex_instances"][0]["name"], "Live Plex")
-        self.assertEqual(saved["plex_instances"][0]["token"], "runtime-token")
+        self.assertEqual(saved["plex_instances"][0]["token"], "stored-token")
+        # The blank secret field must not wipe the stored secret.
+        self.assertEqual(saved["mark_watched"]["webhook_secret"], "keep-me")
+        self.assertEqual(saved["mark_watched"]["visible_libraries"], [])
 
     def test_settings_navigation_does_not_call_plex(self):
         config = AppConfig(instances=[PlexInstanceConfig(

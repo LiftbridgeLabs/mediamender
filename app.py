@@ -36,6 +36,7 @@ from src import plex_auth
 from src import notifications
 from src.version import __version__
 from src.features import FEATURES, feature_label, permission_prefixes
+from src.settings_sections import apply_section, known_section
 from src.timestamp_repair import TimestampRepairManager
 from src.library_refresh import LibraryRefreshManager
 from src.mark_watched import (
@@ -2938,6 +2939,121 @@ def _build_instance_cfg(inst: dict, store_tokens: bool, env_vars_needed: list) -
     return instance_cfg
 
 
+def _repair_lock_active() -> bool:
+    """Configuration must hold still while a repair transaction is open."""
+    repair_status = timestamp_repair.status()
+    with _remote_repair_lock:
+        remote_running = bool(_remote_repair.get("running"))
+    return bool(
+        repair_status.get("running")
+        or repair_status.get("active_transaction")
+        or remote_running
+    )
+
+
+@app.route("/api/settings/<section>", methods=["PATCH"])
+@require_auth
+@_serialized_config_write
+def api_settings_section_save(section: str):
+    """Write only the fields the named Settings section owns.
+
+    The wizard still posts a whole configuration during first-run setup. Every
+    later edit comes through here, so a section can never overwrite a field it
+    does not control - including one the browser failed to render.
+    """
+    section = str(section).strip().lower()
+    if not known_section(section):
+        return jsonify({"error": f"Unknown settings section: {section}"}), 404
+    if _repair_lock_active():
+        return jsonify({
+            "error": "Configuration cannot change during timestamp repair or recovery",
+        }), 409
+    data = request.get_json(silent=True) or {}
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as handle:
+            existing = yaml.safe_load(handle) or {}
+    except OSError:
+        existing = {}
+    if not isinstance(existing, dict):
+        existing = {}
+
+    merged = apply_section(existing, section, data)
+    if section == "security":
+        merged["auth"] = _merged_auth_block(existing, data)
+    if section == "mark-watched":
+        merged["mark_watched"] = _merged_mark_watched_block(existing, data)
+
+    # Plex tokens are write-once from the browser: a blank field means
+    # "unchanged", never "clear it".
+    known_tokens = {
+        str(item.get("name", "")): str(item.get("token", ""))
+        for item in existing.get("plex_instances", []) if isinstance(item, dict)
+    }
+    known_tokens.update({
+        instance.name: instance.token for instance in config.instances
+        if not known_tokens.get(instance.name)
+    })
+    runtime_tokens = {}
+    for item in merged.get("plex_instances", []):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", ""))
+        token = str(item.get("token", "")) or known_tokens.get(name, "")
+        runtime_tokens[name] = token
+        item["token"] = token
+
+    try:
+        _save_and_apply(
+            merged, runtime_tokens=runtime_tokens,
+            # Plex servers can be saved before Trash Removal paths exist;
+            # pathless libraries stay fail-closed in the runner until set.
+            require_paths=None if section == "trash-removal" else False,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        logger.exception("Could not save the %s settings section", section)
+        return jsonify({"error": str(exc)}), 500
+    return jsonify({
+        "section": section,
+        "message": f"{section.replace('-', ' ').title()} settings saved and applied.",
+    })
+
+
+def _merged_auth_block(existing: dict, data: dict) -> dict:
+    """Keep the stored password and API token unless new ones are supplied."""
+    current = existing.get("auth", {})
+    current = dict(current) if isinstance(current, dict) else {}
+    username = str(data.get("auth_username", "")).strip()
+    password = str(data.get("auth_password", "")).strip()
+    if username and password:
+        merged = {"username": username, "password_hash": hash_password(password)}
+        if current.get("api_token_hash"):
+            merged["api_token_hash"] = current["api_token_hash"]
+        if current.get("users"):
+            merged["users"] = current["users"]
+        return merged
+    return current
+
+
+def _merged_mark_watched_block(existing: dict, data: dict) -> dict:
+    """Never let a blank webhook secret field erase the stored secret."""
+    current = existing.get("mark_watched", {})
+    current = dict(current) if isinstance(current, dict) else {}
+    submitted = data.get("mark_watched", {})
+    submitted = dict(submitted) if isinstance(submitted, dict) else {}
+    merged = {**current, **submitted}
+    merged.pop("webhook_secret_configured", None)
+    if not str(submitted.get("webhook_secret", "")):
+        if current.get("webhook_secret"):
+            merged["webhook_secret"] = current["webhook_secret"]
+        else:
+            merged.pop("webhook_secret", None)
+    return merged
+
+
+# First-run setup only. Every later edit goes through /api/settings/<section>,
+# which writes just that section's fields.
 @app.route("/api/wizard/save", methods=["POST"])
 @require_auth
 @_serialized_config_write
@@ -2948,16 +3064,12 @@ def api_wizard_save():
     If store_tokens=True, writes tokens directly to config (less secure but simpler).
     If store_tokens=False, leaves tokens blank and returns the env var names needed.
     """
-    repair_status = timestamp_repair.status()
-    with _remote_repair_lock:
-        remote_running = bool(_remote_repair.get("running"))
-    if repair_status.get("running") or repair_status.get("active_transaction") or remote_running:
+    if _repair_lock_active():
         return jsonify({
             "ok": False,
             "error": "Configuration cannot change during timestamp repair or recovery",
         }), 409
     data         = request.get_json(silent=True) or {}
-    save_scope   = str(data.get("save_scope", "")).strip().lower()
     store_tokens = bool(data.get("store_tokens", False))
 
     # Load existing config to preserve auth, providers and other blocks
@@ -3080,19 +3192,6 @@ def api_wizard_save():
     submitted_source = data.get("instances", [])
     if not isinstance(submitted_source, list):
         submitted_source = []
-    if save_scope != "plex" and not submitted_source and config.instances:
-        file_instances = existing.get("plex_instances", [])
-        submitted_source = (
-            file_instances if isinstance(file_instances, list) and file_instances
-            else [
-                _runtime_instance_settings_dict(instance)
-                for instance in config.instances
-            ]
-        )
-        logger.warning(
-            "Refused empty Plex instance list during scoped %s save; preserved %s instances",
-            save_scope or "settings", len(submitted_source),
-        )
     for submitted in submitted_source:
         item = dict(submitted)
         if not str(item.get("token", "")):
@@ -3109,11 +3208,7 @@ def api_wizard_save():
         }
         # Plex settings can be staged before Trash Removal paths are known.
         # Pathless libraries remain fail-closed in the runner until configured.
-        _save_and_apply(
-            cfg,
-            runtime_tokens=runtime_tokens,
-            require_paths=False if save_scope == "plex" else None,
-        )
+        _save_and_apply(cfg, runtime_tokens=runtime_tokens)
         return jsonify({
             "ok":              True,
             "store_tokens":    store_tokens,

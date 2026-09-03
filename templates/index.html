@@ -1236,40 +1236,40 @@ dialog.overlay::backdrop{background:transparent;}
   <div class="settings-layout">
     <div>
       <div class="settings-nav">
-        <button class="settings-nav-item active" onclick="showSettingsSection('plex',this)">
+        <button class="settings-nav-item active" data-section="plex" onclick="showSettingsSection('plex',this)">
           📺 Plex Instances
         </button>
-        <button class="settings-nav-item" data-feature="trash_removal" onclick="showSettingsSection('trash-removal',this)">
+        <button class="settings-nav-item" data-feature="trash_removal" data-section="trash-removal" onclick="showSettingsSection('trash-removal',this)">
           🗑️ Trash Removal
         </button>
-        <button class="settings-nav-item" data-feature="library_refresh" onclick="showSettingsSection('library-refresh',this)">
+        <button class="settings-nav-item" data-feature="library_refresh" data-section="library-refresh" onclick="showSettingsSection('library-refresh',this)">
           &#8635;&#65039; Library Refresh
         </button>
-        <button class="settings-nav-item" data-feature="mark_watched" onclick="showSettingsSection('mark-watched',this)">
+        <button class="settings-nav-item" data-feature="mark_watched" data-section="mark-watched" onclick="showSettingsSection('mark-watched',this)">
           &#10003; Mark-it-Watched
         </button>
-        <button class="settings-nav-item" onclick="showSettingsSection('features',this)">
+        <button class="settings-nav-item" data-section="features" onclick="showSettingsSection('features',this)">
           🎛️ Features
         </button>
-        <button class="settings-nav-item" data-feature="metadata_health" onclick="showSettingsSection('metadata-health',this)">
+        <button class="settings-nav-item" data-feature="metadata_health" data-section="metadata-health" onclick="showSettingsSection('metadata-health',this)">
           🔎 Metadata Health
         </button>
-        <button class="settings-nav-item" data-feature="timestamp_repair" onclick="showSettingsSection('timestamp-repair',this)">
+        <button class="settings-nav-item" data-feature="timestamp_repair" data-section="timestamp-repair" onclick="showSettingsSection('timestamp-repair',this)">
           🛠️ Timestamp Repair
         </button>
-        <button class="settings-nav-item" onclick="showSettingsSection('providers',this)">
+        <button class="settings-nav-item" data-section="providers" onclick="showSettingsSection('providers',this)">
           ☁️ Providers
         </button>
-        <button class="settings-nav-item" onclick="showSettingsSection('notifications',this)">
+        <button class="settings-nav-item" data-section="notifications" onclick="showSettingsSection('notifications',this)">
           🔔 Notifications
         </button>
-        <button class="settings-nav-item" onclick="showSettingsSection('general',this)">
+        <button class="settings-nav-item" data-section="general" onclick="showSettingsSection('general',this)">
           ⚙️ General
         </button>
-        <button class="settings-nav-item" onclick="showSettingsSection('security',this)">
+        <button class="settings-nav-item" data-section="security" onclick="showSettingsSection('security',this)">
           🔒 Security
         </button>
-        <button class="settings-nav-item" onclick="showSettingsSection('about',this)">
+        <button class="settings-nav-item" data-section="about" onclick="showSettingsSection('about',this)">
           ℹ️ About
         </button>
       </div>
@@ -1288,8 +1288,8 @@ dialog.overlay::backdrop{background:transparent;}
         <div id="settings-instances-list"><div class="empty-msg" style="padding:20px 0;">Loading&hellip;</div></div>
         <button class="btn btn-secondary" onclick="settingsAddInstance()">+ Add Plex Instance</button>
         <hr class="divider"/>
-        <button class="btn btn-primary" onclick="settingsSave('plex')" id="settings-save-btn">💾 Save Plex Settings</button>
-        <span id="settings-save-result" style="margin-left:12px;font-size:12px;"></span>
+        <button class="btn btn-primary" onclick="settingsSave('plex')" id="settings-save-btn-plex">💾 Save Plex Settings</button>
+        <span id="settings-save-result-plex" style="margin-left:12px;font-size:12px;"></span>
       </div>
 
       <!-- Trash Removal -->
@@ -1339,8 +1339,27 @@ dialog.overlay::backdrop{background:transparent;}
         </div>
         <div id="trash-settings-libraries"></div>
         <hr class="divider"/>
-        <button class="btn btn-primary" onclick="settingsSave('trash-removal')" id="settings-save-btn-trash">💾 Save Trash Removal Settings</button>
-        <span id="settings-save-result-trash" style="margin-left:12px;font-size:12px;"></span>
+        <div class="card" style="margin-bottom:16px;">
+          <div class="card-header"><span class="card-title">Deletion safeguards</span></div>
+          <div class="card-body">
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label" for="s-max-trash-items">Maximum items per run</label>
+                <input class="form-input" type="number" id="s-max-trash-items" min="0" step="1" />
+                <div class="form-hint">A run is blocked above this count. Set 0 to disable.</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="s-max-trash-percent">Maximum library percentage</label>
+                <input class="form-input" type="number" id="s-max-trash-percent" min="0" max="100" step="0.1" />
+                <div class="form-hint">Blocks unusually large trash sets relative to active items. Set 0 to disable.</div>
+              </div>
+            </div>
+            <div class="form-hint">Defaults: 1,000 items and 25%. Both enabled limits must pass.</div>
+          </div>
+        </div>
+
+        <button class="btn btn-primary" onclick="settingsSave('trash-removal')" id="settings-save-btn-trash-removal">💾 Save Trash Removal Settings</button>
+        <span id="settings-save-result-trash-removal" style="margin-left:12px;font-size:12px;"></span>
       </div>
 
       <!-- Features -->
@@ -1394,7 +1413,7 @@ dialog.overlay::backdrop{background:transparent;}
         <div class="settings-section-desc">Exclude libraries that intentionally use local-only metadata, such as YouTube libraries. Excluded libraries are never requested during a metadata scan.</div>
         <div class="repair-warning" style="border-color:var(--accent-line);background:var(--accent-faint);color:var(--text2);">Movie and TV libraries are included by default. Check <strong>Ignore</strong> only when local metadata is expected and a Plex match would not be useful.</div>
         <div id="metadata-health-settings"></div>
-        <div style="margin-top:18px;"><button class="btn btn-primary" onclick="settingsSave('metadata-health')" id="settings-save-btn-metadata">Save Metadata Health Settings</button><span id="settings-save-result-metadata" style="margin-left:12px;font-size:14px;"></span></div>
+        <div style="margin-top:18px;"><button class="btn btn-primary" onclick="settingsSave('metadata-health')" id="settings-save-btn-metadata-health">Save Metadata Health Settings</button><span id="settings-save-result-metadata-health" style="margin-left:12px;font-size:14px;"></span></div>
       </div>
 
       <!-- Timestamp Repair -->
@@ -1416,8 +1435,8 @@ dialog.overlay::backdrop{background:transparent;}
           </div>
         </div>
         <div id="repair-instances-settings"></div>
-        <button class="btn btn-primary" onclick="settingsSave('timestamp-repair')" id="settings-save-btn-repair">💾 Save Timestamp Repair Setup</button>
-        <span id="settings-save-result-repair" style="margin-left:12px;font-size:13px;"></span>
+        <button class="btn btn-primary" onclick="settingsSave('timestamp-repair')" id="settings-save-btn-timestamp-repair">💾 Save Timestamp Repair Setup</button>
+        <span id="settings-save-result-timestamp-repair" style="margin-left:12px;font-size:13px;"></span>
       </div>
 
       <!-- Providers -->
@@ -1461,25 +1480,6 @@ dialog.overlay::backdrop{background:transparent;}
               </div>
             </div>
             <div class="form-hint" style="margin-top:10px;">Leave blank to clear a saved key. Env vars always take priority over saved keys.</div>
-          </div>
-        </div>
-
-        <div class="card" style="margin-bottom:16px;">
-          <div class="card-header"><span class="card-title">Deletion safeguards</span></div>
-          <div class="card-body">
-            <div class="form-row">
-              <div class="form-group">
-                <label class="form-label" for="s-max-trash-items">Maximum items per run</label>
-                <input class="form-input" type="number" id="s-max-trash-items" min="0" step="1" />
-                <div class="form-hint">A run is blocked above this count. Set 0 to disable.</div>
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="s-max-trash-percent">Maximum library percentage</label>
-                <input class="form-input" type="number" id="s-max-trash-percent" min="0" max="100" step="0.1" />
-                <div class="form-hint">Blocks unusually large trash sets relative to active items. Set 0 to disable.</div>
-              </div>
-            </div>
-            <div class="form-hint">Defaults: 1,000 items and 25%. Both enabled limits must pass.</div>
           </div>
         </div>
 
@@ -1565,10 +1565,8 @@ dialog.overlay::backdrop{background:transparent;}
           </div>
         </div>
         <hr class="divider"/>
-        <button class="btn btn-primary" onclick="settingsSave()" id="settings-save-btn2">
-          💾 Save Configuration
-        </button>
-        <span id="settings-save-result2" style="margin-left:12px;font-size:12px;"></span>
+        <button class="btn btn-primary" onclick="settingsSave('notifications')" id="settings-save-btn-notifications">💾 Save Notification Settings</button>
+        <span id="settings-save-result-notifications" style="margin-left:12px;font-size:12px;"></span>
       </div>
 
       <!-- Security -->
@@ -1737,7 +1735,7 @@ dialog.overlay::backdrop{background:transparent;}
               Plex actions, configuration changes, and integration errors. Credentials and API
               tokens are not intentionally logged.
             </div>
-            <button class="btn btn-primary" onclick="settingsSave()">Save General Settings</button>
+            <button class="btn btn-primary" onclick="settingsSave('general')" id="settings-save-btn-general">Save General Settings</button>
             <span id="settings-save-result-general" style="margin-left:12px;font-size:12px;"></span>
 
             <hr class="divider"/>
@@ -2328,8 +2326,7 @@ async function runEnabledLibraryRefreshes() {
 }
 
 function openLibraryRefreshSettings() {
-  showPage('settings',document.getElementById('nav-settings'));
-  setTimeout(()=>{ const button=[...document.querySelectorAll('.settings-nav-item')].find(item=>(item.getAttribute('onclick')||'').includes("'library-refresh'")); showSettingsSection('library-refresh',button); },100);
+  goToSettings('library-refresh');
 }
 
 // Plex unmatched metadata audit
@@ -2437,9 +2434,7 @@ function expandMetadataProblems(instance, result) {
 }
 
 function openMetadataHealthSettings() {
-  showPage('settings', document.getElementById('nav-settings'));
-  const button = [...document.querySelectorAll('.settings-nav-item')].find(item => item.textContent.includes('Metadata Health'));
-  showSettingsSection('metadata-health', button);
+  goToSettings('metadata-health');
 }
 
 function updateMetadataRollup(status) {
@@ -2650,7 +2645,7 @@ function renderRepairOverview(status) {
 
   document.querySelectorAll('[data-repair-instance]').forEach(button => button.addEventListener('click', () => openRepairLibrary(button.dataset.repairInstance,button.dataset.repairSection,button.dataset.repairLibrary)));
   document.querySelectorAll('[data-audit-instance]').forEach(button => button.addEventListener('click', () => auditRepair(button.dataset.auditInstance)));
-  document.querySelectorAll('[data-configure-repair]').forEach(button => button.addEventListener('click', () => { showPage('settings',document.getElementById('nav-settings')); const settingsButton=[...document.querySelectorAll('.settings-nav-item')].find(item=>item.textContent.includes('Timestamp Repair')); showSettingsSection('timestamp-repair',settingsButton); }));
+  document.querySelectorAll('[data-configure-repair]').forEach(button => button.addEventListener('click', () => { goToSettings('timestamp-repair'); }));
   document.querySelectorAll('[data-repair-toggle]').forEach(button => button.addEventListener('click', () => toggleRepairDetails(button.dataset.repairToggle)));
 }
 
@@ -2751,6 +2746,18 @@ async function runSelectedRepairFolders() {
 
 async function cancelRepair() { await fetch('/api/timestamp-repair/cancel',{method:'POST'}); toast('Safe cancellation requested','warn'); }
 async function recoverRepair() { const response=await fetch('/api/timestamp-repair/recover',{method:'POST'}); const data=await response.json(); toast(data.message||data.error,response.ok?'pass':'fail'); loadRepairStatus(); }
+
+function settingsNavButton(section) {
+  return document.querySelector(`.settings-nav-item[data-section="${section}"]`);
+}
+
+// Open Settings at a named section. Callers used to do this three different
+// ways, two of them matching on the button's visible label - which broke
+// silently whenever a section was renamed.
+function goToSettings(section) {
+  showPage('settings', document.getElementById('nav-settings'));
+  showSettingsSection(section, settingsNavButton(section));
+}
 
 function showSettingsSection(name, btn) {
   document.querySelectorAll('.settings-section').forEach(s => s.classList.remove('active'));
@@ -4274,62 +4281,95 @@ async function testNotificationDestination(index) {
   }
 }
 
-async function settingsSave(stayOnSection = '') {
-  if (!stayOnSection) {
-    stayOnSection = document.querySelector('.settings-section.active')?.id.replace('ss-','') || 'plex';
+// Each Settings section sends only the fields it owns. The server refuses to
+// write anything outside that set, so a control that failed to render can no
+// longer blank a value the user never touched.
+const SETTINGS_SECTION_PAYLOAD = {
+  'plex': () => ({ plex_instances: _settingsData.instances }),
+  'trash-removal': () => ({
+    plex_instances: _settingsData.instances,
+    max_trash_items: parseInt(document.getElementById('s-max-trash-items')?.value ?? '1000'),
+    max_trash_percent: parseFloat(document.getElementById('s-max-trash-percent')?.value ?? '25'),
+    schedule: { default_cron: _settingsData.default_cron },
+  }),
+  'library-refresh': () => ({ plex_instances: _settingsData.instances }),
+  'metadata-health': () => ({ plex_instances: _settingsData.instances }),
+  'timestamp-repair': () => ({
+    plex_instances: _settingsData.instances,
+    timestamp_repair_workers: _settingsData.repair_workers,
+  }),
+  'mark-watched': () => ({
+    mark_watched: {
+      ..._settingsData.mark_watched,
+      webhook_secret: document.getElementById('mark-watched-webhook-secret')?.value || '',
+    },
+  }),
+  'features': () => ({ features: _settingsData.features }),
+  'notifications': () => {
+    _settingsData.notification_destinations.forEach((_, index) => syncNotificationDestination(index));
+    return {
+      discord_webhook: document.getElementById('s-discord').value.trim(),
+      notify: {
+        on_emptied: document.getElementById('s-notify-emptied').checked,
+        on_health_fail: document.getElementById('s-notify-health-fail').checked,
+        on_error: document.getElementById('s-notify-error').checked,
+        on_clean: document.getElementById('s-notify-clean').checked,
+        on_skip: document.getElementById('s-notify-skip').checked,
+      },
+      notifications: { destinations: _settingsData.notification_destinations },
+    };
+  },
+  'general': () => ({
+    log_level: document.getElementById('s-log-level')?.value || 'INFO',
+    logging: {
+      max_file_size_mb: parseInt(document.getElementById('s-log-file-size')?.value ?? '5'),
+      max_total_size_mb: parseInt(document.getElementById('s-log-total-size')?.value ?? '50'),
+      retention_days: parseInt(document.getElementById('s-log-retention-days')?.value ?? '14'),
+    },
+  }),
+};
+
+function settingsSaveControls(section) {
+  return {
+    button: document.getElementById(`settings-save-btn-${section}`),
+    result: document.getElementById(`settings-save-result-${section}`),
+  };
+}
+
+async function settingsSave(section = '') {
+  if (!section) {
+    section = document.querySelector('.settings-section.active')?.id.replace('ss-','') || 'plex';
   }
-  const webhookSecret = document.getElementById('mark-watched-webhook-secret')?.value || '';
-  _settingsData.mark_watched.webhook_secret = webhookSecret;
-  // Collect notification settings
-  _settingsData.discord_webhook   = document.getElementById('s-discord').value.trim();
-  _settingsData.log_level         = document.getElementById('s-log-level')?.value || 'INFO';
-  _settingsData.log_max_file_size_mb = parseInt(document.getElementById('s-log-file-size')?.value ?? '5');
-  _settingsData.log_max_total_size_mb = parseInt(document.getElementById('s-log-total-size')?.value ?? '50');
-  _settingsData.log_retention_days = parseInt(document.getElementById('s-log-retention-days')?.value ?? '14');
-  _settingsData.max_trash_items   = parseInt(document.getElementById('s-max-trash-items')?.value ?? '1000');
-  _settingsData.max_trash_percent = parseFloat(document.getElementById('s-max-trash-percent')?.value ?? '25');
-  _settingsData.notify_emptied    = document.getElementById('s-notify-emptied').checked;
-  _settingsData.notify_health_fail= document.getElementById('s-notify-health-fail').checked;
-  _settingsData.notify_error      = document.getElementById('s-notify-error').checked;
-  _settingsData.notify_clean      = document.getElementById('s-notify-clean').checked;
-  _settingsData.notify_skip       = document.getElementById('s-notify-skip').checked;
-  _settingsData.notification_destinations.forEach((_, index) => syncNotificationDestination(index));
+  const build = SETTINGS_SECTION_PAYLOAD[section];
+  if (!build) return toast(`Nothing to save in ${section}`, 'fail');
 
-  ['settings-save-btn','settings-save-btn2','settings-save-btn-repair','settings-save-btn-metadata','settings-save-btn-trash','settings-save-btn-features','settings-save-btn-library-refresh','settings-save-btn-mark-watched'].forEach(id => {
-    const b = document.getElementById(id);
-    if (b) { b.dataset.saveLabel ||= b.innerHTML; b.disabled = true; b.innerHTML = `<span class="spin"></span> saving…`; }
-  });
-
+  const { button, result } = settingsSaveControls(section);
+  if (button) {
+    button.dataset.saveLabel ||= button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = `<span class="spin"></span> saving…`;
+  }
   try {
-    const r = await fetch('/api/wizard/save', {
-      method: 'POST',
+    const response = await fetch(`/api/settings/${section}`, {
+      method: 'PATCH',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ ..._settingsData, store_tokens: true, save_scope: stayOnSection })
+      body: JSON.stringify(build()),
     });
-    const d = await r.json();
-    ['settings-save-result','settings-save-result2','settings-save-result-general','settings-save-result-repair','settings-save-result-metadata','settings-save-result-trash','settings-save-result-features','settings-save-result-library-refresh','settings-save-result-mark-watched'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.innerHTML = d.ok
-        ? `<span style="color:var(--pass);">✓ Saved and applied</span>`
-        : `<span style="color:var(--fail2);">✗ ${h(d.error)}</span>`;
-    });
-    if (d.ok) {
-      toast('Config saved and applied', 'pass');
-      if (stayOnSection === 'features') {
-        applyFeatureVisibility(_settingsData.features);
-      }
-      await loadSettings();
-      const sectionButton = [...document.querySelectorAll('.settings-nav-item')].find(item => (item.getAttribute('onclick')||'').includes(`'${stayOnSection}'`));
-      showSettingsSection(stayOnSection, sectionButton);
-    }
-    else toast(d.error, 'fail');
-  } catch(e) {
-    toast('Save failed', 'fail');
+    const data = await readJsonResponse(response, 'Save');
+    if (!response.ok) throw new Error(data.error || 'Settings could not be saved');
+    if (result) result.innerHTML = `<span style="color:var(--pass);">✓ Saved and applied</span>`;
+    toast(data.message || 'Settings saved', 'pass');
+    if (section === 'features') applyFeatureVisibility(_settingsData.features);
+    await loadSettings();
+    showSettingsSection(section, settingsNavButton(section));
+  } catch (error) {
+    if (result) result.innerHTML = `<span style="color:var(--fail2);">✗ ${h(error.message)}</span>`;
+    toast(error.message || 'Save failed', 'fail');
   } finally {
-    ['settings-save-btn','settings-save-btn2','settings-save-btn-repair','settings-save-btn-metadata','settings-save-btn-trash','settings-save-btn-features','settings-save-btn-library-refresh','settings-save-btn-mark-watched'].forEach(id => {
-      const b = document.getElementById(id);
-      if (b) { b.disabled = false; b.innerHTML = b.dataset.saveLabel || 'Save Configuration'; }
-    });
+    if (button) {
+      button.disabled = false;
+      button.innerHTML = button.dataset.saveLabel || 'Save Configuration';
+    }
   }
 }
 
