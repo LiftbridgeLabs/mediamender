@@ -438,6 +438,42 @@ panel. The panel refreshes while the page is open. The same transitions are
 written under the `mediamender.mark_watched` logger, so they can also be
 followed through the container log or the Settings log viewer.
 
+A job that exhausts its Plex retries stays `failed`, and because each webhook
+identity is queued only once, resending the same Sonarr payload reuses that
+failed job instead of running it again. **Run pending jobs now**, next to the
+Mark-it-Watched activity heading, puts every job that has not succeeded back on
+the queue with a fresh attempt count. Succeeded jobs are left alone, as are jobs
+already waiting or currently running, so the button is safe to press repeatedly.
+It also brings the worker pool back to strength, which makes it the recovery
+control for a queue that has stopped draining.
+
+Jobs run on a pool of background workers, so one import waiting on a Plex scan
+no longer blocks every later webhook behind it. Set `mark_watched.workers` in
+`config.yml` to change the pool size (default 4, maximum 16); the change applies
+without a restart.
+
+Rules are global to the install. Mark-it-Watched writes Plex history through
+each server's configured Plex token, so a rule has always belonged to that Plex
+account rather than to whoever was signed in to mediaMender. Whichever account
+connected Sonarr, and whichever account saved the rule, the same rule applies.
+
+Rule files written by earlier versions were keyed by mediaMender username and
+are migrated on first load: every show or season left On under any account name
+stays On, and the flattened file is written back on the next rule change.
+
+Sonarr and Plex do not always spell a series the same way. Episode lookup first
+asks Plex for the exact title, then retries on the season and episode coordinate
+alone and compares titles ignoring case, punctuation, a leading article, and a
+trailing `(2018)` or `(US)` style suffix. When Plex's title differs, the job log
+names both.
+
+Every job keeps its own log trail, expandable under the job in the
+Mark-it-Watched activity panel. The trail records each attempt, each retry wait,
+which TV libraries were searched, which Plex show ratingKey each episode matched,
+and which username's rules were consulted for the decision. A job that matched
+an episode but marked nothing is badged as skipped rather than a plain success,
+because the trail's `no watch rule enabled` line is the reason it did nothing.
+
 Settings controls which shared Plex TV libraries are visible. All On and All Off
 update the single future rule set only; they never rewrite existing Plex watch
 history.

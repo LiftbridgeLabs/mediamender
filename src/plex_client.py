@@ -21,6 +21,29 @@ _TYPE_LABELS = {
 }
 
 
+def normalize_show_title(value: str) -> str:
+    """Reduce a series title to the part Sonarr and Plex tend to agree on.
+
+    Sonarr sends the title its metadata source holds, which routinely differs
+    from Plex's by a year suffix, punctuation, or a leading article.
+    """
+    text = str(value).strip().casefold()
+    # Drop a trailing disambiguator such as "(2018)" or "(US)".
+    while text.endswith(")") and "(" in text:
+        head, _, _ = text.rpartition("(")
+        head = head.strip()
+        if not head:
+            break
+        text = head
+    text = "".join(
+        character if character.isalnum() else " " for character in text
+    )
+    words = text.split()
+    if len(words) > 1 and words[0] in {"the", "a", "an"}:
+        words = words[1:]
+    return " ".join(words)
+
+
 def trash_item_key(item: Dict) -> tuple:
     """Return the most stable identity available for a Plex trash item."""
     rating_key = str(item.get("rating_key", ""))
@@ -156,8 +179,29 @@ class PlexClient:
           and item.get("ratingKey")
           and str(item.get("grandparentRatingKey", "")) == str(show_rating_key)]
 
+    @staticmethod
+    def _episode_match(item: Dict, season: int, episode: int) -> Optional[Dict]:
+        if int(item.get("parentIndex", -1)) != int(season):
+            return None
+        if int(item.get("index", -1)) != int(episode):
+            return None
+        rating_key = str(item.get("ratingKey", ""))
+        show_key = str(item.get("grandparentRatingKey", ""))
+        if not rating_key or not show_key:
+            return None
+        return {
+            "rating_key": rating_key,
+            "show_rating_key": show_key,
+            "season_rating_key": str(item.get("parentRatingKey", "")),
+            "season_index": int(season),
+            "episode_index": int(episode),
+            "title": str(item.get("title", "")),
+            "show_title": str(item.get("grandparentTitle", "")),
+        }
+
     def find_episode(self, section_id: str, show_title: str,
                      season: int, episode: int) -> Optional[Dict]:
+        """Locate one episode, tolerating a title Plex spells differently."""
         response = self._get(
             f"/library/sections/{section_id}/all",
             params={"type": 4, "grandparentTitle": show_title,
@@ -169,21 +213,30 @@ class PlexClient:
         for item in self._metadata(response):
             if str(item.get("grandparentTitle", "")).strip().casefold() != expected:
                 continue
-            if int(item.get("parentIndex", -1)) != int(season):
+            match = self._episode_match(item, season, episode)
+            if match:
+                return match
+
+        # Plex's own title can differ from Sonarr's after a rename or a
+        # metadata re-match, and the filtered query above returns nothing at
+        # all in that case. Ask for the season/episode coordinate across the
+        # section instead, then compare normalized titles.
+        normalized = normalize_show_title(show_title)
+        if not normalized:
+            return None
+        response = self._get(
+            f"/library/sections/{section_id}/all",
+            params={"type": 4, "parentIndex": int(season), "index": int(episode)},
+            timeout=30,
+        )
+        response.raise_for_status()
+        for item in self._metadata(response):
+            candidate = str(item.get("grandparentTitle", ""))
+            if normalize_show_title(candidate) != normalized:
                 continue
-            if int(item.get("index", -1)) != int(episode):
-                continue
-            rating_key = str(item.get("ratingKey", ""))
-            show_key = str(item.get("grandparentRatingKey", ""))
-            if rating_key and show_key:
-                return {
-                    "rating_key": rating_key,
-                    "show_rating_key": show_key,
-                    "season_rating_key": str(item.get("parentRatingKey", "")),
-                    "season_index": int(season),
-                    "episode_index": int(episode),
-                    "title": str(item.get("title", "")),
-                }
+            match = self._episode_match(item, season, episode)
+            if match:
+                return match
         return None
 
     def _scrobble_endpoint(self) -> tuple[str, str]:

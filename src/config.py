@@ -79,6 +79,7 @@ class MarkWatchedConfig:
     webhook_secret: str = ""
     retry_delays: List[int] = field(default_factory=lambda: [10, 30, 60, 120, 300])
     visible_libraries: Optional[List[str]] = None
+    workers: int = 4
 
 
 @dataclass
@@ -382,6 +383,7 @@ def parse_config(raw: dict, config_missing: bool = False) -> AppConfig:
             str(mark_raw.get("webhook_secret", "")),
         ),
         retry_delays=[max(0, int(value)) for value in retry_delays[:10]],
+        workers=min(16, max(1, int(mark_raw.get("workers", 4) or 4))),
         visible_libraries=(
             [str(value) for value in mark_raw.get("visible_libraries", [])]
             if "visible_libraries" in mark_raw and isinstance(mark_raw.get("visible_libraries"), list)

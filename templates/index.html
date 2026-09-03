@@ -767,6 +767,12 @@ dialog.overlay::backdrop{background:transparent;}
 .repair-history-item{display:grid;grid-template-columns:auto minmax(0,1fr);gap:13px;padding:17px 18px;border:1px solid var(--border);border-radius:9px;background:var(--surface);}
 .repair-history-title{font-size:15px;color:var(--bright);font-weight:680;}
 .repair-history-meta{font-size:13px;color:var(--text2);margin-top:4px;overflow-wrap:anywhere;}
+.mw-job-log{margin-top:8px;font-size:12px;}
+.mw-job-log summary{cursor:pointer;color:var(--text2);user-select:none;}
+.mw-job-log pre{margin:6px 0 0;padding:8px 10px;max-height:260px;overflow:auto;
+  background:var(--bg1,rgba(0,0,0,.25));border:1px solid var(--line,rgba(255,255,255,.08));
+  border-radius:6px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;}
 .repair-active-card{padding:21px 23px;border:1px solid var(--warn-line);border-left:4px solid var(--warn);border-radius:10px;background:var(--warn-soft);margin-bottom:20px;}
 .repair-active-title{font-size:18px;font-weight:750;color:var(--bright);}
 .repair-active-meta{font-size:14px;color:var(--text2);margin-top:6px;overflow-wrap:anywhere;}
@@ -1147,7 +1153,7 @@ dialog.overlay::backdrop{background:transparent;}
   <div class="mw-pagination" id="mark-watched-pagination-top"></div>
   <div id="mark-watched-libraries"><div class="empty-msg">Open this tab to load Plex TV libraries.</div></div>
   <div class="mw-pagination" id="mark-watched-pagination-bottom"></div>
-  <div class="repair-section-heading"><h2 class="repair-section-title">Mark-it-Watched activity</h2><div class="repair-section-line"></div><button class="btn btn-secondary btn-sm" onclick="loadMarkWatchedJobs()">Refresh activity</button></div>
+  <div class="repair-section-heading"><h2 class="repair-section-title">Mark-it-Watched activity</h2><div class="repair-section-line"></div><button class="btn btn-primary btn-sm" id="mark-watched-retry" onclick="retryMarkWatchedJobs(this)" title="Re-queue every job that has not succeeded yet">&#8635;&nbsp; Run pending jobs now</button><button class="btn btn-secondary btn-sm" onclick="loadMarkWatchedJobs()">Refresh activity</button></div>
   <div class="repair-history-list" id="mark-watched-jobs"><div class="empty-msg">No automatic or manual jobs yet.</div></div>
 </div>
 
@@ -1933,7 +1939,7 @@ function showPage(name, btn) {
 // Mark-it-Watched
 let _markWatchedData = {
   instances: [], libraries: [], instance: '', library: '', shows: [],
-  page: 1, page_size: 12, pages: 1, total: 0, search: '', rule_user: '', loaded: false,
+  page: 1, page_size: 12, pages: 1, total: 0, search: '', loaded: false,
 };
 let _markWatchedAbort = null;
 let _markWatchedSearchTimer = null;
@@ -2201,23 +2207,63 @@ async function applyMarkWatchedNow(showIndex, seasonIndex, episodeCount, button)
   }
 }
 
-function renderMarkWatchedJobs(jobs) {
+function markWatchedJobBadge(job) {
+  if (job.status === 'failed') return 'error';
+  // A job that matched Plex but marked nothing succeeded technically and
+  // failed in the way the user cares about, so do not call it a plain pass.
+  if (job.status === 'succeeded') {
+    return Number(job.result?.matched || 0) && !Number(job.result?.marked || 0)
+      ? 'skipped' : 'success';
+  }
+  return 'skipped';
+}
+
+function renderMarkWatchedJobs(data) {
   const target = document.getElementById('mark-watched-jobs');
   if (!target) return;
-  target.innerHTML = jobs.length ? jobs.map(job => {
+  const jobs = data.jobs || [];
+  const workers = Number(data.workers || 0);
+  const live = Number(data.live_workers || 0);
+  const health = workers && live < workers
+    ? `<div class="repair-warning">Only ${live} of ${workers} Mark-it-Watched workers are running. Select <strong>Run pending jobs now</strong> to restart the pool.</div>`
+    : '';
+  target.innerHTML = health + (jobs.length ? jobs.map(job => {
     const source = job.event?.source === 'manual' ? `Manual ${job.event?.manual?.scope || 'update'}` : 'Sonarr webhook';
     const attempts = Number(job.attempts || 0);
     const result = job.result || {};
     const counts = result.matched !== undefined ? ` · ${Number(result.marked || 0)} marked · ${Number(result.matched || 0)} matched` : '';
-    return `<div class="repair-history-item"><span class="badge ${job.status==='succeeded'?'success':job.status==='failed'?'error':'skipped'}">${h(job.status)}</span><div><div class="repair-history-title">${h(job.event?.series?.title || 'Plex update')}</div><div class="repair-history-meta">${h(source)} · ${h(fmtAgo(job.updated_at || job.created_at))}${attempts?` · attempt ${attempts}`:''}${counts}<br>${h(job.message || '')}</div></div></div>`;
-  }).join('') : '<div class="empty-msg">No automatic or manual jobs yet.</div>';
+    const trail = job.log || [];
+    const log = trail.length
+      ? `<details class="mw-job-log"><summary>${trail.length} log line${trail.length===1?'':'s'}</summary><pre>${trail.map(entry =>
+          `${h(fmtStamp(entry.at))}  ${h(entry.message || '')}`).join('\n')}</pre></details>`
+      : '';
+    return `<div class="repair-history-item"><span class="badge ${markWatchedJobBadge(job)}">${h(job.status)}</span><div><div class="repair-history-title">${h(job.event?.series?.title || 'Plex update')}</div><div class="repair-history-meta">${h(source)} · ${h(fmtAgo(job.updated_at || job.created_at))}${attempts?` · attempt ${attempts}`:''}${counts}<br>${h(job.message || '')}</div>${log}</div></div>`;
+  }).join('') : '<div class="empty-msg">No automatic or manual jobs yet.</div>');
+}
+
+async function retryMarkWatchedJobs(button) {
+  button.dataset.label = button.dataset.label || button.innerHTML;
+  button.disabled = true;
+  button.innerHTML = '<span class="spin"></span> Queueing&hellip;';
+  try {
+    const response = await fetch('/api/mark-watched/retry', { method: 'POST' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Pending jobs could not be re-queued');
+    toast(data.message, data.requeued ? 'pass' : '');
+  } catch (error) {
+    toast(error.message || 'Pending jobs could not be re-queued', 'fail');
+  } finally {
+    button.disabled = false;
+    button.innerHTML = button.dataset.label;
+    loadMarkWatchedJobs();
+  }
 }
 
 async function loadMarkWatchedJobs() {
   try {
     const response = await fetch('/api/mark-watched/status');
     const data = await response.json();
-    if (response.ok) renderMarkWatchedJobs(data.jobs || []);
+    if (response.ok) renderMarkWatchedJobs(data);
   } catch (_) {}
 }
 
@@ -2765,6 +2811,11 @@ function fmtAgo(iso) {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+function fmtStamp(iso) {
+  if (!iso) return '--:--:--';
+  const at = new Date(iso);
+  return isNaN(at) ? '--:--:--' : at.toLocaleTimeString();
 }
 function cid(i, l) { return i.replace(/ /g,'_') + '_' + l.replace(/ /g,'_'); }
 function statusCls(s) { return {success:'pass',skipped:'warn',error:'fail',dry_run:'info',preflight_pass:'pass',preflight_fail:'warn'}[s] || ''; }

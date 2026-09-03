@@ -17,6 +17,9 @@ features:
 mark_watched:
   webhook_secret: ""
   retry_delays: [10, 30, 60, 120, 300]
+  # Background workers that process queued imports. More workers stop one
+  # import waiting on a Plex scan from blocking every later webhook.
+  workers: 4
   # Omit visible_libraries to show all configured TV libraries. An explicit
   # empty list hides all libraries; Settings can manage this list safely.
   # visible_libraries:

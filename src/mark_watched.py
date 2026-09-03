@@ -18,9 +18,16 @@ from src.storage import atomic_write_json
 
 logger = logging.getLogger("mediamender.mark_watched")
 
+# Enough of a trail to explain a job without letting a record grow unbounded.
+LOG_TRAIL_LIMIT = 60
+
 
 class PlexEpisodePending(Exception):
     """Raised when Sonarr is finished but Plex has not matched the episode yet."""
+
+    def __init__(self, message: str, details: list[str] | None = None):
+        super().__init__(message)
+        self.details = list(details or [])
 
 
 def _utc_now() -> str:
@@ -104,20 +111,25 @@ class MarkWatchedManager:
         retry_delays: tuple[float, ...] = (10, 30, 60, 120, 300),
         *,
         autostart: bool = True,
+        workers: int = 4,
         sleep: Callable[[float], None] = time.sleep,
     ):
         self.path = Path(data_dir) / "mark-watched-jobs.json"
         self.processor = processor
         self.retry_delays = retry_delays
+        # Each job spends nearly all of its life asleep between Plex polls, so
+        # a pool keeps one waiting import from stalling every later webhook.
+        self.workers = max(1, int(workers))
         self._sleep = sleep
         self._lock = threading.RLock()
         self._queue: queue.Queue[str] = queue.Queue()
+        self._inflight: set[str] = set()
         self._records = self._load()
         for job_id, record in self._records.items():
             if record.get("status") in {"queued", "retrying", "processing"}:
                 record["status"] = "queued"
                 self._queue.put(job_id)
-        self._thread = None
+        self._threads: list[threading.Thread] = []
         if autostart:
             self.start()
 
@@ -132,12 +144,22 @@ class MarkWatchedManager:
         atomic_write_json(str(self.path), self._records)
 
     def start(self) -> None:
-        if self._thread and self._thread.is_alive():
-            return
-        self._thread = threading.Thread(
-            target=self._run, daemon=True, name="mark-watched-worker",
-        )
-        self._thread.start()
+        """Bring the pool up to strength, replacing any thread that died."""
+        with self._lock:
+            self._threads = [
+                thread for thread in self._threads if thread.is_alive()
+            ]
+            while len(self._threads) < self.workers:
+                thread = threading.Thread(
+                    target=self._run, daemon=True,
+                    name=f"mark-watched-worker-{len(self._threads) + 1}",
+                )
+                self._threads.append(thread)
+                thread.start()
+
+    def live_workers(self) -> int:
+        with self._lock:
+            return sum(1 for thread in self._threads if thread.is_alive())
 
     def set_processor(self, processor: Callable[[dict], dict]) -> None:
         self.processor = processor
@@ -205,10 +227,32 @@ class MarkWatchedManager:
             record["updated_at"] = _utc_now()
             self._save()
 
+    def _log(self, job_id: str, message: str, details: list[str] | None = None) -> None:
+        """Keep a readable trail on the record so the UI can explain a job."""
+        with self._lock:
+            record = self._records.get(job_id)
+            if record is None:
+                return
+            trail = record.setdefault("log", [])
+            trail.append({"at": _utc_now(), "message": message})
+            for detail in details or []:
+                trail.append({"at": _utc_now(), "message": f"  {detail}"})
+            if len(trail) > LOG_TRAIL_LIMIT:
+                del trail[:-LOG_TRAIL_LIMIT]
+            self._save()
+
     def process(self, job_id: str) -> dict:
         with self._lock:
             record = self._records[job_id]
             event = dict(record["event"])
+            self._inflight.add(job_id)
+        try:
+            return self._process(job_id, event)
+        finally:
+            with self._lock:
+                self._inflight.discard(job_id)
+
+    def _process(self, job_id: str, event: dict) -> dict:
         if self.processor is None:
             self._update(job_id, status="failed", message="No Plex processor configured")
             return self.get(job_id)
@@ -220,6 +264,7 @@ class MarkWatchedManager:
                     job_id, status="retrying", next_retry_seconds=delay,
                     message=f"Plex match pending; retrying in {delay:g} seconds",
                 )
+                self._log(job_id, f"Waiting {delay:g}s for Plex to scan the import")
                 logger.info(
                     "Job %s waiting %g seconds for Plex match", job_id[:12], delay,
                 )
@@ -232,14 +277,18 @@ class MarkWatchedManager:
                 logger.info("Processing Mark-it-Watched job %s (attempt %s)",
                             job_id[:12], attempt)
                 result = self.processor(event) or {}
+                message = result.get("message", "Marked matched Plex episode watched")
                 self._update(
-                    job_id, status="succeeded", result=result,
-                    message=result.get("message", "Marked matched Plex episode watched"),
+                    job_id, status="succeeded", result=result, message=message,
                 )
-                logger.info("Mark-it-Watched job %s succeeded: %s", job_id[:12],
-                            result.get("message", "completed"))
+                self._log(job_id, f"Attempt {attempt}: {message}",
+                          result.get("details"))
+                logger.info("Mark-it-Watched job %s succeeded: %s",
+                            job_id[:12], message)
                 return self.get(job_id)
             except PlexEpisodePending as exc:
+                self._log(job_id, f"Attempt {attempt}: Plex has not matched {exc}",
+                          getattr(exc, "details", None))
                 if attempt == len(delays):
                     self._update(
                         job_id, status="failed",
@@ -254,16 +303,73 @@ class MarkWatchedManager:
                     job_id, status="failed",
                     message=f"Plex processing failed: {type(exc).__name__}: {exc}",
                 )
+                self._log(
+                    job_id,
+                    f"Attempt {attempt} failed: {type(exc).__name__}: {exc}",
+                )
                 logger.error("Mark-it-Watched job %s failed: %s: %s",
                              job_id[:12], type(exc).__name__, exc)
                 return self.get(job_id)
         return self.get(job_id)
+
+    def retry_unfinished(self) -> dict:
+        """Re-queue every job that has not succeeded so the worker retries it.
+
+        Sonarr only sends a webhook identity once, and enqueue() is idempotent
+        on that identity, so a job that exhausted its Plex retries would
+        otherwise stay failed forever with no way to fire it again.
+        """
+        requeued: list[str] = []
+        pending = 0
+        in_flight = 0
+        with self._lock:
+            for job_id, record in self._records.items():
+                status = record.get("status")
+                if status == "succeeded":
+                    continue
+                if job_id in self._inflight:
+                    in_flight += 1
+                    continue
+                if status == "queued":
+                    pending += 1
+                    continue
+                record.update({
+                    "status": "queued",
+                    "attempts": 0,
+                    "next_retry_seconds": None,
+                    "message": "Re-queued by a manual Mark-it-Watched retry",
+                    "updated_at": _utc_now(),
+                })
+                requeued.append(job_id)
+            if requeued:
+                self._save()
+        for job_id in requeued:
+            self._log(job_id, "Re-queued by Run pending jobs now")
+        for job_id in requeued:
+            self._queue.put(job_id)
+        if requeued:
+            logger.info(
+                "Re-queued %s unfinished Mark-it-Watched job(s): %s",
+                len(requeued), ", ".join(job_id[:12] for job_id in requeued),
+            )
+        return {
+            "requeued": len(requeued),
+            "already_queued": pending,
+            "in_flight": in_flight,
+            "job_ids": requeued,
+        }
 
     def _run(self) -> None:
         while True:
             job_id = self._queue.get()
             try:
                 self.process(job_id)
+            except Exception:
+                # A dead worker thread would silently strand every later
+                # webhook, so keep draining the queue no matter what.
+                logger.exception(
+                    "Mark-it-Watched worker could not process job %s", job_id[:12],
+                )
             finally:
                 self._queue.task_done()
 
@@ -281,7 +387,12 @@ class MarkWatchedManager:
 
 
 class MarkWatchedRuleStore:
-    """Persist per-user show defaults and explicit season overrides."""
+    """Persist show defaults and explicit season overrides for the install.
+
+    Rules are global. Mark-it-Watched writes Plex history through each server's
+    configured token, so a rule has always belonged to that Plex account rather
+    than to whoever happened to be signed in to mediaMender.
+    """
 
     def __init__(self, data_dir: str):
         self.path = Path(data_dir) / "mark-watched-rules.json"
@@ -291,9 +402,40 @@ class MarkWatchedRuleStore:
     def _load(self) -> dict:
         try:
             value = json.loads(self.path.read_text(encoding="utf-8"))
-            return value if isinstance(value, dict) else {"users": {}}
         except (OSError, ValueError):
-            return {"users": {}}
+            return {"shows": {}, "seasons": {}}
+        if not isinstance(value, dict):
+            return {"shows": {}, "seasons": {}}
+        if "users" in value:
+            return self._flatten_users(value)
+        return {
+            "shows": dict(value.get("shows", {}) or {}),
+            "seasons": dict(value.get("seasons", {}) or {}),
+        }
+
+    @staticmethod
+    def _flatten_users(value: dict) -> dict:
+        """Fold a per-user rule file into one global set, keeping every On.
+
+        Rules used to be keyed by the mediaMender account that saved them, and
+        an import was attributed to whichever account connected Sonarr. Those
+        names are set independently, so an enabled rule is the operator's real
+        intent no matter which name recorded it.
+        """
+        shows: dict = {}
+        seasons: dict = {}
+        for user in (value.get("users", {}) or {}).values():
+            if not isinstance(user, dict):
+                continue
+            for key, enabled in (user.get("shows", {}) or {}).items():
+                shows[key] = bool(enabled) or bool(shows.get(key, False))
+            for key, enabled in (user.get("seasons", {}) or {}).items():
+                seasons[key] = bool(enabled) or bool(seasons.get(key, False))
+        logger.info(
+            "Migrated %s show and %s season Mark-it-Watched rules to one "
+            "global rule set", len(shows), len(seasons),
+        )
+        return {"shows": shows, "seasons": seasons}
 
     def _save(self) -> None:
         atomic_write_json(str(self.path), self._data)
@@ -302,39 +444,32 @@ class MarkWatchedRuleStore:
     def _show_key(instance: str, library: str, show_rating_key: str) -> str:
         return f"{instance}::{library}::{show_rating_key}"
 
-    def _user(self, username: str, create: bool = False) -> dict:
-        users = self._data.setdefault("users", {})
-        if create:
-            return users.setdefault(username, {"shows": {}, "seasons": {}})
-        return users.get(username, {"shows": {}, "seasons": {}})
-
-    def set_show(self, username: str, instance: str, library: str,
+    def set_show(self, instance: str, library: str,
                  show_rating_key: str, enabled: bool) -> None:
         with self._lock:
-            user = self._user(username, create=True)
-            user["shows"][self._show_key(instance, library, show_rating_key)] = bool(enabled)
+            self._data["shows"][
+                self._show_key(instance, library, show_rating_key)
+            ] = bool(enabled)
             self._save()
 
-    def set_season(self, username: str, instance: str, library: str,
-                   show_rating_key: str, season_index: int,
-                   enabled: bool | None) -> None:
+    def set_season(self, instance: str, library: str, show_rating_key: str,
+                   season_index: int, enabled: bool | None) -> None:
         key = f"{self._show_key(instance, library, show_rating_key)}::{int(season_index)}"
         with self._lock:
-            user = self._user(username, create=True)
             if enabled is None:
-                user["seasons"].pop(key, None)
+                self._data["seasons"].pop(key, None)
             else:
-                user["seasons"][key] = bool(enabled)
+                self._data["seasons"][key] = bool(enabled)
             self._save()
 
-    def rule(self, username: str, instance: str, library: str,
+    def rule(self, instance: str, library: str,
              show_rating_key: str, season_index: int) -> dict:
         show_key = self._show_key(instance, library, show_rating_key)
         season_key = f"{show_key}::{int(season_index)}"
         with self._lock:
-            user = self._user(username)
-            show_enabled = bool(user.get("shows", {}).get(show_key, False))
-            seasons = user.get("seasons", {})
+            shows = self._data["shows"]
+            seasons = self._data["seasons"]
+            show_enabled = bool(shows.get(show_key, False))
             explicit = season_key in seasons
             return {
                 "enabled": bool(seasons[season_key]) if explicit else show_enabled,
@@ -343,35 +478,18 @@ class MarkWatchedRuleStore:
                 "season_override": seasons.get(season_key) if explicit else None,
             }
 
-    def enabled_for_any_user(self, instance: str, library: str,
-                             show_rating_key: str, season_index: int) -> bool:
+    def all_rules(self) -> dict:
         with self._lock:
-            usernames = list(self._data.get("users", {}))
-        return any(self.rule(
-            username, instance, library, show_rating_key, season_index,
-        )["enabled"] for username in usernames)
+            return json.loads(json.dumps(self._data))
 
-    def all_for_user(self, username: str) -> dict:
-        with self._lock:
-            user = self._user(username)
-            return json.loads(json.dumps(user))
-
-    def usernames(self) -> list[str]:
-        with self._lock:
-            return list(self._data.get("users", {}))
-
-    def delete_user(self, username: str) -> None:
-        with self._lock:
-            self._data.get("users", {}).pop(username, None)
-            self._save()
-
-    def set_all(self, username: str, show_keys: list[tuple[str, str, str]],
+    def set_all(self, show_keys: list[tuple[str, str, str]],
                 enabled: bool) -> None:
         with self._lock:
-            user = self._user(username, create=True)
             for instance, library, rating_key in show_keys:
-                user["shows"][self._show_key(instance, library, rating_key)] = bool(enabled)
-            user["seasons"] = {}
+                self._data["shows"][
+                    self._show_key(instance, library, rating_key)
+                ] = bool(enabled)
+            self._data["seasons"] = {}
             self._save()
 
 
@@ -380,23 +498,29 @@ def process_plex_event(event: dict, app_config, clients: dict,
     """Find imported episodes across configured TV sections, then apply rules."""
     matched = []
     marked = []
+    details: list[str] = []
     expected_coordinates = {
         (episode["season"], episode["episode"]) for episode in event["episodes"]
     }
     matched_coordinates = set()
     configured_visibility = app_config.mark_watched.visible_libraries
     visible = set(configured_visibility or [])
+    searched = []
     for instance in app_config.instances:
         plex = clients.get(instance.name)
         if plex is None:
+            details.append(f"{instance.name}: skipped, no connected Plex client")
             continue
         for library in instance.libraries:
             library_key = f"{instance.name}::{library.name}"
             if configured_visibility is not None and library_key not in visible:
+                details.append(f"{library_key}: skipped, hidden in Settings")
                 continue
             section_id = library.section_id or plex.find_section_id(library.name)
             if not section_id or plex.get_section_type(str(section_id)) != "show":
+                details.append(f"{library_key}: skipped, not a Plex TV library")
                 continue
+            searched.append(library_key)
             for episode in event["episodes"]:
                 item = plex.find_episode(
                     str(section_id), event["series"]["title"],
@@ -409,33 +533,59 @@ def process_plex_event(event: dict, app_config, clients: dict,
                 item["library_name"] = library.name
                 item["plex"] = plex
                 matched_coordinates.add((episode["season"], episode["episode"]))
+                plex_title = str(item.get("show_title", ""))
+                renamed = (
+                    f", Plex calls this show '{plex_title}'"
+                    if plex_title and plex_title.strip().casefold()
+                    != event["series"]["title"].strip().casefold() else ""
+                )
+                details.append(
+                    f"{library_key}: matched S{episode['season']:02d}"
+                    f"E{episode['episode']:02d} (show ratingKey "
+                    f"{item['show_rating_key']}, episode {item['rating_key']}"
+                    f"{renamed})"
+                )
     missing = expected_coordinates - matched_coordinates
     if missing:
         coordinates = ", ".join(
             f"S{season:02d}E{episode:02d}" for season, episode in sorted(missing)
         )
-        raise PlexEpisodePending(f"{event['series']['title']} {coordinates}")
+        raise PlexEpisodePending(
+            f"{event['series']['title']} {coordinates}",
+            details + [
+                "Searched TV libraries: " + (", ".join(searched) or "none"),
+            ],
+        )
     for item in matched:
-        rule_user = str(event.get("rule_user", ""))
-        enabled = rules.rule(
-            rule_user, item["instance_name"], item["library_name"],
-            item["show_rating_key"], item["season_index"],
-        )["enabled"] if rule_user else rules.enabled_for_any_user(
+        library_key = f"{item['instance_name']}::{item['library_name']}"
+        location = (
+            f"{library_key} S{item['season_index']:02d}"
+            f"E{item['episode_index']:02d} (show ratingKey {item['show_rating_key']})"
+        )
+        decision = rules.rule(
             item["instance_name"], item["library_name"],
             item["show_rating_key"], item["season_index"],
         )
+        enabled = decision["enabled"]
+        reason = (
+            f"season override {decision['season_override']}"
+            if decision["source"] == "season"
+            else f"show default {decision['show_enabled']}"
+        )
         if not enabled:
+            details.append(f"{location}: no watch rule enabled ({reason})")
             continue
         item["plex"].mark_watched(item["rating_key"])
         marked.append(item)
+        details.append(f"{location}: marked watched ({reason})")
     if not marked:
         return {
             "message": "Plex matched the import; no automatic watch rule was enabled",
-            "matched": len(matched), "marked": 0,
+            "matched": len(matched), "marked": 0, "details": details,
         }
     return {
         "message": f"Marked {len(marked)} matched Plex episode(s) watched",
-        "matched": len(matched), "marked": len(marked),
+        "matched": len(matched), "marked": len(marked), "details": details,
         "rating_keys": [item["rating_key"] for item in marked],
     }
 

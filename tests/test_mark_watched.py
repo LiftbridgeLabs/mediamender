@@ -1,3 +1,5 @@
+import json
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -8,12 +10,13 @@ import app
 from src.auth import hash_password
 from src.config import AppConfig, AppUser, LibraryConfig, MarkWatchedConfig, PlexInstanceConfig
 from src.mark_watched import (
+    LOG_TRAIL_LIMIT,
     MarkWatchedManager, MarkWatchedRuleStore,
     PlexEpisodePending,
     normalize_sonarr_download,
     process_manual_event, process_plex_event,
 )
-from src.plex_client import PlexClient
+from src.plex_client import PlexClient, normalize_show_title
 
 
 def sonarr_download():
@@ -50,6 +53,26 @@ class SonarrWebhookApiTests(unittest.TestCase):
         self.assertTrue(response.get_json()["queued"])
         manager.enqueue.assert_called_once()
         manager.process.assert_not_called()
+
+    def test_retry_endpoint_reports_what_it_requeued(self):
+        manager = Mock()
+        manager.retry_unfinished.return_value = {
+            "requeued": 2, "already_queued": 1, "in_flight": 0, "job_ids": ["a", "b"],
+        }
+        with patch.object(app, "config", self.config), \
+             patch.object(app, "mark_watched", manager), \
+             patch.object(app, "has_valid_api_token", return_value=True):
+            response = self.client.post("/api/mark-watched/retry")
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["requeued"], 2)
+        self.assertEqual(payload["message"], "Re-queued 2 job(s); 1 already waiting")
+        manager.retry_unfinished.assert_called_once_with()
+
+    def test_retry_endpoint_requires_authentication(self):
+        with patch.object(app, "config", self.config):
+            response = self.client.post("/api/mark-watched/retry")
+        self.assertIn(response.status_code, (302, 401, 403))
 
     def test_managed_connection_binds_job_to_its_rule_user(self):
         manager = Mock()
@@ -196,7 +219,7 @@ class MarkWatchedUiApiTests(unittest.TestCase):
                 headers={"X-CSRF-Token": "known-token"},
             )
         self.assertEqual(response.status_code, 200)
-        save.assert_called_once_with("default", "Plex", "TV", "10", 2, False)
+        save.assert_called_once_with("Plex", "TV", "10", 2, False)
 
     def test_manual_apply_requires_destructive_confirmation(self):
         response = self._client().post(
@@ -304,6 +327,159 @@ class MarkWatchedQueueTests(unittest.TestCase):
         self.assertEqual(result["attempts"], 3)
         self.assertEqual(sleeps, [1, 2])
 
+    def test_failed_jobs_are_requeued_on_demand(self):
+        def process(_event):
+            raise PlexEpisodePending("not scanned")
+
+        manager = MarkWatchedManager(
+            str(self.runtime), processor=process, retry_delays=(),
+            autostart=False, sleep=lambda _delay: None,
+        )
+        record, _ = manager.enqueue(sonarr_download())
+        # Mimic the running worker taking the job off the queue.
+        manager._queue.get_nowait()
+        self.assertEqual(manager.process(record["id"])["status"], "failed")
+
+        summary = manager.retry_unfinished()
+        self.assertEqual(summary["requeued"], 1)
+        self.assertEqual(summary["job_ids"], [record["id"]])
+        requeued = manager.get(record["id"])
+        self.assertEqual(requeued["status"], "queued")
+        self.assertEqual(requeued["attempts"], 0)
+        self.assertEqual(manager._queue.get_nowait(), record["id"])
+
+    def test_retry_leaves_succeeded_and_waiting_jobs_alone(self):
+        manager = MarkWatchedManager(
+            str(self.runtime), processor=lambda _event: {"message": "done"},
+            autostart=False, sleep=lambda _delay: None,
+        )
+        done, _ = manager.enqueue(sonarr_download())
+        manager._queue.get_nowait()
+        manager.process(done["id"])
+        waiting = manager.enqueue_manual({
+            "series": {"title": "Example Show"}, "manual": {"scope": "show"},
+        })
+
+        summary = manager.retry_unfinished()
+        self.assertEqual(summary["requeued"], 0)
+        self.assertEqual(summary["already_queued"], 1)
+        self.assertEqual(manager.get(done["id"])["status"], "succeeded")
+        self.assertEqual(manager.get(waiting["id"])["status"], "queued")
+
+    def test_retry_skips_a_job_the_worker_is_still_running(self):
+        summaries = []
+
+        def process(_event):
+            summaries.append(manager.retry_unfinished())
+            return {"message": "done"}
+
+        manager = MarkWatchedManager(
+            str(self.runtime), processor=process,
+            autostart=False, sleep=lambda _delay: None,
+        )
+        record, _ = manager.enqueue(sonarr_download())
+        manager._queue.get_nowait()
+        manager.process(record["id"])
+        self.assertEqual(summaries[0]["in_flight"], 1)
+        self.assertEqual(summaries[0]["requeued"], 0)
+
+    def test_worker_survives_a_job_that_disappears(self):
+        manager = MarkWatchedManager(str(self.runtime), autostart=False, workers=1)
+        manager._queue.put("missing-job")
+        with self.assertLogs("mediamender.mark_watched", level="ERROR"):
+            manager.start()
+            manager._queue.join()
+        self.assertEqual(manager.live_workers(), 1)
+        self.assertEqual(manager.status()["jobs"], [])
+
+    def test_pool_runs_jobs_concurrently(self):
+        import threading
+
+        started = threading.Barrier(3, timeout=5)
+
+        def process(_event):
+            started.wait()
+            return {"message": "done"}
+
+        manager = MarkWatchedManager(
+            str(self.runtime), processor=process, autostart=False, workers=3,
+        )
+        for season in (1, 2):
+            payload = sonarr_download()
+            payload["episodes"] = [{"seasonNumber": season, "episodeNumber": 1}]
+            payload["episodeFile"] = {"id": season, "path": f"/tv/S{season}.mkv"}
+            manager.enqueue(payload)
+        manager.start()
+        # A single worker would deadlock here; three let both jobs meet.
+        started.wait(timeout=5)
+        manager._queue.join()
+        self.assertTrue(all(
+            job["status"] == "succeeded" for job in manager.status()["jobs"]
+        ))
+
+    def test_a_slow_job_does_not_block_the_next_one(self):
+        import threading
+
+        release = threading.Event()
+        finished = []
+
+        def process(event):
+            if event["episodes"][0]["season"] == 1:
+                release.wait(timeout=5)
+            finished.append(event["episodes"][0]["season"])
+            return {"message": "done"}
+
+        manager = MarkWatchedManager(
+            str(self.runtime), processor=process, autostart=False, workers=2,
+        )
+        slow = sonarr_download()
+        slow["episodes"] = [{"seasonNumber": 1, "episodeNumber": 1}]
+        fast = sonarr_download()
+        fast["episodes"] = [{"seasonNumber": 2, "episodeNumber": 1}]
+        fast["episodeFile"] = {"id": 2, "path": "/tv/S02.mkv"}
+        manager.enqueue(slow)
+        manager.enqueue(fast)
+        manager.start()
+        for _ in range(500):
+            if finished:
+                break
+            time.sleep(0.01)
+        # The second job completed while the first was still blocked.
+        self.assertEqual(finished, [2])
+        release.set()
+        manager._queue.join()
+
+    def test_job_records_a_readable_log_trail(self):
+        attempts = []
+
+        def process(_event):
+            attempts.append(True)
+            if len(attempts) < 2:
+                raise PlexEpisodePending("Example Show S02E03", ["Plex::TV: no match"])
+            return {"message": "Marked 1", "details": ["Plex::TV: marked watched"]}
+
+        manager = MarkWatchedManager(
+            str(self.runtime), processor=process, retry_delays=(5,),
+            autostart=False, sleep=lambda _delay: None,
+        )
+        record, _ = manager.enqueue(sonarr_download())
+        manager._queue.get_nowait()
+        manager.process(record["id"])
+        trail = [entry["message"] for entry in manager.get(record["id"])["log"]]
+        self.assertIn("Attempt 1: Plex has not matched Example Show S02E03", trail)
+        self.assertIn("  Plex::TV: no match", trail)
+        self.assertIn("Waiting 5s for Plex to scan the import", trail)
+        self.assertIn("  Plex::TV: marked watched", trail)
+
+    def test_log_trail_is_capped(self):
+        manager = MarkWatchedManager(str(self.runtime), autostart=False)
+        record, _ = manager.enqueue(sonarr_download())
+        for index in range(LOG_TRAIL_LIMIT + 20):
+            manager._log(record["id"], f"line {index}")
+        trail = manager.get(record["id"])["log"]
+        self.assertEqual(len(trail), LOG_TRAIL_LIMIT)
+        self.assertEqual(trail[-1]["message"], f"line {LOG_TRAIL_LIMIT + 19}")
+
     def test_normalizer_accepts_sonarr_test_without_queueing(self):
         self.assertIsNone(normalize_sonarr_download({"eventType": "Test"}))
 
@@ -330,30 +506,50 @@ class MarkWatchedRuleTests(unittest.TestCase):
         self.runtime.rmdir()
 
     def test_season_inherits_show_until_explicitly_overridden(self):
-        self.rules.set_show("alice", "Plex", "TV", "10", True)
-        inherited = self.rules.rule("alice", "Plex", "TV", "10", 2)
+        self.rules.set_show("Plex", "TV", "10", True)
+        inherited = self.rules.rule("Plex", "TV", "10", 2)
         self.assertEqual(inherited, {
             "enabled": True, "source": "show", "show_enabled": True,
             "season_override": None,
         })
-        self.rules.set_season("alice", "Plex", "TV", "10", 2, False)
-        explicit = self.rules.rule("alice", "Plex", "TV", "10", 2)
+        self.rules.set_season("Plex", "TV", "10", 2, False)
+        explicit = self.rules.rule("Plex", "TV", "10", 2)
         self.assertFalse(explicit["enabled"])
         self.assertEqual(explicit["source"], "season")
 
     def test_clearing_season_override_restores_inheritance(self):
-        self.rules.set_show("alice", "Plex", "TV", "10", False)
-        self.rules.set_season("alice", "Plex", "TV", "10", 1, True)
-        self.rules.set_season("alice", "Plex", "TV", "10", 1, None)
+        self.rules.set_show("Plex", "TV", "10", False)
+        self.rules.set_season("Plex", "TV", "10", 1, True)
+        self.rules.set_season("Plex", "TV", "10", 1, None)
         self.assertEqual(
-            self.rules.rule("alice", "Plex", "TV", "10", 1)["source"], "show",
+            self.rules.rule("Plex", "TV", "10", 1)["source"], "show",
         )
 
-    def test_user_rules_are_isolated(self):
-        self.rules.set_show("alice", "Plex", "TV", "10", True)
-        self.rules.set_show("bob", "Plex", "TV", "10", False)
-        self.assertTrue(self.rules.rule("alice", "Plex", "TV", "10", 1)["enabled"])
-        self.assertFalse(self.rules.rule("bob", "Plex", "TV", "10", 1)["enabled"])
+    def test_a_rule_file_from_the_per_user_era_is_flattened(self):
+        (self.runtime / "mark-watched-rules.json").write_text(json.dumps({"users": {
+            "default": {"shows": {"Plex::TV::10": False}, "seasons": {}},
+            "jason": {
+                "shows": {"Plex::TV::10": True, "Plex::TV::11": False},
+                "seasons": {"Plex::TV::10::2": True},
+            },
+        }}), encoding="utf-8")
+        migrated = MarkWatchedRuleStore(str(self.runtime))
+        # An On saved under any old account name survives the migration.
+        self.assertTrue(migrated.rule("Plex", "TV", "10", 1)["enabled"])
+        self.assertTrue(migrated.rule("Plex", "TV", "10", 2)["enabled"])
+        self.assertFalse(migrated.rule("Plex", "TV", "11", 1)["enabled"])
+
+    def test_flattened_rules_are_written_back_on_the_next_save(self):
+        (self.runtime / "mark-watched-rules.json").write_text(json.dumps({"users": {
+            "jason": {"shows": {"Plex::TV::10": True}, "seasons": {}},
+        }}), encoding="utf-8")
+        migrated = MarkWatchedRuleStore(str(self.runtime))
+        migrated.set_show("Plex", "TV", "12", True)
+        saved = json.loads(
+            (self.runtime / "mark-watched-rules.json").read_text(encoding="utf-8"),
+        )
+        self.assertNotIn("users", saved)
+        self.assertEqual(saved["shows"], {"Plex::TV::10": True, "Plex::TV::12": True})
 
     def test_processor_marks_only_when_rule_is_enabled(self):
         library = LibraryConfig("TV", "physical", [], section_id="7")
@@ -367,7 +563,7 @@ class MarkWatchedRuleTests(unittest.TestCase):
             "season_rating_key": "20", "season_index": 2,
             "episode_index": 3, "title": "Done",
         }
-        self.rules.set_show("alice", "Plex", "TV", "10", True)
+        self.rules.set_show("Plex", "TV", "10", True)
         result = process_plex_event(sonarr_download() | {
             "series": sonarr_download()["series"],
             "episode_file": {"id": 99, "path": "/tv/file.mkv"},
@@ -376,7 +572,7 @@ class MarkWatchedRuleTests(unittest.TestCase):
         self.assertEqual(result["marked"], 1)
         plex.mark_watched.assert_called_once_with("30")
 
-    def test_processor_uses_only_managed_connection_owner_rules(self):
+    def test_webhook_owner_does_not_select_a_rule_set(self):
         library = LibraryConfig("TV", "physical", [], section_id="7")
         config = AppConfig(instances=[PlexInstanceConfig(
             "Plex", "http://plex", "token", [library],
@@ -388,16 +584,104 @@ class MarkWatchedRuleTests(unittest.TestCase):
             "season_rating_key": "20", "season_index": 2,
             "episode_index": 3, "title": "Done",
         }
-        self.rules.set_show("alice", "Plex", "TV", "10", False)
-        self.rules.set_show("bob", "Plex", "TV", "10", True)
-        event = {
+        self.rules.set_show("Plex", "TV", "10", True)
+        # Whoever connected Sonarr, the install's rule is the one that applies.
+        for owner in ("", "alice", "some-other-account"):
+            plex.mark_watched.reset_mock()
+            result = process_plex_event({
+                "series": {"title": "Example Show"},
+                "episodes": [{"season": 2, "episode": 3}],
+                "rule_user": owner,
+            }, config, {"Plex": plex}, self.rules)
+            self.assertEqual(result["marked"], 1)
+            plex.mark_watched.assert_called_once_with("30")
+
+    def test_skipped_rule_explains_which_show_it_checked(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = {
+            "rating_key": "30", "show_rating_key": "10",
+            "season_rating_key": "20", "season_index": 2,
+            "episode_index": 3, "title": "Done",
+        }
+        self.rules.set_show("Plex", "TV", "10", False)
+        result = process_plex_event({
             "series": {"title": "Example Show"},
             "episodes": [{"season": 2, "episode": 3}],
             "rule_user": "alice",
+        }, config, {"Plex": plex}, self.rules)
+        self.assertEqual(result["marked"], 0)
+        details = "\n".join(result["details"])
+        self.assertIn("matched S02E03 (show ratingKey 10", details)
+        self.assertIn(
+            "Plex::TV S02E03 (show ratingKey 10): no watch rule enabled "
+            "(show default False)",
+            details,
+        )
+
+    def test_season_override_off_beats_an_enabled_show_default(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = {
+            "rating_key": "30", "show_rating_key": "10",
+            "season_rating_key": "20", "season_index": 2,
+            "episode_index": 3, "title": "Done",
         }
-        result = process_plex_event(event, config, {"Plex": plex}, self.rules)
+        self.rules.set_show("Plex", "TV", "10", True)
+        self.rules.set_season("Plex", "TV", "10", 2, False)
+        result = process_plex_event({
+            "series": {"title": "Example Show"},
+            "episodes": [{"season": 2, "episode": 3}],
+        }, config, {"Plex": plex}, self.rules)
         self.assertEqual(result["marked"], 0)
         plex.mark_watched.assert_not_called()
+        self.assertIn(
+            "no watch rule enabled (season override False)",
+            "\n".join(result["details"]),
+        )
+
+    def test_pending_match_reports_the_libraries_it_searched(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = None
+        with self.assertRaises(PlexEpisodePending) as caught:
+            process_plex_event({
+                "series": {"title": "Example Show"},
+                "episodes": [{"season": 2, "episode": 3}],
+            }, config, {"Plex": plex}, self.rules)
+        self.assertIn(
+            "Searched TV libraries: Plex::TV", "\n".join(caught.exception.details),
+        )
+
+    def test_hidden_library_is_reported_as_skipped(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(
+            instances=[PlexInstanceConfig(
+                "Plex", "http://plex", "token", [library],
+            )],
+            mark_watched=MarkWatchedConfig(visible_libraries=[]),
+        )
+        plex = Mock()
+        with self.assertRaises(PlexEpisodePending) as caught:
+            process_plex_event({
+                "series": {"title": "Example Show"},
+                "episodes": [{"season": 2, "episode": 3}],
+            }, config, {"Plex": plex}, self.rules)
+        details = "\n".join(caught.exception.details)
+        self.assertIn("Plex::TV: skipped, hidden in Settings", details)
+        self.assertIn("Searched TV libraries: none", details)
 
     def test_multi_episode_import_waits_before_marking_partial_match(self):
         library = LibraryConfig("TV", "physical", [], section_id="7")
@@ -459,6 +743,55 @@ class PlexMarkWatchedClientTests(unittest.TestCase):
             result = client.find_episode("7", "Example Show", 2, 3)
         self.assertEqual(result["rating_key"], "30")
         self.assertEqual(get.call_args.kwargs["params"]["type"], 4)
+
+    def test_find_episode_falls_back_when_plex_spells_the_title_differently(self):
+        client = PlexClient("http://plex", "token")
+        empty = Mock()
+        empty.json.return_value = {"MediaContainer": {}}
+        coordinate = Mock()
+        coordinate.json.return_value = {"MediaContainer": {"Metadata": [
+            {"type": "episode", "ratingKey": "99", "grandparentRatingKey": "11",
+             "grandparentTitle": "Some Other Show", "parentIndex": 3, "index": 18},
+            {"type": "episode", "ratingKey": "30", "grandparentRatingKey": "10",
+             "parentRatingKey": "20", "grandparentTitle": "Big City Greens (2018)",
+             "parentIndex": 3, "index": 18, "title": "The Move"},
+        ]}}
+        with patch.object(client, "_get", side_effect=[empty, coordinate]) as get:
+            result = client.find_episode("7", "Big City Greens", 3, 18)
+        self.assertEqual(result["rating_key"], "30")
+        self.assertEqual(result["show_title"], "Big City Greens (2018)")
+        # The fallback drops the title filter but keeps the coordinate.
+        params = get.call_args.kwargs["params"]
+        self.assertNotIn("grandparentTitle", params)
+        self.assertEqual((params["parentIndex"], params["index"]), (3, 18))
+
+    def test_find_episode_does_not_match_a_different_show(self):
+        client = PlexClient("http://plex", "token")
+        empty = Mock()
+        empty.json.return_value = {"MediaContainer": {}}
+        coordinate = Mock()
+        coordinate.json.return_value = {"MediaContainer": {"Metadata": [
+            {"type": "episode", "ratingKey": "99", "grandparentRatingKey": "11",
+             "grandparentTitle": "Some Other Show", "parentIndex": 3, "index": 18},
+        ]}}
+        with patch.object(client, "_get", side_effect=[empty, coordinate]):
+            self.assertIsNone(client.find_episode("7", "Big City Greens", 3, 18))
+
+    def test_show_title_normalization(self):
+        self.assertEqual(
+            normalize_show_title("Big City Greens (2018)"), "big city greens",
+        )
+        self.assertEqual(
+            normalize_show_title("The Office (US)"), "office",
+        )
+        self.assertEqual(
+            normalize_show_title("Marvel's Agents of S.H.I.E.L.D."),
+            "marvel s agents of s h i e l d",
+        )
+        self.assertNotEqual(
+            normalize_show_title("Big City Greens"),
+            normalize_show_title("Big City Blues"),
+        )
 
     def test_mark_watched_uses_advertised_scrobble_endpoint(self):
         client = PlexClient("http://plex", "token")
@@ -578,9 +911,8 @@ class MarkWatchedPermissionTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         set_all.assert_called_once_with(
-            "viewer", [("Plex", "TV", "10"), ("Plex", "TV", "11")], False,
+            [("Plex", "TV", "10"), ("Plex", "TV", "11")], False,
         )
-        self.assertEqual(response.get_json()["users"], 1)
         plex.mark_watched.assert_not_called()
 
 

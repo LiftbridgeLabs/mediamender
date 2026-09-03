@@ -105,6 +105,7 @@ mark_watched = MarkWatchedManager(
         event, config, plex_clients, mark_watched_rules,
     ),
     retry_delays=tuple(config.mark_watched.retry_delays),
+    workers=config.mark_watched.workers,
 )
 sonarr_connection = SonarrConnectionStore(
     os.path.dirname(os.path.abspath(CONFIG_PATH)),
@@ -688,6 +689,8 @@ def _apply_runtime_config(new_config: AppConfig) -> None:
     )
     _worker_recovery_cache.clear()
     mark_watched.retry_delays = tuple(new_config.mark_watched.retry_delays)
+    mark_watched.workers = new_config.mark_watched.workers
+    mark_watched.start()
     CONFIG_LOAD_ERROR = ""
 
 
@@ -1019,7 +1022,40 @@ def api_sonarr_webhook():
 @app.route("/api/mark-watched/status", methods=["GET"])
 @require_auth
 def api_mark_watched_status():
-    return jsonify(mark_watched.status())
+    return jsonify({
+        **mark_watched.status(),
+        "workers": mark_watched.workers,
+        "live_workers": mark_watched.live_workers(),
+    })
+
+
+@app.route("/api/mark-watched/retry", methods=["POST"])
+@require_auth
+def api_mark_watched_retry():
+    """Force every job that has not succeeded back onto the durable queue."""
+    try:
+        # Revive the worker first so the button also recovers a stalled queue.
+        mark_watched.start()
+        summary = mark_watched.retry_unfinished()
+    except OSError:
+        logger.exception("Could not re-queue unfinished Mark-it-Watched jobs")
+        return jsonify({
+            "ok": False,
+            "error": "Could not save the re-queued Mark-it-Watched jobs",
+        }), 500
+    requeued = summary["requeued"]
+    parts = []
+    if requeued:
+        parts.append(f"Re-queued {requeued} job(s)")
+    if summary["already_queued"]:
+        parts.append(f"{summary['already_queued']} already waiting")
+    if summary["in_flight"]:
+        parts.append(f"{summary['in_flight']} already running")
+    return jsonify({
+        **summary,
+        "ok": True,
+        "message": "; ".join(parts) or "Every Mark-it-Watched job already succeeded",
+    })
 
 
 def _sonarr_environment_instances() -> list[dict]:
@@ -1265,7 +1301,6 @@ def api_mark_watched_sonarr_remove():
 @app.route("/api/mark-watched/libraries", methods=["GET"])
 @require_auth
 def api_mark_watched_libraries():
-    username = _current_username()
     configured_visibility = config.mark_watched.visible_libraries
     visible = set(configured_visibility or [])
     result = []
@@ -1293,7 +1328,7 @@ def api_mark_watched_libraries():
                 continue
             for show in shows:
                 rule = mark_watched_rules.rule(
-                    username, instance.name, library.name, show["rating_key"], 0,
+                    instance.name, library.name, show["rating_key"], 0,
                 )
                 show["rule_enabled"] = rule["show_enabled"]
                 show["poster_url"] = url_for(
@@ -1398,11 +1433,10 @@ def api_mark_watched_shows():
         logger.warning("Could not load Mark-it-Watched page for %s::%s (%s)",
                        instance_name, library_name, type(exc).__name__)
         return jsonify({"error": "Plex shows could not be loaded"}), 502
-    username = _current_username()
     shows = result["shows"]
     for show in shows:
         rule = mark_watched_rules.rule(
-            username, instance_name, library_name, show["rating_key"], 0,
+            instance_name, library_name, show["rating_key"], 0,
         )
         show["rule_enabled"] = rule["show_enabled"]
         show["poster_url"] = url_for(
@@ -1422,7 +1456,6 @@ def api_mark_watched_shows():
         "pages": pages,
         "total": total,
         "search": search,
-        "rule_user": username,
     })
 
 
@@ -1437,10 +1470,9 @@ def api_mark_watched_seasons():
         return jsonify({"error": "Unknown Plex show"}), 404
     try:
         seasons = plex.list_show_seasons(show_key)
-        username = _current_username()
         for season in seasons:
             rule = mark_watched_rules.rule(
-                username, instance_name, library_name, show_key, season["index"],
+                instance_name, library_name, show_key, season["index"],
             )
             season["rule"] = rule
             season["poster_url"] = url_for(
@@ -1463,10 +1495,9 @@ def api_mark_watched_rules():
     _instance, _library, plex = _mark_watched_library(instance_name, library_name)
     if plex is None or not show_key.isdigit():
         return jsonify({"ok": False, "error": "Unknown Plex show"}), 404
-    username = _current_username()
     if data.get("scope") == "show" and isinstance(data.get("enabled"), bool):
         mark_watched_rules.set_show(
-            username, instance_name, library_name, show_key, data["enabled"],
+            instance_name, library_name, show_key, data["enabled"],
         )
     elif data.get("scope") == "season" and (
         isinstance(data.get("enabled"), bool) or data.get("enabled") is None
@@ -1476,7 +1507,7 @@ def api_mark_watched_rules():
         except (KeyError, TypeError, ValueError):
             return jsonify({"ok": False, "error": "Valid season_index required"}), 400
         mark_watched_rules.set_season(
-            username, instance_name, library_name, show_key,
+            instance_name, library_name, show_key,
             season_index, data.get("enabled"),
         )
     else:
@@ -1555,9 +1586,8 @@ def api_mark_watched_all():
                 continue
             for show in plex.list_tv_shows(str(section_id)):
                 show_keys.append((instance.name, library.name, show["rating_key"]))
-    mark_watched_rules.set_all(_current_username(), show_keys, enabled)
+    mark_watched_rules.set_all(show_keys, enabled)
     return jsonify({"ok": True, "enabled": enabled, "shows": len(show_keys),
-                    "users": 1,
                     "message": "Future automatic rules updated; Plex history was not changed"})
 
 
@@ -3307,7 +3337,6 @@ def api_user_delete(username: str):
             return jsonify({"ok": False, "error": "At least one administrator is required"}), 409
         auth["users"] = remaining
         _save_and_apply(raw, require_paths=False)
-        mark_watched_rules.delete_user(username)
         return jsonify({"ok": True})
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
