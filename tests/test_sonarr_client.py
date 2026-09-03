@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 import yaml
 
 import app
+from src.web import mark_watched as mark_watched_routes
 from src.config import AppConfig, AppUser, MarkWatchedConfig
 from src.auth import hash_password
 from src.sonarr_client import (
@@ -300,18 +301,18 @@ class SonarrProvisioningApiTests(unittest.TestCase):
         }
         with patch.dict(os.environ, environment, clear=True):
             self.assertEqual(
-                app._sonarr_api_key({}, "http://sonarr:8989"), "main-key",
+                mark_watched_routes._sonarr_api_key({}, "http://sonarr:8989"), "main-key",
             )
             self.assertEqual(
-                app._sonarr_api_key({}, "http://sonarr-unlimited:8989"),
+                mark_watched_routes._sonarr_api_key({}, "http://sonarr-unlimited:8989"),
                 "unlimited-key",
             )
             self.assertEqual(
-                app._sonarr_api_key({}, "http://sonarr-anime:8989"),
+                mark_watched_routes._sonarr_api_key({}, "http://sonarr-anime:8989"),
                 "fallback-key",
             )
             self.assertEqual(
-                app._sonarr_api_key(
+                mark_watched_routes._sonarr_api_key(
                     {"api_key": "typed-key"}, "http://sonarr:8989",
                 ),
                 "typed-key",
@@ -336,7 +337,7 @@ class SonarrProvisioningApiTests(unittest.TestCase):
 
     def test_status_failure_is_returned_as_json(self):
         with patch.object(
-            app, "_mark_watched_sonarr_status_response",
+        mark_watched_routes, "_mark_watched_sonarr_status_response",
             side_effect=RuntimeError("broken status"),
         ):
             response = self._client().get("/api/mark-watched/sonarr")
@@ -388,7 +389,7 @@ class SonarrProvisioningApiTests(unittest.TestCase):
 
     def test_missing_key_names_the_exact_suggested_environment_pair(self):
         with patch.dict(os.environ, {}, clear=True), \
-             patch.object(app, "SonarrClient") as constructor:
+             patch.object(mark_watched_routes, "SonarrClient") as constructor:
             response = self._client().post(
                 "/api/mark-watched/sonarr/connect",
                 json={"sonarr_url": "http://sonarr-unlimited:8989",
@@ -415,9 +416,9 @@ class SonarrProvisioningApiTests(unittest.TestCase):
             "SONARR_ANIME_API_KEY": "anime-key",
         }
         with patch.dict(os.environ, environment, clear=True), \
-             patch.object(app, "SonarrClient", return_value=sonarr) as constructor, \
+             patch.object(mark_watched_routes, "SonarrClient", return_value=sonarr) as constructor, \
              patch.object(app, "sonarr_connection", store), \
-             patch.object(app, "_ensure_sonarr_webhook_secret", return_value="secret"):
+             patch.object(mark_watched_routes, "_ensure_sonarr_webhook_secret", return_value="secret"):
             response = self._client().post(
                 "/api/mark-watched/sonarr/connect",
                 json={"sonarr_url": "http://sonarr-anime:8989",
@@ -442,9 +443,9 @@ class SonarrProvisioningApiTests(unittest.TestCase):
         store.prepare.return_value = {"connection_id": "connection-1"}
         store.success.return_value = {"status": "connected"}
         with patch.object(app, "config", config), \
-             patch.object(app, "SonarrClient", return_value=sonarr), \
+             patch.object(mark_watched_routes, "SonarrClient", return_value=sonarr), \
              patch.object(app, "sonarr_connection", store), \
-             patch.object(app, "_ensure_sonarr_webhook_secret", return_value="secret"):
+             patch.object(mark_watched_routes, "_ensure_sonarr_webhook_secret", return_value="secret"):
             response = self._client("user", ["mark_watched"]).post(
                 "/api/mark-watched/sonarr/connect",
                 json={"sonarr_url": "http://sonarr:8989", "api_key": "key",
@@ -469,7 +470,7 @@ class SonarrProvisioningApiTests(unittest.TestCase):
         store.prepare.return_value = {"connection_id": "connection-1"}
         store.success.return_value = {"status": "connected", "notification_id": 12}
         with patch.object(app, "config", config), \
-             patch.object(app, "SonarrClient", return_value=client) as constructor, \
+             patch.object(mark_watched_routes, "SonarrClient", return_value=client) as constructor, \
              patch.object(app, "sonarr_connection", store):
             response = self._client().post(
                 "/api/mark-watched/sonarr/connect",
@@ -511,7 +512,7 @@ class SonarrProvisioningApiTests(unittest.TestCase):
             store.success.return_value = {"status": "connected"}
             with patch.object(app, "CONFIG_PATH", str(config_path)), \
                  patch.object(app, "config", runtime), \
-                 patch.object(app, "SonarrClient", return_value=client), \
+                 patch.object(mark_watched_routes, "SonarrClient", return_value=client), \
                  patch.object(app, "sonarr_connection", store), \
                  patch.object(app, "_save_and_apply") as save:
                 response = self._client().post(
@@ -537,7 +538,7 @@ class SonarrProvisioningApiTests(unittest.TestCase):
         sonarr = Mock()
         sonarr.remove_webhook.return_value = 1
         with patch.object(app, "sonarr_connection", store), \
-             patch.object(app, "SonarrClient", return_value=sonarr) as constructor:
+             patch.object(mark_watched_routes, "SonarrClient", return_value=sonarr) as constructor:
             response = self._client().delete(
                 "/api/mark-watched/sonarr",
                 json={"sonarr_url": "http://sonarr:8989", "api_key": "one-time-key"},
@@ -554,7 +555,7 @@ class SonarrProvisioningApiTests(unittest.TestCase):
             "sonarr_url": "http://sonarr:8989", "status": "failed",
         }
         with patch.object(app, "sonarr_connection", store), \
-             patch.object(app, "SonarrClient") as constructor:
+             patch.object(mark_watched_routes, "SonarrClient") as constructor:
             response = self._client().delete(
                 "/api/mark-watched/sonarr",
                 json={"sonarr_url": "http://sonarr:8989"},
