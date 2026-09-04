@@ -69,6 +69,48 @@ class ApiEnvelopeTests(unittest.TestCase):
         self.assertNotIn("application/json", response.headers.get("Content-Type", ""))
 
 
+class UnhandledErrorTests(unittest.TestCase):
+    """An API route must never answer a JSON client with an HTML error page."""
+
+    def setUp(self):
+        self.client = app.app.test_client()
+        from src.config import LibraryConfig, PlexInstanceConfig
+        self.config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [LibraryConfig("TV", "physical", [])],
+        )])
+
+    def _failing_plex(self):
+        from unittest.mock import Mock
+        plex = Mock()
+        # Several feature routes reach Plex outside any try block.
+        plex.find_section_id.side_effect = OSError("Connection refused")
+        plex.get_sections.side_effect = OSError("Connection refused")
+        return plex
+
+    def test_a_plex_failure_is_reported_as_json(self):
+        with patch.object(app, "config", self.config),              patch.object(app, "plex_clients", {"Plex": self._failing_plex()}),              patch.object(app, "has_valid_api_token", return_value=True):
+            response = self.client.get(
+                "/api/mark-watched/shows?instance=Plex&library=TV",
+            )
+        self.assertTrue(response.is_json, response.get_data(as_text=True)[:200])
+        body = response.get_json()
+        self.assertIs(body["ok"], False)
+        self.assertIn("Plex", body["error"])
+        # 502, not 500: the fault is upstream, and the client can retry.
+        self.assertEqual(response.status_code, 502)
+
+    def test_a_missing_route_still_answers_json(self):
+        response = self.client.get("/api/not-a-real-route")
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(response.is_json)
+        self.assertIs(response.get_json()["ok"], False)
+
+    def test_a_page_route_keeps_its_html_error(self):
+        response = self.client.get("/not-a-page")
+        self.assertEqual(response.status_code, 404)
+        self.assertNotIn("application/json", response.headers.get("Content-Type", ""))
+
+
 class FrontendParsingTests(unittest.TestCase):
     def test_every_json_read_goes_through_the_defensive_helper(self):
         script = script_text()

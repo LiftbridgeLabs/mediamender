@@ -230,10 +230,15 @@ async function loadMarkWatchedLibraryOptions(force = false) {
   const container = document.getElementById('mark-watched-libraries');
   container.innerHTML = `<div class="empty-msg"><span class="spin"></span> Loading TV libraries from ${h(_markWatchedData.instance)}&hellip;</div>`;
   const query = new URLSearchParams({instance: _markWatchedData.instance});
-  const response = await fetch(`/api/mark-watched/options?${query}`);
-  const data = await readJsonResponse(response);
-  if (!response.ok) {
-    container.innerHTML = `<div class="empty-msg">${h(data.error || 'TV libraries could not be loaded')}</div>`;
+  let data;
+  try {
+    // This function owns the "Loading..." message above, so it has to own the
+    // failure too. A throw here used to leave that spinner on screen forever.
+    const response = await fetch(`/api/mark-watched/options?${query}`);
+    data = await readJsonResponse(response, 'Plex libraries');
+    if (!response.ok) throw new Error(data.error || 'TV libraries could not be loaded');
+  } catch (error) {
+    container.innerHTML = `<div class="empty-msg">${h(error.message || 'TV libraries could not be loaded')}</div>`;
     return;
   }
   _markWatchedData.libraries = data.libraries || [];

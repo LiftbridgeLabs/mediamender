@@ -757,6 +757,32 @@ def enforce_user_permissions():
     return None
 
 
+@app.errorhandler(Exception)
+def json_api_errors(error):
+    """Answer an unhandled API exception with JSON, not an HTML error page.
+
+    Feature routes reach out to Plex in several places that were never wrapped,
+    so a timeout or a refused connection surfaced as a 500 whose body was an
+    HTML page. The browser then reported a parse failure rather than the
+    problem, and a page mid-load simply hung.
+    """
+    status = getattr(error, "code", None)
+    if not isinstance(status, int):
+        status = 500
+    if not request.path.startswith("/api/"):
+        return error
+    if status < 500:
+        return jsonify({"ok": False, "error": getattr(error, "description", str(error))}), status
+    logger.exception("Unhandled error on %s %s", request.method, request.path)
+    return jsonify({
+        "ok": False,
+        "error": (
+            f"{type(error).__name__} while handling this request. "
+            "This is usually Plex being slow or unreachable; try again."
+        ),
+    }), 502
+
+
 @app.after_request
 def normalize_api_envelope(response):
     """Guarantee every JSON API response carries an `ok` flag.
