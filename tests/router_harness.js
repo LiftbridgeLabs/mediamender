@@ -67,6 +67,7 @@ global.window = {
   location: {href: 'http://localhost/', origin: 'http://localhost', hash: ''},
   addEventListener: (type, fn) => { if (type === 'hashchange') hashListeners.push(fn); },
   matchMedia: () => ({matches: false, addEventListener() {}}),
+  scrollTo: () => {},
 };
 global.history = {
   replaceState: (_s, _t, url) => { window.location.hash = url; },
@@ -105,6 +106,7 @@ const api = new Function(src + `
           firstAvailablePage, pageIsAvailable, goToSettings, PAGES,
           selectDashboardView, showFeatureTab, hasFeatureTabs,
           markWatchedJobBadge, renderMarkWatchedJobs,
+          set loaders(map) { for (const k in map) PAGE_LOADERS[k] = map[k]; },
           set permissions(list) {
             canAccess = p => list.includes('*') || list.includes(p);
           },
@@ -240,6 +242,32 @@ check('refusals point at the log',
       /turned away/.test(bannerFor({total: 2, outcomes: {rejected: 2}, recent: []})), true);
 check('an empty log explains itself',
       /begins at version/.test(bannerFor({total: 0, outcomes: {}, recent: []})), true);
+
+// Selecting the page you are already on must refresh it.
+const loaderCalls = [];
+api.loaders = {
+  'mark-watched': (reload) => loaderCalls.push(['mark-watched', reload]),
+  'history': (reload) => loaderCalls.push(['history', reload]),
+};
+api.permissions = ['*'];
+window.location.hash = '';
+api.showPage('history', nodes.get('nav-history'));
+check('first visit is not a reload', loaderCalls.at(-1), ['history', false]);
+api.showPage('history', nodes.get('nav-history'));
+check('same page again asks for a refresh', loaderCalls.at(-1), ['history', true]);
+api.showPage('mark-watched', nodes.get('nav-mark-watched'));
+check('moving to another page is not a reload',
+      loaderCalls.at(-1), ['mark-watched', false]);
+api.showPage('mark-watched', nodes.get('nav-mark-watched'));
+check('and that page refreshes on a second click',
+      loaderCalls.at(-1), ['mark-watched', true]);
+
+// Restoring a route is navigation, not an explicit refresh.
+loaderCalls.length = 0;
+window.location.hash = '#mark-watched';
+api.applyRoute();
+check('back or forward does not force a refetch',
+      loaderCalls.at(-1), ['mark-watched', false]);
 
 const failed = results.filter(r => !r.ok);
 for (const r of results) {

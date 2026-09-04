@@ -63,7 +63,8 @@ const PAGE_LOADERS = {
   'timestamp-repair': () => loadRepairStatus(),
   'metadata-audit': () => loadMetadataAuditStatus(),
   'library-refresh': () => loadLibraryRefreshStatus(),
-  'mark-watched': () => loadMarkWatched(),
+  // Only this loader caches, so it is the only one that needs telling.
+  'mark-watched': (reload) => loadMarkWatched(reload),
 };
 
 const PAGES = (() => {
@@ -139,6 +140,13 @@ function showPage(name, btn) {
     name = firstAvailablePage();
     btn = document.getElementById(`nav-${name}`);
   }
+  // Selecting the page you are already on is a request to refresh it, not a
+  // no-op: without this the cached loader returned immediately and the click
+  // appeared to do nothing at all.
+  // Restoring a route (back, forward, a deep link on load) is navigation, not
+  // a request to refetch, so only a real click counts.
+  const reload = !_applyingRoute
+    && !!document.getElementById(`page-${name}`)?.classList.contains('active');
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-link').forEach(b => b.classList.remove('active'));
   document.getElementById(`page-${name}`).classList.add('active');
@@ -146,7 +154,8 @@ function showPage(name, btn) {
   setRoute(name, '', true);
   if (hasFeatureTabs(name)) showFeatureTab(name, 'main');
   if (name !== 'settings') stopLogViewer();
-  PAGE_LOADERS[name]?.();
+  if (reload) window.scrollTo({top: 0, behavior: 'smooth'});
+  PAGE_LOADERS[name]?.(reload);
 }
 
 
