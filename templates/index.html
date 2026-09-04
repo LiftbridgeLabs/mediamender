@@ -377,7 +377,7 @@
 <div class="page" data-feature="mark_watched" id="page-mark-watched">
   <div class="repair-page-head">
     <div><div class="eyebrow">Automatic Plex watch rules</div><h1 class="dashboard-title">Mark-it-Watched</h1><div class="dashboard-subtitle">Choose future import rules or explicitly apply watched state to an existing show or season.</div></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-secondary" onclick="loadMarkWatched(true)">&#8635;&nbsp; Refresh Plex</button><button class="btn btn-primary" onclick="setAllMarkWatched(true)">All On</button><button class="btn btn-danger" onclick="setAllMarkWatched(false)">All Off</button></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-secondary" onclick="loadMarkWatched(true)">&#8635;&nbsp; Refresh Plex</button><button class="btn btn-primary" onclick="setAllMarkWatched(true)">All On</button><button class="btn btn-danger" onclick="setAllMarkWatched(false)">All Off</button><button class="btn btn-danger" id="mw-catch-up" onclick="applyEnabledRulesNow(this)" title="Mark existing Plex episodes watched for every show whose rule is on">Catch up now</button></div>
   </div>
   <div class="feature-tabs" role="tablist">
     <button class="feature-tab active" role="tab" aria-selected="true" data-tab="main" onclick="showFeatureTab('mark-watched','main')" id="tab-btn-mark-watched-main">Rules</button>

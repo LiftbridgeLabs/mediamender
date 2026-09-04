@@ -1,4 +1,5 @@
 import json
+import tempfile
 import time
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -238,6 +239,75 @@ class MarkWatchedUiApiTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         save.assert_called_once_with("Plex", "TV", "10", 2, False)
+
+    def test_catch_up_requires_destructive_confirmation(self):
+        response = self._client().post(
+            "/api/mark-watched/apply-rules", json={},
+            headers={"X-CSRF-Token": "known-token"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("MARK WATCHED NOW", response.get_json()["error"])
+
+    def test_catch_up_queues_every_enabled_show_and_honours_overrides(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.list_tv_shows.return_value = [
+            {"rating_key": "10", "title": "Fully On"},
+            {"rating_key": "11", "title": "Partly On"},
+            {"rating_key": "12", "title": "Rule Off"},
+        ]
+        plex.list_show_seasons.return_value = [
+            {"index": 1, "rating_key": "101"}, {"index": 2, "rating_key": "102"},
+        ]
+        rules = MarkWatchedRuleStore(tempfile.mkdtemp())
+        rules.set_show("Plex", "TV", "10", True)
+        rules.set_show("Plex", "TV", "11", True)
+        rules.set_season("Plex", "TV", "11", 2, False)   # one season opted out
+        rules.set_show("Plex", "TV", "12", False)
+
+        manager = Mock()
+        with patch.object(app, "config", config),              patch.object(app, "plex_clients", {"Plex": plex}),              patch.object(app, "mark_watched_rules", rules),              patch.object(app, "mark_watched", manager),              patch("threading.Thread") as thread:
+            response = self._client().post(
+                "/api/mark-watched/apply-rules",
+                json={"confirm": "MARK WATCHED NOW"},
+                headers={"X-CSRF-Token": "known-token"},
+            )
+            self.assertEqual(response.status_code, 202)
+            # The enumeration runs off the request thread. Run it here, still
+            # inside the patches, because it reads runtime state when it runs.
+            thread.call_args.kwargs["target"]()
+
+        queued = [call.args[0] for call in manager.enqueue_manual.call_args_list]
+        scopes = [(job["series"]["title"], job["manual"]["scope"],
+                   job["manual"].get("season_index")) for job in queued]
+        self.assertIn(("Fully On", "show", None), scopes)
+        self.assertIn(("Partly On", "season", 1), scopes)
+        self.assertNotIn(("Partly On", "season", 2), scopes)
+        self.assertNotIn("Rule Off", [name for name, _s, _i in scopes])
+
+    def test_catch_up_skips_a_hidden_library(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(
+            instances=[PlexInstanceConfig("Plex", "http://plex", "t", [library])],
+            mark_watched=MarkWatchedConfig(visible_libraries=[]),
+        )
+        plex = Mock()
+        rules = MarkWatchedRuleStore(tempfile.mkdtemp())
+        rules.set_show("Plex", "TV", "10", True)
+        manager = Mock()
+        with patch.object(app, "config", config),              patch.object(app, "plex_clients", {"Plex": plex}),              patch.object(app, "mark_watched_rules", rules),              patch.object(app, "mark_watched", manager),              patch("threading.Thread") as thread:
+            self._client().post(
+                "/api/mark-watched/apply-rules",
+                json={"confirm": "MARK WATCHED NOW"},
+                headers={"X-CSRF-Token": "known-token"},
+            )
+            thread.call_args.kwargs["target"]()
+        manager.enqueue_manual.assert_not_called()
+        plex.list_tv_shows.assert_not_called()
 
     def test_manual_apply_requires_destructive_confirmation(self):
         response = self._client().post(

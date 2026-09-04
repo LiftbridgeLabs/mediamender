@@ -483,6 +483,13 @@ use Plex-native pagination (12, 24, 36, or 48 per page); movie libraries are not
 shown. Search is scoped to the entire selected Plex TV library, and page controls
 are available both above and below the poster grid.
 
+A rule only governs future imports, so switching one on leaves every episode
+already in the library unwatched. **Catch up now**, on the Mark-it-Watched page,
+applies the rules you already have to the history Plex holds: every show whose
+rule is on is queued, seasons explicitly turned off are skipped, and progress
+appears in the activity list. It asks for confirmation first, because it writes
+real Plex watch history.
+
 The separate **Mark show watched now** and **Mark season watched now** actions
 are explicit, confirmed changes to existing Plex history. They queue durable
 background jobs, skip episodes Plex already considers watched, and report the

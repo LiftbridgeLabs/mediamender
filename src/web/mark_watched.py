@@ -14,6 +14,8 @@ import urllib.parse
 import yaml
 from flask import Blueprint, Response, jsonify, request, url_for
 
+import threading
+
 from src.auth import current_identity, has_valid_api_token, require_auth
 from src.sonarr_client import (
     SonarrClient, SonarrError, normalize_callback_url, normalize_sonarr_url,
@@ -681,6 +683,99 @@ def api_mark_watched_apply():
         "job_id": record["id"],
         "status": record["status"],
         "message": record["message"],
+    }), 202
+
+
+def _enumerate_enabled_rules():
+    """Yield (instance, library, plex, show, seasons) for every enabled rule.
+
+    Season overrides are honoured, so a show whose rule is on but which has
+    one season explicitly turned off is queued season by season rather than
+    whole.
+    """
+    for instance in runtime.config.instances:
+        plex = runtime.plex_clients.get(instance.name)
+        if plex is None:
+            continue
+        for library in instance.libraries:
+            if not runtime.config.mark_watched.shows_library(instance.name, library.name):
+                continue
+            section_id = library.section_id or plex.find_section_id(library.name)
+            if not section_id or plex.get_section_type(str(section_id)) != "show":
+                continue
+            for show in plex.list_tv_shows(str(section_id)):
+                key = show["rating_key"]
+                if not runtime.mark_watched_rules.rule(
+                    instance.name, library.name, key, 0,
+                )["show_enabled"]:
+                    continue
+                seasons = plex.list_show_seasons(key)
+                enabled = [
+                    season for season in seasons
+                    if runtime.mark_watched_rules.rule(
+                        instance.name, library.name, key, season["index"],
+                    )["enabled"]
+                ]
+                if enabled:
+                    yield instance, library, show, seasons, enabled
+
+
+@bp.route("/api/mark-watched/apply-rules", methods=["POST"])
+@require_auth
+@requires_feature("mark_watched")
+def api_mark_watched_apply_rules():
+    """Apply every enabled rule to the history Plex already has.
+
+    A rule only ever governed future imports. Turning one on left the episodes
+    already in the library untouched, and catching those up meant pressing
+    Mark show watched now once per show.
+    """
+    data = request.get_json(silent=True) or {}
+    if data.get("confirm") != "MARK WATCHED NOW":
+        return jsonify({
+            "error": "Confirmation must be MARK WATCHED NOW",
+        }), 400
+
+    def enqueue_all():
+        shows = seasons_queued = 0
+        try:
+            for instance, library, show, seasons, enabled in _enumerate_enabled_rules():
+                shows += 1
+                whole_show = len(enabled) == len(seasons)
+                targets = [None] if whole_show else [s["index"] for s in enabled]
+                for season_index in targets:
+                    manual = {
+                        "scope": "show" if season_index is None else "season",
+                        "instance": instance.name,
+                        "library": library.name,
+                        "show_rating_key": show["rating_key"],
+                    }
+                    if season_index is not None:
+                        manual["season_index"] = season_index
+                    runtime.mark_watched.enqueue_manual({
+                        "series": {"title": show.get("title", "Plex show")},
+                        "manual": manual,
+                        "rule_user": owner,
+                    })
+                    seasons_queued += 1
+            runtime.logger.info(
+                "Queued a catch-up for %s show(s) with an enabled rule (%s job(s))",
+                shows, seasons_queued,
+            )
+        except Exception:
+            runtime.logger.exception("Could not queue the Mark-it-Watched catch-up")
+
+    owner = runtime._current_username()
+    runtime.mark_watched.start()
+    threading.Thread(
+        target=enqueue_all, daemon=True, name="mark-watched-catch-up",
+    ).start()
+    return jsonify({
+        "queued": True,
+        "message": (
+            "Applying every enabled rule to existing Plex history. "
+            "Progress appears in the activity list below."
+        ),
     }), 202
 
 

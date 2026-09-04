@@ -391,6 +391,35 @@ async function setAllMarkWatched(enabled) {
   await loadMarkWatchedPage(_markWatchedData.page);
 }
 
+// A rule only governs future imports, so a show switched on today keeps every
+// episode already in the library unwatched. This applies the rules you have to
+// the history Plex already holds.
+async function applyEnabledRulesNow(button) {
+  if (!confirm(
+    'Mark existing Plex episodes watched for EVERY show whose rule is on?\n\n' +
+    'This changes real Plex watch history and cannot be undone from here. ' +
+    'Seasons you have explicitly turned off are skipped.'
+  )) return;
+  button.dataset.label ||= button.innerHTML;
+  button.disabled = true;
+  button.innerHTML = '<span class="spin"></span> Queueing&hellip;';
+  try {
+    const response = await fetch('/api/mark-watched/apply-rules', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({confirm: 'MARK WATCHED NOW'}),
+    });
+    const data = await readJsonResponse(response, 'Catch up');
+    if (!response.ok) throw new Error(data.error || 'Catch-up could not be queued');
+    toast(data.message, 'pass');
+  } catch (error) {
+    toast(error.message || 'Catch-up could not be queued', 'fail');
+  } finally {
+    button.disabled = false;
+    button.innerHTML = button.dataset.label;
+    loadMarkWatchedJobs();
+  }
+}
+
 async function applyMarkWatchedNow(showIndex, seasonIndex, episodeCount, button) {
   const show = _markWatchedData.shows[showIndex];
   const scope = seasonIndex === null ? 'show' : 'season';
