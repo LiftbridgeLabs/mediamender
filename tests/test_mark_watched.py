@@ -578,6 +578,42 @@ class MarkWatchedQueueTests(unittest.TestCase):
         self.assertIn("Attempt 2: Marked 1", trail)
         self.assertIn("  Plex::TV: marked watched", trail)
 
+    def test_a_vanished_import_stops_waiting_immediately(self):
+        import tempfile, os
+        from src.mark_watched import ImportVanished
+        folder = tempfile.mkdtemp()
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = None
+        # The folder exists but the file does not: the import is provably gone.
+        with self.assertRaises(ImportVanished):
+            process_plex_event({
+                "series": {"title": "Example Show"},
+                "episodes": [{"season": 2, "episode": 3}],
+                "episode_file": {"path": os.path.join(folder, "S02E03.mkv")},
+            }, config, {"Plex": plex}, MarkWatchedRuleStore(str(self.runtime)))
+
+    def test_an_unreadable_path_is_never_treated_as_vanished(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = None
+        # Sonarr and Plex need not share a mount, so a path this container
+        # cannot see means "cannot tell", and the job keeps waiting.
+        with self.assertRaises(PlexEpisodePending):
+            process_plex_event({
+                "series": {"title": "Example Show"},
+                "episodes": [{"season": 2, "episode": 3}],
+                "episode_file": {"path": "/not/a/mount/here/S02E03.mkv"},
+            }, config, {"Plex": plex}, MarkWatchedRuleStore(str(self.runtime)))
+
     def test_scan_requests_are_throttled_per_library(self):
         from src.mark_watched import ScanThrottle
         throttle = ScanThrottle(interval_seconds=900)

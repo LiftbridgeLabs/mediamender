@@ -413,6 +413,21 @@
         </div></div>
         {% endif %}
         <div class="card"><div class="card-body"><div class="form-group"><label class="form-label">Sonarr webhook secret</label><input class="form-input" id="mark-watched-webhook-secret" type="password" autocomplete="new-password" placeholder="Leave blank to keep the existing secret"><div class="form-hint" id="mark-watched-secret-status">Use this as X-Sonarr-Webhook-Secret or a Bearer token. The secret is never returned by the API.</div></div></div></div>
+        <div class="card"><div class="card-header"><div><div class="card-title">Waiting for Plex</div><div class="form-hint">Sonarr reports an import the moment the file lands. A symlinked debrid or webdav library can take much longer than that to appear in Plex, so mediaMender keeps checking.</div></div></div><div class="card-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="s-mw-give-up">Stop checking after</label>
+              <input class="form-input" type="number" id="s-mw-give-up" min="0" step="1">
+              <div class="form-hint">Hours. 0 keeps checking for as long as the container runs. Default 120 (five days).</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="s-mw-workers">Background workers</label>
+              <input class="form-input" type="number" id="s-mw-workers" min="1" max="16" step="1">
+              <div class="form-hint">How many imports are checked at once.</div>
+            </div>
+          </div>
+          <div class="metadata-setting-row"><div><strong>Ask Plex to scan</strong><br><span>Request a scan of the imported folder instead of only polling for it.</span></div><button type="button" class="metadata-setting-toggle" id="s-mw-scan" onclick="toggleScanOnImport()"></button></div>
+        </div></div>
         <div class="repair-section-heading"><h3 class="repair-section-title">Library visibility</h3><div class="repair-section-line"></div><button class="btn btn-secondary btn-sm" onclick="useAllMarkWatchedLibraries()">Use all configured</button></div>
         <div id="mark-watched-settings"></div>
         <div style="margin-top:18px;"><button class="btn btn-primary" onclick="settingsSave('mark-watched')" id="settings-save-btn-mark-watched">Save Mark-it-Watched Settings</button><span id="settings-save-result-mark-watched" style="margin-left:12px;font-size:14px;"></span></div>

@@ -436,10 +436,24 @@ no upper bound on how long that takes.
 So mediaMender does not give up. An episode Plex has not scanned yet leaves the
 job in a **waiting** state with a due time, and a scheduler brings it back when
 that time comes: after 15s, 30s, a minute, two, five, ten, fifteen, then every
-twenty minutes for as long as the container runs. Waiting costs nothing - the
-job is parked on disk, not holding a worker - and it survives a restart with
-its due time intact. Set `mark_watched.give_up_after_hours` if you would rather
-it stopped eventually.
+twenty minutes. Waiting costs nothing - the job is parked on disk, not holding
+a worker - and it survives a restart with its due time intact.
+
+It does not wait forever. A scan should land within hours, so an import still
+missing days later was almost certainly replaced or removed, and
+`mark_watched.give_up_after_hours` stops the job after five days by default
+(0 disables the cap). mediaMender also stops early when it can prove the point:
+if the imported file's folder is visible from the container and the file itself
+has gone, there is nothing left to wait for. A path this container cannot see
+means "cannot tell", never "missing", so a Sonarr that does not share a mount
+simply keeps waiting.
+
+**If nothing is being marked watched, look at the webhook log first.** The
+activity page lists every request Sonarr has made, including the ones turned
+away, and says plainly when there have been none. A Sonarr connection showing
+*connected* only proves its Test event reached mediaMender; it does not prove
+real imports are being sent. If the log is empty, check that the connection in
+Sonarr has **On File Import** enabled.
 
 While waiting, mediaMender asks Plex to scan the imported folder rather than
 only polling for it. If Plex rejects the path - which happens when Sonarr and

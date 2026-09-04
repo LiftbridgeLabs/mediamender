@@ -41,7 +41,8 @@ from src.web.context import config_file_lock, requires_feature, serialized_confi
 from src.timestamp_repair import TimestampRepairManager
 from src.library_refresh import LibraryRefreshManager
 from src.mark_watched import (
-    MarkWatchedManager, MarkWatchedRuleStore, process_mark_watched_event,
+    MarkWatchedManager, MarkWatchedRuleStore, WebhookLog,
+    process_mark_watched_event,
 )
 from src.sonarr_client import (
     SonarrClient, SonarrConnectionStore, SonarrError,
@@ -111,6 +112,7 @@ mark_watched = MarkWatchedManager(
     workers=config.mark_watched.workers,
     give_up_after_hours=config.mark_watched.give_up_after_hours,
 )
+webhook_log = WebhookLog(os.path.dirname(os.path.abspath(CONFIG_PATH)))
 sonarr_connection = SonarrConnectionStore(
     os.path.dirname(os.path.abspath(CONFIG_PATH)),
 )
@@ -1873,6 +1875,15 @@ def api_config_load():
             config.mark_watched.webhook_secret
         )
         mark_settings.pop("webhook_secret", None)
+        # Show the values actually in force, not just what the file happens
+        # to name, so a config predating these keys still renders correctly.
+        mark_settings.setdefault(
+            "give_up_after_hours", config.mark_watched.give_up_after_hours,
+        )
+        mark_settings.setdefault("workers", config.mark_watched.workers)
+        mark_settings.setdefault(
+            "scan_on_import", config.mark_watched.scan_on_import,
+        )
         for instance in raw.get("plex_instances", []):
             if isinstance(instance, dict):
                 instance["token_configured"] = bool(instance.get("token"))

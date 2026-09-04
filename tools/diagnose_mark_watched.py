@@ -118,6 +118,14 @@ def report_jobs(jobs: dict) -> None:
         return
     counts = collections.Counter(job.get("status", "?") for job in jobs.values())
     print("  " + ", ".join(f"{status}: {count}" for status, count in counts.most_common()))
+    sources = collections.Counter(
+        "manual" if (job.get("event", {}) or {}).get("source") == "manual"
+        else "sonarr import" for job in jobs.values()
+    )
+    print("  " + ", ".join(f"{name}: {count}" for name, count in sources.most_common()))
+    if not sources.get("sonarr import"):
+        print("    -> Every job here was started by hand. No Sonarr import has")
+        print("       ever been queued.")
     recent = sorted(jobs.values(), key=lambda job: job.get("updated_at", ""), reverse=True)
     for job in recent[:5]:
         title = (job.get("event", {}).get("series", {}) or {}).get("title", "?")
@@ -125,6 +133,26 @@ def report_jobs(jobs: dict) -> None:
         print(f"      {job.get('message', '')}")
         for entry in (job.get("log") or [])[-6:]:
             print(f"      | {entry.get('message', '')}")
+
+
+def report_webhooks(log: dict) -> None:
+    heading("Sonarr webhook requests")
+    attempts = (log or {}).get("attempts") or []
+    if not attempts:
+        print("  None recorded. Sonarr has never called this endpoint.")
+        print("    -> Automatic rules only run when Sonarr calls the webhook.")
+        print("       A 'connected' status means the Test event worked, which")
+        print("       proves the URL is reachable but not that real imports")
+        print("       are being sent. Check that the connection in Sonarr has")
+        print("       'On File Import' (onDownload) enabled.")
+        return
+    counts = collections.Counter(entry.get("outcome", "?") for entry in attempts)
+    print("  " + ", ".join(f"{name}: {count}" for name, count in counts.most_common()))
+    for entry in attempts[:8]:
+        print(f"  {entry.get('at', '')[:19]}  {entry.get('outcome', ''):9s} "
+              f"{entry.get('event_type', '-'):16s} {entry.get('series', '')}")
+        if entry.get("detail"):
+            print(f"      {entry['detail']}")
 
 
 def report_sonarr(state: dict) -> None:
@@ -194,6 +222,7 @@ def main() -> None:
 
     report_config(raw)
     enabled_rules = report_rules(load(data / "mark-watched-rules.json", {}) or {})
+    report_webhooks(load(data / "sonarr-webhook-log.json", {}) or {})
     report_jobs(load(data / "mark-watched-jobs.json", {}) or {})
     report_sonarr(load(data / "sonarr-webhook.json", {}) or {})
     if args.plex:

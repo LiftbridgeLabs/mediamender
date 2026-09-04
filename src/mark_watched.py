@@ -22,6 +22,10 @@ logger = logging.getLogger("mediamender.mark_watched")
 LOG_TRAIL_LIMIT = 60
 
 
+class ImportVanished(Exception):
+    """The imported file is gone, so there is nothing left to wait for."""
+
+
 class PlexEpisodePending(Exception):
     """Raised when Sonarr is finished but Plex has not matched the episode yet."""
 
@@ -111,6 +115,66 @@ def webhook_key(event: dict) -> str:
     }
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+class WebhookLog:
+    """Remember every inbound Sonarr request, accepted or not.
+
+    Only accepted imports became job records, so a webhook rejected for a bad
+    secret or an event type we do not queue left no trace at all. An operator
+    whose imports were never arriving saw exactly the same empty activity list
+    as one whose Sonarr was never calling.
+    """
+
+    def __init__(self, data_dir: str, limit: int = 50):
+        self.path = Path(data_dir) / "sonarr-webhook-log.json"
+        self.limit = int(limit)
+        self._lock = threading.RLock()
+        self._attempts = self._load()
+
+    def _load(self) -> list:
+        try:
+            value = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        attempts = value.get("attempts") if isinstance(value, dict) else value
+        return list(attempts) if isinstance(attempts, list) else []
+
+    def record(self, *, outcome: str, detail: str = "", event_type: str = "",
+               series: str = "", remote: str = "") -> None:
+        entry = {
+            "at": _utc_now(),
+            "outcome": outcome,
+            "detail": detail,
+            "event_type": event_type,
+            "series": series,
+            "remote": remote,
+        }
+        with self._lock:
+            self._attempts.insert(0, entry)
+            del self._attempts[self.limit:]
+            try:
+                atomic_write_json(str(self.path), {"attempts": self._attempts})
+            except OSError:
+                logger.warning("Could not persist the Sonarr webhook log")
+        logger.info("Sonarr webhook %s from %s (%s) %s",
+                    outcome, remote or "unknown", event_type or "no event type", detail)
+
+    def recent(self, limit: int = 20) -> list:
+        with self._lock:
+            return [dict(entry) for entry in self._attempts[:limit]]
+
+    def summary(self) -> dict:
+        with self._lock:
+            attempts = list(self._attempts)
+        counts: dict[str, int] = {}
+        for entry in attempts:
+            counts[entry.get("outcome", "?")] = counts.get(entry.get("outcome", "?"), 0) + 1
+        return {
+            "total": len(attempts),
+            "outcomes": counts,
+            "last_at": attempts[0]["at"] if attempts else "",
+        }
 
 
 class MarkWatchedManager:
@@ -332,6 +396,13 @@ class MarkWatchedManager:
             self._update(job_id, status="succeeded", result=result, message=message)
             self._log(job_id, f"Attempt {attempt}: {message}", result.get("details"))
             logger.info("Mark-it-Watched job %s succeeded: %s", job_id[:12], message)
+        except ImportVanished as exc:
+            self._update(
+                job_id, status="failed",
+                message=f"Stopped waiting: {exc}",
+            )
+            self._log(job_id, f"Attempt {attempt}: stopped waiting, {exc}")
+            logger.info("Mark-it-Watched job %s abandoned: %s", job_id[:12], exc)
         except PlexEpisodePending as exc:
             self._log(job_id, f"Attempt {attempt}: Plex has not matched {exc}",
                       getattr(exc, "details", None))
@@ -598,6 +669,28 @@ class MarkWatchedRuleStore:
             self._save()
 
 
+def imported_file_missing(event: dict) -> str:
+    """Return a reason when Sonarr's imported file is provably gone.
+
+    Sonarr and mediaMender do not always share a mount, so an unreadable path
+    means "cannot tell" and never "missing" - only a parent directory this
+    container can actually see makes the file's absence meaningful.
+    """
+    path = str(event.get("episode_file", {}).get("path", ""))
+    if not path:
+        return ""
+    try:
+        target = Path(path)
+        if target.exists():
+            return ""
+        parent = target.parent
+        if not parent.exists():
+            return ""
+        return f"the imported file is gone from {parent}"
+    except OSError:
+        return ""
+
+
 class ScanThrottle:
     """Rate-limit Plex scan requests per library.
 
@@ -714,6 +807,12 @@ def process_plex_event(event: dict, app_config, clients: dict,
                 )
     missing = expected_coordinates - matched_coordinates
     if missing:
+        # An import that will never appear is usually one that was replaced or
+        # removed behind the symlink. When the path is visible from here, that
+        # is knowable now rather than after the give-up window.
+        vanished = imported_file_missing(event)
+        if vanished:
+            raise ImportVanished(vanished)
         coordinates = ", ".join(
             f"S{season:02d}E{episode:02d}" for season, episode in sorted(missing)
         )

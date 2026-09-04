@@ -69,30 +69,56 @@ def _ensure_sonarr_webhook_secret() -> str:
 
 @bp.route("/api/webhooks/sonarr", methods=["POST"])
 def api_sonarr_webhook():
-    """Accept only completed imports and hand them to the durable worker."""
+    """Accept only completed imports and hand them to the durable worker.
+
+    Every outcome is written to the webhook log, including the rejections,
+    because "Sonarr never called" and "Sonarr called and we turned it away"
+    used to look identical from the activity page.
+    """
+    payload = request.get_json(silent=True)
+    payload = payload if isinstance(payload, dict) else {}
+    remote = request.headers.get("X-Forwarded-For", request.remote_addr or "")
+    event_type = str(payload.get("eventType", ""))
+    series = str((payload.get("series") or {}).get("title", ""))
+
+    def reject(outcome: str, detail: str, status: int):
+        runtime.webhook_log.record(
+            outcome=outcome, detail=detail, event_type=event_type,
+            series=series, remote=remote,
+        )
+        return jsonify({"ok": False, "error": detail}), status
+
     if not _valid_sonarr_webhook_auth():
-        return jsonify({"ok": False, "error": "Unauthorized Sonarr webhook"}), 401
+        return reject("rejected", "Unauthorized Sonarr webhook", 401)
     # Checked after the secret so an unauthenticated caller cannot learn
     # which features this install has switched on.
     if not runtime.config.features.mark_watched:
-        return jsonify({"ok": False, "error": "Mark-it-Watched is disabled"}), 409
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return jsonify({"ok": False, "error": "A JSON webhook payload is required"}), 400
+        return reject("rejected", "Mark-it-Watched is disabled", 409)
+    if not payload:
+        return reject("rejected", "A JSON webhook payload is required", 400)
     connection_id = request.headers.get("X-MediaMender-Connection-ID", "").strip()
     if connection_id:
         owner = runtime.sonarr_connection.owner_for(connection_id)
         if not owner:
-            return jsonify({"ok": False, "error": "Unknown Sonarr connection"}), 401
+            return reject("rejected", "Unknown Sonarr connection", 401)
         payload = dict(payload)
         payload["_mediamender_user"] = owner
         payload["_mediamender_connection"] = connection_id
     try:
         record, created = runtime.mark_watched.enqueue(payload)
     except ValueError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
+        return reject("ignored", str(exc), 400)
     if record is None:
+        runtime.webhook_log.record(
+            outcome="test", detail="Sonarr test event", event_type=event_type,
+            series=series, remote=remote,
+        )
         return jsonify({"ok": True, "test": True, "message": "Sonarr webhook authenticated"})
+    runtime.webhook_log.record(
+        outcome="queued" if created else "duplicate",
+        detail=record.get("message", ""), event_type=event_type,
+        series=series, remote=remote,
+    )
     return jsonify({
         "ok": True,
         "queued": created,
@@ -110,6 +136,10 @@ def api_mark_watched_status():
         **runtime.mark_watched.status(),
         "workers": runtime.mark_watched.workers,
         "live_workers": runtime.mark_watched.live_workers(),
+        "webhooks": {
+            **runtime.webhook_log.summary(),
+            "recent": runtime.webhook_log.recent(10),
+        },
     })
 
 

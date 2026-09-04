@@ -22,9 +22,10 @@ mark_watched:
   # Ask Plex to scan the imported folder while waiting, instead of only polling.
   # Requests are rate-limited to one per library per 15 minutes.
   scan_on_import: true
-  # 0 keeps checking for as long as the container runs, which is what a webdav
-  # or debrid library needs. Set hours here to give up instead.
-  give_up_after_hours: 0
+  # Stop checking after this many hours. A scan should land well inside this,
+  # so an import that never appears was almost certainly replaced or removed.
+  # 0 disables the cap and checks for as long as the container runs.
+  give_up_after_hours: 120  # five days
   # Background workers that process queued imports. More workers stop one
   # import waiting on a Plex scan from blocking every later webhook.
   workers: 4

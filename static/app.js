@@ -441,17 +441,35 @@ function renderMarkWatchedJobs(data) {
   const health = workers && live < workers
     ? `<div class="repair-warning">Only ${live} of ${workers} Mark-it-Watched workers are running. Select <strong>Run pending jobs now</strong> to restart the pool.</div>`
     : '';
-  target.innerHTML = health + (jobs.length ? jobs.map(job => {
+  // Sonarr calling and being turned away used to look the same as Sonarr never
+  // calling. Say which of the two is happening.
+  const hooks = data.webhooks || {};
+  const outcomes = hooks.outcomes || {};
+  const banner = !hooks.total
+    ? `<div class="repair-warning">No Sonarr import has ever reached ${h(PRODUCT_NAME)}. Automatic rules only run when Sonarr calls the webhook, so check the connection under <strong>Configure</strong>, and that the callback URL is one the Sonarr container can reach.</div>`
+    : (!outcomes.queued && !outcomes.duplicate)
+      ? `<div class="repair-warning">Sonarr has called ${hooks.total} time${hooks.total===1?'':'s'} but no import has been queued yet (${h(Object.entries(outcomes).map(([k,v])=>`${v} ${k}`).join(', '))}). See the webhook log below.</div>`
+      : '';
+  const hookRows = (hooks.recent || []).length
+    ? `<details class="mw-job-log" style="margin:0 0 14px;"><summary>Sonarr webhook log &mdash; ${hooks.total} recent request${hooks.total===1?'':'s'}</summary><pre>${
+        (hooks.recent || []).map(entry =>
+          `${h(fmtStamp(entry.at))}  ${h((entry.outcome||'').padEnd(9))} ${h(entry.event_type||'-')}  ${h(entry.series||'')}  ${h(entry.detail||'')}`
+        ).join('\n')}</pre></details>`
+    : '';
+  target.innerHTML = health + banner + hookRows + (jobs.length ? jobs.map(job => {
     const source = job.event?.source === 'manual' ? `Manual ${job.event?.manual?.scope || 'update'}` : 'Sonarr webhook';
     const attempts = Number(job.attempts || 0);
     const result = job.result || {};
+    // A waiting job is normal progress, not a stall: say when it looks again.
+    const nextCheck = job.status === 'waiting' && job.next_attempt_at
+      ? ` · next check ${h(fmtIn(job.next_attempt_at))}` : '';
     const counts = result.matched !== undefined ? ` · ${Number(result.marked || 0)} marked · ${Number(result.matched || 0)} matched` : '';
     const trail = job.log || [];
     const log = trail.length
       ? `<details class="mw-job-log"><summary>${trail.length} log line${trail.length===1?'':'s'}</summary><pre>${trail.map(entry =>
           `${h(fmtStamp(entry.at))}  ${h(entry.message || '')}`).join('\n')}</pre></details>`
       : '';
-    return `<div class="repair-history-item"><span class="badge ${markWatchedJobBadge(job)}">${h(job.status)}</span><div><div class="repair-history-title">${h(job.event?.series?.title || 'Plex update')}</div><div class="repair-history-meta">${h(source)} · ${h(fmtAgo(job.updated_at || job.created_at))}${attempts?` · attempt ${attempts}`:''}${counts}<br>${h(job.message || '')}</div>${log}</div></div>`;
+    return `<div class="repair-history-item"><span class="badge ${markWatchedJobBadge(job)}">${h(job.status)}</span><div><div class="repair-history-title">${h(job.event?.series?.title || 'Plex update')}</div><div class="repair-history-meta">${h(source)} · ${h(fmtAgo(job.updated_at || job.created_at))}${attempts?` · attempt ${attempts}`:''}${nextCheck}${counts}<br>${h(job.message || '')}</div>${log}</div></div>`;
   }).join('') : '<div class="empty-msg">No automatic or manual jobs yet.</div>');
 }
 
@@ -1074,6 +1092,14 @@ function fmtAgo(iso) {
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
 }
+function fmtIn(iso) {
+  if (!iso) return 'soon';
+  const seconds = Math.round((new Date(iso) - Date.now()) / 1000);
+  if (seconds <= 0) return 'now';
+  if (seconds < 90) return `in ${seconds}s`;
+  if (seconds < 5400) return `in ${Math.round(seconds / 60)}m`;
+  return `in ${(seconds / 3600).toFixed(1)}h`;
+}
 function fmtStamp(iso) {
   if (!iso) return '--:--:--';
   const at = new Date(iso);
@@ -1504,6 +1530,9 @@ async function loadSettings() {
     };
     _settingsData.mark_watched = {
       visible_libraries: Array.isArray(cfg.mark_watched?.visible_libraries) ? cfg.mark_watched.visible_libraries : null,
+      give_up_after_hours: cfg.mark_watched?.give_up_after_hours ?? 120,
+      workers: cfg.mark_watched?.workers ?? 4,
+      scan_on_import: cfg.mark_watched?.scan_on_import !== false,
       webhook_secret: '',
       webhook_secret_configured: cfg.mark_watched?.webhook_secret_configured === true,
       retry_delays: cfg.mark_watched?.retry_delays || [10,30,60,120,300],
@@ -1872,6 +1901,16 @@ function renderMarkWatchedSettings() {
         return `<div class="metadata-setting-row"><div><strong>${h(library.name)}</strong><br><span>${visible?'Shown on Mark-it-Watched':'Hidden from Mark-it-Watched'}</span></div><button type="button" class="metadata-setting-toggle ${visible?'':'ignored'}" onclick="setMarkWatchedLibraryVisibility(${instanceIndex},${libraryIndex},${!visible})"><span>${visible?'Visible':'Hidden'}</span><span>${visible?'Users can set rules':'Excluded from rules page'}</span></button></div>`;
       }).join('') || '<div class="empty-msg">No libraries configured.</div>'}
     </div></div></section>`).join('') || '<div class="empty-msg">No Plex instances configured.</div>';
+  const giveUp = document.getElementById('s-mw-give-up');
+  if (giveUp) giveUp.value = _settingsData.mark_watched.give_up_after_hours ?? 120;
+  const workers = document.getElementById('s-mw-workers');
+  if (workers) workers.value = _settingsData.mark_watched.workers ?? 4;
+  const scan = document.getElementById('s-mw-scan');
+  if (scan) {
+    const on = _settingsData.mark_watched.scan_on_import !== false;
+    scan.classList.toggle('ignored', !on);
+    scan.innerHTML = `<span>${on?'Enabled':'Disabled'}</span><span>${on?'Asks Plex to scan':'Polls only'}</span>`;
+  }
   const status = document.getElementById('mark-watched-secret-status');
   if (status) status.textContent = `${_settingsData.mark_watched.webhook_secret_configured?'A secret is configured. ':''}Use X-Sonarr-Webhook-Secret or Bearer authentication. The secret is never returned by the API.`;
 }
@@ -1990,6 +2029,12 @@ function setMarkWatchedLibraryVisibility(instanceIndex, libraryIndex, visible) {
   const values = new Set(_settingsData.mark_watched.visible_libraries);
   if (visible) values.add(key); else values.delete(key);
   _settingsData.mark_watched.visible_libraries = [...values];
+  renderMarkWatchedSettings();
+}
+
+function toggleScanOnImport() {
+  _settingsData.mark_watched.scan_on_import =
+    _settingsData.mark_watched.scan_on_import === false;
   renderMarkWatchedSettings();
 }
 
@@ -2555,6 +2600,8 @@ const SETTINGS_SECTION_PAYLOAD = {
     mark_watched: {
       ..._settingsData.mark_watched,
       webhook_secret: document.getElementById('mark-watched-webhook-secret')?.value || '',
+      give_up_after_hours: Math.max(0, parseFloat(document.getElementById('s-mw-give-up')?.value ?? '120') || 0),
+      workers: Math.min(16, Math.max(1, parseInt(document.getElementById('s-mw-workers')?.value ?? '4') || 4)),
     },
   }),
   'features': () => ({ features: _settingsData.features }),
