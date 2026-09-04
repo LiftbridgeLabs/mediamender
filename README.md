@@ -141,10 +141,20 @@ Normal Unraid and Compose installations should use
 
 ## Configuration
 
-Config lives at `/app/data/config.yml` (your host's data directory). The Settings
-page can validate and apply changes immediately, including additions, removals,
-schedules, paths, credentials, notifications, authentication, and log level.
-Restart only after changing container runtime variables or volume mappings.
+Config lives at `/app/data/config.yml` (your host's data directory). Changes
+are validated and applied immediately. Restart only after changing container
+runtime variables or volume mappings.
+
+Each feature is configured on its own page, under a **Configure** tab beside
+what that feature does: Trash Removal's libraries and schedule, Library
+Refresh's scheduled libraries, Mark-it-Watched's Sonarr connections, Metadata
+Health's exclusions, and Timestamp Repair's databases and workers. **Settings**
+holds what spans features - Plex Instances, Features, Providers, Notifications,
+General, Security and About.
+
+Saving writes only the section you are on. Every page and tab has an address,
+so `#mark-watched/configure` is a link, the back button retraces your steps,
+and a reload returns you where you were.
 
 ### Library types
 
