@@ -78,8 +78,17 @@ class FeatureConfig:
 class MarkWatchedConfig:
     webhook_secret: str = ""
     retry_delays: List[int] = field(default_factory=lambda: [10, 30, 60, 120, 300])
+    # None means "every TV library"; an empty list means "none of them". That
+    # distinction is easy to get wrong at a call site, so ask shows_library()
+    # rather than comparing against None directly.
     visible_libraries: Optional[List[str]] = None
     workers: int = 4
+
+    def shows_library(self, instance: str, library: str) -> bool:
+        """Whether this Plex library is visible to Mark-it-Watched."""
+        if self.visible_libraries is None:
+            return True
+        return f"{instance}::{library}" in set(self.visible_libraries)
 
 
 @dataclass

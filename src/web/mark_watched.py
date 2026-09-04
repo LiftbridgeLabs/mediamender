@@ -390,8 +390,6 @@ def api_mark_watched_sonarr_remove():
 @require_auth
 @requires_feature("mark_watched")
 def api_mark_watched_libraries():
-    configured_visibility = runtime.config.mark_watched.visible_libraries
-    visible = set(configured_visibility or [])
     result = []
     with runtime._runtime_lock:
         instances = list(runtime.config.instances)
@@ -401,7 +399,7 @@ def api_mark_watched_libraries():
             continue
         for library in instance.libraries:
             library_key = f"{instance.name}::{library.name}"
-            if configured_visibility is not None and library_key not in visible:
+            if not runtime.config.mark_watched.shows_library(instance.name, library.name):
                 continue
             section_id = library.section_id or plex.find_section_id(library.name)
             if not section_id or plex.get_section_type(str(section_id)) != "show":
@@ -436,20 +434,17 @@ def api_mark_watched_libraries():
 def api_mark_watched_options():
     """List configured servers, then TV libraries for one selected server."""
     requested = str(request.args.get("instance", "")).strip()
-    configured_visibility = runtime.config.mark_watched.visible_libraries
-    visible = set(configured_visibility or [])
+    shows_library = runtime.config.mark_watched.shows_library
     with runtime._runtime_lock:
         instances = list(runtime.config.instances)
     available_instances = [{
         "name": instance.name,
         "library_count": sum(
             1 for library in instance.libraries
-            if configured_visibility is None
-            or f"{instance.name}::{library.name}" in visible
+            if shows_library(instance.name, library.name)
         ),
     } for instance in instances if any(
-        configured_visibility is None
-        or f"{instance.name}::{library.name}" in visible
+        shows_library(instance.name, library.name)
         for library in instance.libraries
     )]
     if not requested:
@@ -470,7 +465,7 @@ def api_mark_watched_options():
     libraries = []
     for library in instance.libraries:
         key = f"{instance.name}::{library.name}"
-        if configured_visibility is not None and key not in visible:
+        if not shows_library(instance.name, library.name):
             continue
         section = by_id.get(str(library.section_id or "")) or by_title.get(library.name)
         if not section or section.get("type") != "show":
@@ -502,10 +497,7 @@ def api_mark_watched_shows():
     instance, library, plex = _mark_watched_library(instance_name, library_name)
     if instance is None or library is None or plex is None:
         return jsonify({"error": "Unknown Plex TV library"}), 404
-    configured_visibility = runtime.config.mark_watched.visible_libraries
-    if configured_visibility is not None and (
-        f"{instance_name}::{library_name}" not in set(configured_visibility)
-    ):
+    if not runtime.config.mark_watched.shows_library(instance_name, library_name):
         return jsonify({"error": "This Plex library is hidden in Settings"}), 404
     section_id = library.section_id or plex.find_section_id(library.name)
     if not section_id or plex.get_section_type(str(section_id)) != "show":
@@ -666,15 +658,13 @@ def api_mark_watched_all():
     if data.get("confirm") != expected:
         return jsonify({"ok": False, "error": f"Confirmation must be {expected or 'valid'}"}), 400
     show_keys = []
-    configured_visibility = runtime.config.mark_watched.visible_libraries
-    visible = set(configured_visibility or [])
+    shows_library = runtime.config.mark_watched.shows_library
     for instance in runtime.config.instances:
         plex = runtime.plex_clients.get(instance.name)
         if plex is None:
             continue
         for library in instance.libraries:
-            key = f"{instance.name}::{library.name}"
-            if configured_visibility is not None and key not in visible:
+            if not shows_library(instance.name, library.name):
                 continue
             section_id = library.section_id or plex.find_section_id(library.name)
             if not section_id or plex.get_section_type(str(section_id)) != "show":

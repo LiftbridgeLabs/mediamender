@@ -503,8 +503,6 @@ def process_plex_event(event: dict, app_config, clients: dict,
         (episode["season"], episode["episode"]) for episode in event["episodes"]
     }
     matched_coordinates = set()
-    configured_visibility = app_config.mark_watched.visible_libraries
-    visible = set(configured_visibility or [])
     searched = []
     for instance in app_config.instances:
         plex = clients.get(instance.name)
@@ -513,7 +511,7 @@ def process_plex_event(event: dict, app_config, clients: dict,
             continue
         for library in instance.libraries:
             library_key = f"{instance.name}::{library.name}"
-            if configured_visibility is not None and library_key not in visible:
+            if not app_config.mark_watched.shows_library(instance.name, library.name):
                 details.append(f"{library_key}: skipped, hidden in Settings")
                 continue
             section_id = library.section_id or plex.find_section_id(library.name)
@@ -609,10 +607,7 @@ def process_manual_event(event: dict, app_config, clients: dict) -> dict:
     plex = clients.get(instance_name)
     if instance is None or library is None or plex is None:
         raise ValueError("Configured Plex TV library was not found")
-    configured_visibility = app_config.mark_watched.visible_libraries
-    if configured_visibility is not None and (
-        f"{instance_name}::{library_name}" not in set(configured_visibility)
-    ):
+    if not app_config.mark_watched.shows_library(instance_name, library_name):
         raise ValueError("This Plex library is hidden in Settings")
     section_id = library.section_id or plex.find_section_id(library.name)
     if not section_id or plex.get_section_type(str(section_id)) != "show":

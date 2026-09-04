@@ -177,7 +177,7 @@ async function loadMarkWatched(force = false) {
   container.innerHTML = '<div class="empty-msg"><span class="spin"></span> Loading configured Plex servers&hellip;</div>';
   try {
     const response = await fetch('/api/mark-watched/options');
-    const data = await response.json();
+    const data = await readJsonResponse(response);
     if (!response.ok) throw new Error(data.error || 'Plex servers could not be loaded');
     _markWatchedData.instances = data.instances || [];
     const saved = localStorage.getItem(markWatchedStorageKey('instance')) || '';
@@ -222,7 +222,7 @@ async function loadMarkWatchedLibraryOptions(force = false) {
   container.innerHTML = `<div class="empty-msg"><span class="spin"></span> Loading TV libraries from ${h(_markWatchedData.instance)}&hellip;</div>`;
   const query = new URLSearchParams({instance: _markWatchedData.instance});
   const response = await fetch(`/api/mark-watched/options?${query}`);
-  const data = await response.json();
+  const data = await readJsonResponse(response);
   if (!response.ok) {
     container.innerHTML = `<div class="empty-msg">${h(data.error || 'TV libraries could not be loaded')}</div>`;
     return;
@@ -273,7 +273,7 @@ async function loadMarkWatchedPage(page = 1, scrollToControls = false) {
   if (_markWatchedData.search) query.set('q', _markWatchedData.search);
   try {
     const response = await fetch(`/api/mark-watched/shows?${query}`, {signal:_markWatchedAbort.signal});
-    const data = await response.json();
+    const data = await readJsonResponse(response);
     if (!response.ok) throw new Error(data.error || 'Plex shows could not be loaded');
     Object.assign(_markWatchedData, data, {loaded:true});
     renderMarkWatchedLibraries();
@@ -329,7 +329,7 @@ async function setShowRule(showIndex, enabled) {
     body:JSON.stringify({scope:'show', enabled, instance:_markWatchedData.instance,
       library:_markWatchedData.library, show_rating_key:show.rating_key}),
   });
-  const data = await response.json();
+  const data = await readJsonResponse(response);
   if (!response.ok) return toast(data.error || 'Rule could not be saved', 'fail');
   show.rule_enabled = enabled;
   renderMarkWatchedLibraries();
@@ -345,7 +345,7 @@ async function toggleMarkWatchedSeasons(showIndex) {
   const query = new URLSearchParams({instance:_markWatchedData.instance, library:_markWatchedData.library, show:show.rating_key});
   try {
     const response = await fetch(`/api/mark-watched/seasons?${query}`);
-    const data = await response.json();
+    const data = await readJsonResponse(response);
     if (!response.ok) throw new Error(data.error || 'Seasons could not be loaded');
     target.innerHTML = `<div class="mw-season-grid">${data.seasons.map(season => `
       <article class="mw-season">
@@ -370,7 +370,7 @@ async function setSeasonRule(showIndex, seasonIndex, enabled) {
     body:JSON.stringify({scope:'season', enabled, season_index:seasonIndex,
       instance:_markWatchedData.instance, library:_markWatchedData.library, show_rating_key:show.rating_key}),
   });
-  const data = await response.json();
+  const data = await readJsonResponse(response);
   if (!response.ok) return toast(data.error || 'Season rule could not be saved', 'fail');
   const target = document.getElementById(`mw-seasons-${showIndex}`);
   target.classList.remove('open');
@@ -385,7 +385,7 @@ async function setAllMarkWatched(enabled) {
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({enabled, confirm:phrase}),
   });
-  const data = await response.json();
+  const data = await readJsonResponse(response);
   if (!response.ok) return toast(data.error || 'Bulk rule update failed', 'fail');
   toast(`${phrase}: ${data.shows} future show rules updated; Plex history unchanged`, 'pass');
   await loadMarkWatchedPage(_markWatchedData.page);
@@ -409,7 +409,7 @@ async function applyMarkWatchedNow(showIndex, seasonIndex, episodeCount, button)
     const response = await fetch('/api/mark-watched/apply', {
       method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload),
     });
-    const data = await response.json();
+    const data = await readJsonResponse(response);
     if (!response.ok) throw new Error(data.error || 'Manual watch update could not be queued');
     await loadMarkWatchedJobs();
     toast(`${label}: watch update queued`, 'pass');
@@ -461,7 +461,7 @@ async function retryMarkWatchedJobs(button) {
   button.innerHTML = '<span class="spin"></span> Queueing&hellip;';
   try {
     const response = await fetch('/api/mark-watched/retry', { method: 'POST' });
-    const data = await response.json();
+    const data = await readJsonResponse(response);
     if (!response.ok) throw new Error(data.error || 'Pending jobs could not be re-queued');
     toast(data.message, data.requeued ? 'pass' : '');
   } catch (error) {
@@ -476,7 +476,7 @@ async function retryMarkWatchedJobs(button) {
 async function loadMarkWatchedJobs() {
   try {
     const response = await fetch('/api/mark-watched/status');
-    const data = await response.json();
+    const data = await readJsonResponse(response);
     if (response.ok) renderMarkWatchedJobs(data);
   } catch (_) {}
 }
@@ -528,7 +528,7 @@ function renderLibraryRefreshStatus(status) {
 async function runLibraryRefresh(instance,library) {
   if (!confirm(`Request a full Plex refresh for ${instance} / ${library}?\n\nPlex performs the scan asynchronously. Empty Trash will be held for this library during its configured safety period.`)) return;
   const response=await fetch('/api/library-refresh/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance,library})});
-  const data=await response.json();
+  const data=await readJsonResponse(response);
   if (!response.ok) return toast(data.error||'Refresh could not start','fail');
   toast('Library refresh request queued','warn'); setTimeout(loadLibraryRefreshStatus,400);
 }
@@ -536,7 +536,7 @@ async function runLibraryRefresh(instance,library) {
 async function runEnabledLibraryRefreshes() {
   if (!confirm('Refresh every scheduled library now?\n\nRequests are sent sequentially and each library receives its configured Empty Trash safety hold.')) return;
   const response=await fetch('/api/library-refresh/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled_only:true})});
-  const data=await response.json();
+  const data=await readJsonResponse(response);
   if (!response.ok) return toast(data.error||'Refresh queue could not start','fail');
   toast(`Queued ${data.libraries} library refresh request(s)`,'warn'); setTimeout(loadLibraryRefreshStatus,400);
 }
@@ -553,7 +553,7 @@ async function loadMetadataAuditStatus() {
   const grid = document.getElementById('metadata-audit-grid');
   try {
     const response = await fetch('/api/metadata-audit/status');
-    _metadataAuditStatus = await response.json();
+    _metadataAuditStatus = await readJsonResponse(response);
     renderMetadataAudits(_metadataAuditStatus);
     updateMetadataRollup(_metadataAuditStatus);
   } catch (error) {
@@ -683,7 +683,7 @@ async function runMetadataAudit(instance, button) {
   button.innerHTML = '<span class="spin"></span> scanning&hellip;';
   try {
     const response = await fetch('/api/metadata-audit/run', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance})});
-    const result = await response.json();
+    const result = await readJsonResponse(response);
     if (!response.ok) throw new Error(result.error || 'Metadata scan failed');
     expandMetadataProblems(instance, result);
     toast(`Scan found ${result.unmatched_count} unmatched item(s) on ${instance}`, result.unmatched_count ? 'warn' : 'pass');
@@ -703,7 +703,7 @@ async function scanAllMetadata(button) {
     button.innerHTML = `<span class="spin"></span> scanning ${index + 1} of ${instances.length}&hellip;`;
     try {
       const response = await fetch('/api/metadata-audit/run', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:instances[index]})});
-      const result = await response.json();
+      const result = await readJsonResponse(response);
       if (!response.ok) throw new Error(result.error || 'scan failed');
       expandMetadataProblems(instances[index], result);
     } catch (error) { failures++; }
@@ -745,7 +745,7 @@ function pathStateLabel(state) {
 async function loadRepairStatus() {
   try {
     const response = await fetch('/api/timestamp-repair/status');
-    _repairStatus = await response.json();
+    _repairStatus = await readJsonResponse(response);
     renderRepairOverview(_repairStatus);
     updateRepairRollup(_repairStatus);
     if (_repairStatus.running || _repairStatus.active_transaction) {
@@ -879,7 +879,7 @@ function setAllRepairDetails(expanded) {
 async function auditRepair(instance) {
   toast(`Auditing ${instance}...`);
   const response = await fetch('/api/timestamp-repair/audit', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance})});
-  const data = await response.json();
+  const data = await readJsonResponse(response);
   if (!response.ok) return toast(data.error || 'Audit failed', 'fail');
   toast(`Found ${data.distinct_files} affected file(s)`, data.distinct_files ? 'warn' : 'pass');
   await loadRepairStatus();
@@ -924,7 +924,7 @@ async function runRepairFolder(instance, section, folder, files, libraryType) {
   const exact = files.map(file => `  • ${file.file_path}\n    Plex timestamp: ${file.stored_timestamp} → positive value assigned and verified by Plex`).join('\n');
   if (!confirm(`Repair this ${scope}?\n\n${PRODUCT_NAME} will temporarily rename ${files.length} symlink${files.length===1?'':'s'} in this ${scope}, scan the folder, restore the original filename${files.length===1?'':'s'}, scan again, and verify that Plex stored a valid positive timestamp.\n\nThe underlying provider/NZBDAV object${files.length===1?'':'s'} will not be renamed or modified.\n\n${folder}\n\nAffected symlinks (${files.length}):\n${exact}\n\nEmpty Trash remains locked until restoration and verification complete.`)) return;
   const response = await fetch('/api/timestamp-repair/run', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance,library_section_id:section,folder})});
-  const data = await response.json();
+  const data = await readJsonResponse(response);
   if (!response.ok) return toast(data.error || 'Repair could not start', 'fail');
   closeRepairLibrary(); toast('Timestamp repair started','warn'); setTimeout(loadRepairStatus,500);
 }
@@ -952,7 +952,7 @@ async function runSelectedRepairFolders() {
   const list=selected.map((item,index)=>`${index+1}. ${item.title || item.folder} (${item.files.length} file${item.files.length===1?'':'s'})`).join('\n');
   if (!confirm(`Repair ${selected.length} reviewed folders sequentially?\n\n${list}\n\nEach folder will receive a fresh safety check and exact affected-file comparison immediately before repair. ${PRODUCT_NAME} stops the queue on the first changed or unsafe folder. Completed folders will not require another audit before the remaining reviewed folders continue.\n\nTotal affected symlinks: ${files}\nThe underlying provider objects will not be modified.`)) return;
   const response=await fetch('/api/timestamp-repair/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instance:selected[0].instance,folders:selected.map(item=>({library_section_id:item.section,folder:item.folder}))})});
-  const data=await response.json();
+  const data=await readJsonResponse(response);
   if (!response.ok) return toast(data.error||'Repair queue could not start','fail');
   _repairSelection.clear();
   closeRepairLibrary();
@@ -961,7 +961,7 @@ async function runSelectedRepairFolders() {
 }
 
 async function cancelRepair() { await fetch('/api/timestamp-repair/cancel',{method:'POST'}); toast('Safe cancellation requested','warn'); }
-async function recoverRepair() { const response=await fetch('/api/timestamp-repair/recover',{method:'POST'}); const data=await response.json(); toast(data.message||data.error,response.ok?'pass':'fail'); loadRepairStatus(); }
+async function recoverRepair() { const response=await fetch('/api/timestamp-repair/recover',{method:'POST'}); const data=await readJsonResponse(response); toast(data.message||data.error,response.ok?'pass':'fail'); loadRepairStatus(); }
 
 function settingsNavButton(section) {
   return document.querySelector(`.settings-nav-item[data-section="${section}"]`);
@@ -1109,7 +1109,7 @@ function applyScheduling(enabled) {
   l.className = 'sched-label' + (enabled ? ' on' : '');
 }
 async function toggleScheduling() {
-  const r = await fetch('/api/status'); const d = await r.json();
+  const r = await fetch('/api/status'); const d = await readJsonResponse(r);
   const next = !d.scheduling_enabled;
   await fetch('/api/scheduling', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({enabled:next})});
   applyScheduling(next);
@@ -1397,7 +1397,7 @@ async function loadLogFiles(preferActive = false) {
   _logLoading = true;
   try {
     const response = await fetch('/api/logs');
-    const data = await response.json();
+    const data = await readJsonResponse(response);
     const files = data.files || [];
     _activeLog = files.find(file => file.active)?.name || '';
     if (preferActive || !files.some(file => file.name === _selectedLog)) {
@@ -1457,7 +1457,7 @@ async function refreshLogView() {
   if (!viewer || !_selectedLog) return;
   try {
     const response = await fetch(`/api/logs/${encodeURIComponent(_selectedLog)}`);
-    const data = await response.json();
+    const data = await readJsonResponse(response);
     if (!response.ok) throw new Error(data.error || 'Log unavailable');
     const follow = document.getElementById('log-auto-scroll')?.checked && data.active;
     const wasNearBottom = viewer.scrollHeight - viewer.scrollTop - viewer.clientHeight < 40;
@@ -1809,7 +1809,7 @@ async function testRepairWorker(index) {
     const response = await fetch('/api/timestamp-repair/worker-test', {
       method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(worker),
     });
-    const data = await response.json();
+    const data = await readJsonResponse(response);
     result.textContent = response.ok ? `✓ Connected · ${data.name}` : `✗ ${data.error}`;
     result.style.color = response.ok ? 'var(--pass)' : 'var(--fail2)';
   } catch (_) {
@@ -2057,7 +2057,7 @@ async function discoverRepairDatabases(index) {
   target.textContent = 'Searching mounted database roots…';
   try {
     const response = await fetch('/api/timestamp-repair/databases', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({worker:repair.worker})});
-    const data = await response.json();
+    const data = await readJsonResponse(response);
     if (!response.ok) throw new Error(data.error || 'Discovery failed');
     if (data.databases.length === 1) {
       repair.database_path = data.databases[0]; renderRepairSettings();
@@ -2525,7 +2525,7 @@ async function testNotificationDestination(index) {
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify(destination),
     });
-    const payload = await response.json();
+    const payload = await readJsonResponse(response);
     result.textContent = payload.ok ? '✓ Test sent' : `✕ ${payload.error || 'Delivery failed'}`;
     result.style.color = payload.ok ? 'var(--success)' : 'var(--danger)';
   } catch (error) {
@@ -2636,7 +2636,7 @@ async function openBrowser(ii, li) {
 async function showBrowser(path) {
   try {
     const r = await fetch('/api/wizard/browse', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})});
-    const d = await r.json();
+    const d = await readJsonResponse(r);
     if (!d.ok) { toast(d.error, 'fail'); return; }
     let modal = document.getElementById('_browser');
     if (!modal) { modal = document.createElement('div'); modal.id = '_browser'; modal.className = 'browser-modal'; document.body.appendChild(modal); }
@@ -2865,7 +2865,7 @@ async function connectPlexAccount(target) {
       // Poll once after a close in case Plex closed the window after approval.
       const popupWasClosed = Boolean(popup && popup.closed);
       const response = await fetch(`/api/plex/auth/status/${encodeURIComponent(started.state)}`);
-      const result = await response.json();
+      const result = await readJsonResponse(response);
       if (!result.ok) throw new Error(result.error || 'Plex authorization failed');
       if (result.pending) {
         if (popupWasClosed) {
@@ -3028,7 +3028,7 @@ async function wizTestPlex() {
   hint.innerHTML=`<span class="spin"></span> testing…`; hint.className='form-hint';
   try {
     const r=await fetch('/api/wizard/test-plex',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,token})});
-    const d=await r.json();
+    const d=await readJsonResponse(r);
     if (d.ok) {
       hint.textContent=`✓ ${d.detail}`; hint.className='form-hint success';
       document.getElementById('wi-lib-checks').innerHTML=d.libraries.map(lib=>`
@@ -3172,7 +3172,7 @@ async function wizSave3() {
   btn.disabled=true; btn.innerHTML=`<span class="spin"></span> saving…`;
   try {
     const r=await fetch('/api/wizard/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({..._wizData,store_tokens:storeTokens})});
-    const d=await r.json();
+    const d=await readJsonResponse(r);
     const result=document.getElementById('wiz-save-result');
     if(d.ok){
       let envSection='';
@@ -3201,7 +3201,7 @@ async function wizSave3() {
 async function loadApiToken() {
   try {
     const r = await fetch('/api/auth/token');
-    const d = await r.json();
+    const d = await readJsonResponse(r);
     const status = document.getElementById('api-token-status');
     if (!status) return;
     if (!d.ok) status.textContent = d.error || 'Unavailable';
@@ -3230,7 +3230,7 @@ async function generateApiToken() {
   const display = document.getElementById('api-token-display');
   try {
     const r = await fetch('/api/auth/token', {method:'POST'});
-    const d = await r.json();
+    const d = await readJsonResponse(r);
     if (!d.ok) {
       result.innerHTML=`<span style="color:var(--fail2);">âœ— ${h(d.error)}</span>`;
       return;
@@ -3248,7 +3248,7 @@ async function revokeApiToken() {
   const result = document.getElementById('api-token-result');
   try {
     const r = await fetch('/api/auth/token', {method:'DELETE'});
-    const d = await r.json();
+    const d = await readJsonResponse(r);
     if (!d.ok) {
       result.innerHTML=`<span style="color:var(--fail2);">âœ— ${h(d.error)}</span>`;
       return;
@@ -3271,7 +3271,7 @@ async function saveAuth() {
   if (pass !== pass2) { result.innerHTML='<span style="color:var(--fail2);">Passwords do not match</span>'; return; }
   try {
     const r = await fetch('/api/auth/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:user,password:pass})});
-    const d = await r.json();
+    const d = await readJsonResponse(r);
     if (d.ok) {
       result.innerHTML=`<span style="color:var(--pass);">✓ ${h(d.message)}</span>`;
       document.getElementById('s-auth-pass').value='';
@@ -3288,7 +3288,7 @@ async function clearAuth() {
   const result = document.getElementById('auth-save-result');
   try {
     const r = await fetch('/api/auth/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clear:true})});
-    const d = await r.json();
+    const d = await readJsonResponse(r);
     if (d.ok) {
       result.innerHTML=`<span style="color:var(--warn2);">✓ ${h(d.message)}</span>`;
       document.getElementById('s-auth-user').value='';
@@ -3315,7 +3315,7 @@ function initAuthBanner() {
 // ── Fetch ─────────────────────────────────────────────────────────────────────
 async function fetchStatus() {
   try {
-    const r = await fetch('/api/status'); const d = await r.json();
+    const r = await fetch('/api/status'); const d = await readJsonResponse(r);
     if (d.global_checks) applyChecks(d.global_checks);
     applyStatus(d, d.next_runs || {});
     applyStartupProgress(d.startup_checks);
@@ -3327,7 +3327,7 @@ async function fetchStatus() {
   } catch(e) {}
 }
 async function fetchHistory() {
-  try { const r = await fetch('/api/history'); _history = await r.json(); renderHistory(_history); } catch(e) {}
+  try { const r = await fetch('/api/history'); _history = await readJsonResponse(r); renderHistory(_history); } catch(e) {}
 }
 
 async function saveProviders() {
@@ -3344,7 +3344,7 @@ async function saveProviders() {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(keys)
     });
-    const d = await r.json();
+    const d = await readJsonResponse(r);
     if (d.ok) {
       if (result) result.innerHTML = '<span style="color:var(--pass);">✓ Saved</span>';
       toast('Provider keys saved', 'pass');
@@ -3370,7 +3370,7 @@ async function loadProviderStatus(force = false) {
   body.innerHTML = '<div style="color:var(--muted);font-size:12px;"><span class="spin"></span> checking…</div>';
   try {
     const r = await fetch('/api/providers/status');
-    const d = await r.json();
+    const d = await readJsonResponse(r);
     const labels = { realdebrid:'Real-Debrid', alldebrid:'AllDebrid', torbox:'Torbox', debridlink:'Debrid-Link' };
     const configured = Object.entries(d).filter(([,s]) => s.error !== 'no_key');
     if (!configured.length) {
@@ -3433,7 +3433,7 @@ function pollUntilUpdate(prevHistory) {
     await fetchStatus();
     try {
       const r = await fetch('/api/history');
-      const h = await r.json();
+      const h = await readJsonResponse(r);
       if (h.length !== prevHistory.length ||
           (h[0] && prevHistory[0] && h[0].timestamp !== prevHistory[0].timestamp)) {
         _history = h;

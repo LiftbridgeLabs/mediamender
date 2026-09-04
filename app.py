@@ -754,6 +754,30 @@ def enforce_user_permissions():
 
 
 @app.after_request
+def normalize_api_envelope(response):
+    """Guarantee every JSON API response carries an `ok` flag.
+
+    Handlers were split between `{"ok": false, "error": ...}` and a bare
+    `{"error": ...}`, sometimes within one feature, so the browser could not
+    rely on the field and checked it in some places and the HTTP status in
+    others. Deriving it here from the status code makes the contract uniform
+    without rewriting a hundred return statements, and leaves any flag a
+    handler set deliberately untouched.
+    """
+    if not request.path.startswith("/api/"):
+        return response
+    if response.direct_passthrough or not response.is_json:
+        return response
+    payload = response.get_json(silent=True)
+    if not isinstance(payload, dict) or "ok" in payload:
+        return response
+    payload["ok"] = response.status_code < 400
+    response.set_data(json.dumps(payload))
+    response.headers["Content-Length"] = str(len(response.get_data()))
+    return response
+
+
+@app.after_request
 def add_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
