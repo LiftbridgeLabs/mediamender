@@ -37,6 +37,7 @@ for (const s of sections) nodes.set(`ss-${s}`, el(`ss-${s}`));
 nodes.set('dashboard-panel-overview', el('dashboard-panel-overview'));
 nodes.set('dashboard-panel-server-0', el('dashboard-panel-server-0'));
 nodes.set('toast', el('toast'));
+nodes.set('mark-watched-jobs', el('mark-watched-jobs'));
 
 const tabbedPages = ['mediamender','library-refresh','mark-watched',
                      'metadata-audit','timestamp-repair'];
@@ -103,6 +104,7 @@ const api = new Function(src + `
   return {showPage, showSettingsSection, applyRoute, currentRoute,
           firstAvailablePage, pageIsAvailable, goToSettings, PAGES,
           selectDashboardView, showFeatureTab, hasFeatureTabs,
+          markWatchedJobBadge, renderMarkWatchedJobs,
           set permissions(list) {
             canAccess = p => list.includes('*') || list.includes(p);
           },
@@ -198,6 +200,46 @@ api.showFeatureTab('mark-watched', 'not-a-tab');
 check('unknown tab falls back to main', activeTab('mark-watched'), 'main');
 
 check('settings page has no feature tabs', api.hasFeatureTabs('settings'), false);
+
+// Marking nothing means opposite things for a manual catch-up and an import.
+const manualNothingToDo = {
+  status: 'succeeded', event: {source: 'manual', series: {title: 'One Piece'}},
+  result: {matched: 1175, marked: 0, already_watched: 1175},
+};
+const importNoRule = {
+  status: 'succeeded', event: {series: {title: 'Big City Greens'}},
+  result: {matched: 1, marked: 0},
+};
+const importMarked = {
+  status: 'succeeded', event: {series: {title: 'Big City Greens'}},
+  result: {matched: 1, marked: 1},
+};
+check('manual catch-up with nothing to do is a pass',
+      api.markWatchedJobBadge(manualNothingToDo), 'success');
+check('import that matched but marked nothing is flagged',
+      api.markWatchedJobBadge(importNoRule), 'skipped');
+check('import that marked is a pass',
+      api.markWatchedJobBadge(importMarked), 'success');
+check('failed job is an error',
+      api.markWatchedJobBadge({status: 'failed'}), 'error');
+check('waiting job is neutral',
+      api.markWatchedJobBadge({status: 'waiting'}), 'skipped');
+
+// The banner must tell a test event apart from a real import.
+function bannerFor(webhooks) {
+  api.renderMarkWatchedJobs({workers: 4, live_workers: 4, jobs: [], webhooks});
+  const rendered = nodes.get('mark-watched-jobs').innerHTML;
+  const m = /<div class="repair-warning">([\s\S]*?)<\/div>/.exec(rendered);
+  return m ? m[1].replace(/<[^>]+>/g, '') : '';
+}
+check('tests only names the On File Import setting',
+      /On File Import/.test(bannerFor({total: 2, outcomes: {test: 2}, recent: []})), true);
+check('real imports clear the banner',
+      bannerFor({total: 3, outcomes: {test: 1, queued: 2}, recent: []}), '');
+check('refusals point at the log',
+      /turned away/.test(bannerFor({total: 2, outcomes: {rejected: 2}, recent: []})), true);
+check('an empty log explains itself',
+      /begins at version/.test(bannerFor({total: 0, outcomes: {}, recent: []})), true);
 
 const failed = results.filter(r => !r.ok);
 for (const r of results) {

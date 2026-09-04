@@ -397,6 +397,8 @@ async function setAllMarkWatched(enabled) {
 async function applyEnabledRulesNow(button) {
   if (!confirm(
     'Mark existing Plex episodes watched for EVERY show whose rule is on?\n\n' +
+    'Only episodes Plex still counts unwatched are touched. Shows and seasons ' +
+    'already fully watched are skipped without being read.\n\n' +
     'This changes real Plex watch history and cannot be undone from here. ' +
     'Seasons you have explicitly turned off are skipped.'
   )) return;
@@ -452,13 +454,27 @@ async function applyMarkWatchedNow(showIndex, seasonIndex, episodeCount, button)
 
 function markWatchedJobBadge(job) {
   if (job.status === 'failed') return 'error';
-  // A job that matched Plex but marked nothing succeeded technically and
-  // failed in the way the user cares about, so do not call it a plain pass.
-  if (job.status === 'succeeded') {
-    return Number(job.result?.matched || 0) && !Number(job.result?.marked || 0)
-      ? 'skipped' : 'success';
+  if (job.status !== 'succeeded') return 'skipped';
+  // Marking nothing means opposite things for the two kinds of job. A manual
+  // catch-up that marked none simply found every episode already watched,
+  // which is the result you wanted. An import that matched episodes and still
+  // marked none means no rule fired for it, which is a miss worth seeing.
+  if (job.event?.source === 'manual') return 'success';
+  return Number(job.result?.matched || 0) && !Number(job.result?.marked || 0)
+    ? 'skipped' : 'success';
+}
+
+function markWatchedJobHint(job) {
+  if (job.status === 'failed') return 'This job stopped without marking anything';
+  if (job.status === 'waiting') return 'Plex has not scanned this episode yet';
+  if (markWatchedJobBadge(job) === 'skipped' && job.status === 'succeeded') {
+    return 'Plex had the episode but no watch rule was enabled for it';
   }
-  return 'skipped';
+  if (job.status === 'succeeded') {
+    return Number(job.result?.marked || 0)
+      ? 'Marked watched in Plex' : 'Nothing to do; already watched in Plex';
+  }
+  return job.status;
 }
 
 function renderMarkWatchedJobs(data) {
@@ -474,11 +490,20 @@ function renderMarkWatchedJobs(data) {
   // calling. Say which of the two is happening.
   const hooks = data.webhooks || {};
   const outcomes = hooks.outcomes || {};
-  const banner = !hooks.total
-    ? `<div class="repair-warning">No Sonarr import has ever reached ${h(PRODUCT_NAME)}. Automatic rules only run when Sonarr calls the webhook, so check the connection under <strong>Configure</strong>, and that the callback URL is one the Sonarr container can reach.</div>`
-    : (!outcomes.queued && !outcomes.duplicate)
-      ? `<div class="repair-warning">Sonarr has called ${hooks.total} time${hooks.total===1?'':'s'} but no import has been queued yet (${h(Object.entries(outcomes).map(([k,v])=>`${v} ${k}`).join(', '))}). See the webhook log below.</div>`
-      : '';
+  const imports = Number(outcomes.queued || 0) + Number(outcomes.duplicate || 0);
+  const tests = Number(outcomes.test || 0);
+  const refused = Number(outcomes.rejected || 0) + Number(outcomes.ignored || 0);
+  let banner = '';
+  if (imports) {
+    banner = '';
+  } else if (tests && !refused) {
+    // The most common case, and the one that looks like success from Sonarr.
+    banner = `<div class="repair-warning">Sonarr's <strong>Test</strong> event reaches ${h(PRODUCT_NAME)}, but no completed import has. A test only proves the callback URL is reachable. Open that connection in Sonarr and check that <strong>On File Import</strong> is enabled — a connection can pass its test with every event type switched off.</div>`;
+  } else if (refused) {
+    banner = `<div class="repair-warning">Sonarr has called ${hooks.total} time${hooks.total===1?'':'s'}, but nothing has been queued (${h(Object.entries(outcomes).map(([k,v])=>`${v} ${k}`).join(', '))}). The webhook log below says why each was turned away.</div>`;
+  } else if (!hooks.total) {
+    banner = `<div class="repair-warning">No Sonarr request has been recorded yet. This log begins at version 2.7.0, so a webhook test you ran before upgrading will not appear here — run it again to confirm the connection. Automatic rules run only when Sonarr calls after an import finishes.</div>`;
+  }
   const hookRows = (hooks.recent || []).length
     ? `<details class="mw-job-log" style="margin:0 0 14px;"><summary>Sonarr webhook log &mdash; ${hooks.total} recent request${hooks.total===1?'':'s'}</summary><pre>${
         (hooks.recent || []).map(entry =>
@@ -498,7 +523,7 @@ function renderMarkWatchedJobs(data) {
       ? `<details class="mw-job-log"><summary>${trail.length} log line${trail.length===1?'':'s'}</summary><pre>${trail.map(entry =>
           `${h(fmtStamp(entry.at))}  ${h(entry.message || '')}`).join('\n')}</pre></details>`
       : '';
-    return `<div class="repair-history-item"><span class="badge ${markWatchedJobBadge(job)}">${h(job.status)}</span><div><div class="repair-history-title">${h(job.event?.series?.title || 'Plex update')}</div><div class="repair-history-meta">${h(source)} · ${h(fmtAgo(job.updated_at || job.created_at))}${attempts?` · attempt ${attempts}`:''}${nextCheck}${counts}<br>${h(job.message || '')}</div>${log}</div></div>`;
+    return `<div class="repair-history-item"><span class="badge ${markWatchedJobBadge(job)}" title="${h(markWatchedJobHint(job))}">${h(job.status)}</span><div><div class="repair-history-title">${h(job.event?.series?.title || 'Plex update')}</div><div class="repair-history-meta">${h(source)} · ${h(fmtAgo(job.updated_at || job.created_at))}${attempts?` · attempt ${attempts}`:''}${nextCheck}${counts}<br>${h(job.message || '')}</div>${log}</div></div>`;
   }).join('') : '<div class="empty-msg">No automatic or manual jobs yet.</div>');
 }
 

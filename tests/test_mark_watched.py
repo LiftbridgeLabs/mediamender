@@ -256,12 +256,18 @@ class MarkWatchedUiApiTests(unittest.TestCase):
         plex = Mock()
         plex.get_section_type.return_value = "show"
         plex.list_tv_shows.return_value = [
-            {"rating_key": "10", "title": "Fully On"},
-            {"rating_key": "11", "title": "Partly On"},
-            {"rating_key": "12", "title": "Rule Off"},
+            {"rating_key": "10", "title": "Fully On",
+             "leaf_count": 20, "viewed_leaf_count": 5},
+            {"rating_key": "11", "title": "Partly On",
+             "leaf_count": 20, "viewed_leaf_count": 5},
+            {"rating_key": "12", "title": "Rule Off",
+             "leaf_count": 20, "viewed_leaf_count": 0},
         ]
         plex.list_show_seasons.return_value = [
-            {"index": 1, "rating_key": "101"}, {"index": 2, "rating_key": "102"},
+            {"index": 1, "rating_key": "101",
+             "leaf_count": 10, "viewed_leaf_count": 0},
+            {"index": 2, "rating_key": "102",
+             "leaf_count": 10, "viewed_leaf_count": 5},
         ]
         rules = MarkWatchedRuleStore(tempfile.mkdtemp())
         rules.set_show("Plex", "TV", "10", True)
@@ -288,6 +294,74 @@ class MarkWatchedUiApiTests(unittest.TestCase):
         self.assertIn(("Partly On", "season", 1), scopes)
         self.assertNotIn(("Partly On", "season", 2), scopes)
         self.assertNotIn("Rule Off", [name for name, _s, _i in scopes])
+
+    def test_catch_up_never_reads_a_show_plex_already_counts_watched(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.list_tv_shows.return_value = [
+            # Every episode already watched: nothing to do, and no reason to
+            # read 1,175 episodes to find that out.
+            {"rating_key": "10", "title": "One Piece",
+             "leaf_count": 1175, "viewed_leaf_count": 1175},
+            {"rating_key": "11", "title": "Behind",
+             "leaf_count": 10, "viewed_leaf_count": 9},
+        ]
+        plex.list_show_seasons.return_value = [
+            {"index": 1, "rating_key": "101",
+             "leaf_count": 10, "viewed_leaf_count": 9},
+        ]
+        rules = MarkWatchedRuleStore(tempfile.mkdtemp())
+        rules.set_show("Plex", "TV", "10", True)
+        rules.set_show("Plex", "TV", "11", True)
+        manager = Mock()
+        with patch.object(app, "config", config),              patch.object(app, "plex_clients", {"Plex": plex}),              patch.object(app, "mark_watched_rules", rules),              patch.object(app, "mark_watched", manager),              patch("threading.Thread") as thread:
+            self._client().post(
+                "/api/mark-watched/apply-rules",
+                json={"confirm": "MARK WATCHED NOW"},
+                headers={"X-CSRF-Token": "known-token"},
+            )
+            thread.call_args.kwargs["target"]()
+        queued = [call.args[0]["series"]["title"]
+                  for call in manager.enqueue_manual.call_args_list]
+        self.assertEqual(queued, ["Behind"])
+        # The finished show's seasons were never fetched.
+        plex.list_show_seasons.assert_called_once_with("11")
+
+    def test_catch_up_queues_only_the_seasons_with_something_left(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.list_tv_shows.return_value = [
+            {"rating_key": "10", "title": "Half Done",
+             "leaf_count": 20, "viewed_leaf_count": 10},
+        ]
+        plex.list_show_seasons.return_value = [
+            {"index": 1, "rating_key": "101",
+             "leaf_count": 10, "viewed_leaf_count": 10},   # done
+            {"index": 2, "rating_key": "102",
+             "leaf_count": 10, "viewed_leaf_count": 0},    # outstanding
+        ]
+        rules = MarkWatchedRuleStore(tempfile.mkdtemp())
+        rules.set_show("Plex", "TV", "10", True)
+        manager = Mock()
+        with patch.object(app, "config", config),              patch.object(app, "plex_clients", {"Plex": plex}),              patch.object(app, "mark_watched_rules", rules),              patch.object(app, "mark_watched", manager),              patch("threading.Thread") as thread:
+            self._client().post(
+                "/api/mark-watched/apply-rules",
+                json={"confirm": "MARK WATCHED NOW"},
+                headers={"X-CSRF-Token": "known-token"},
+            )
+            thread.call_args.kwargs["target"]()
+        jobs = [call.args[0]["manual"] for call in manager.enqueue_manual.call_args_list]
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]["scope"], "season")
+        self.assertEqual(jobs[0]["season_index"], 2)
 
     def test_catch_up_skips_a_hidden_library(self):
         library = LibraryConfig("TV", "physical", [], section_id="7")

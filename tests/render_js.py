@@ -30,7 +30,12 @@ def bundle() -> str:
     # a config file exists. The harness needs it to run.
     boot["configMissing"] = False
     script = (REPO / "static" / "app.js").read_text(encoding="utf-8")
-    return f"const BOOT = {json.dumps(boot)};\n{script}"
+    # PRODUCT_NAME is declared by the template's inline script, not app.js,
+    # so the bundle has to carry it for the page's code to resolve.
+    product = re.search(r'const PRODUCT_NAME = ("[^"]*")', html)
+    name = product.group(1) if product else '"mediaMender"'
+    return (f"const PRODUCT_NAME = {name};\n"
+            f"const BOOT = {json.dumps(boot)};\n{script}")
 
 
 if __name__ == "__main__":

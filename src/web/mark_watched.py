@@ -686,6 +686,12 @@ def api_mark_watched_apply():
     }), 202
 
 
+def _fully_watched(item: dict) -> bool:
+    """Whether Plex already counts every episode in this show or season watched."""
+    total = int(item.get("leaf_count", 0) or 0)
+    return bool(total) and int(item.get("viewed_leaf_count", 0) or 0) >= total
+
+
 def _enumerate_enabled_rules():
     """Yield (instance, library, plex, show, seasons) for every enabled rule.
 
@@ -709,6 +715,12 @@ def _enumerate_enabled_rules():
                     instance.name, library.name, key, 0,
                 )["show_enabled"]:
                     continue
+                # Plex reports these on the show listing itself, so a show that
+                # is already fully watched costs nothing to skip. Without this,
+                # catching up read all 1,175 episodes of a finished show to
+                # discover there was nothing to mark.
+                if _fully_watched(show):
+                    continue
                 seasons = plex.list_show_seasons(key)
                 enabled = [
                     season for season in seasons
@@ -716,8 +728,11 @@ def _enumerate_enabled_rules():
                         instance.name, library.name, key, season["index"],
                     )["enabled"]
                 ]
-                if enabled:
-                    yield instance, library, show, seasons, enabled
+                outstanding = [
+                    season for season in enabled if not _fully_watched(season)
+                ]
+                if outstanding:
+                    yield instance, library, show, seasons, enabled, outstanding
 
 
 @bp.route("/api/mark-watched/apply-rules", methods=["POST"])
@@ -739,10 +754,18 @@ def api_mark_watched_apply_rules():
     def enqueue_all():
         shows = seasons_queued = 0
         try:
-            for instance, library, show, seasons, enabled in _enumerate_enabled_rules():
+            for (instance, library, show, seasons, enabled,
+                 outstanding) in _enumerate_enabled_rules():
                 shows += 1
-                whole_show = len(enabled) == len(seasons)
-                targets = [None] if whole_show else [s["index"] for s in enabled]
+                # Only queue the whole show when every season is both enabled
+                # and has something left to mark.
+                whole_show = (
+                    len(enabled) == len(seasons) == len(outstanding)
+                )
+                targets = (
+                    [None] if whole_show
+                    else [season["index"] for season in outstanding]
+                )
                 for season_index in targets:
                     manual = {
                         "scope": "show" if season_index is None else "season",
@@ -759,8 +782,9 @@ def api_mark_watched_apply_rules():
                     })
                     seasons_queued += 1
             runtime.logger.info(
-                "Queued a catch-up for %s show(s) with an enabled rule (%s job(s))",
-                shows, seasons_queued,
+                "Queued a catch-up for %s show(s) with unwatched episodes "
+                "(%s job(s)); fully watched shows were skipped without reading "
+                "their episodes", shows, seasons_queued,
             )
         except Exception:
             runtime.logger.exception("Could not queue the Mark-it-Watched catch-up")

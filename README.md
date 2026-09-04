@@ -485,10 +485,20 @@ are available both above and below the poster grid.
 
 A rule only governs future imports, so switching one on leaves every episode
 already in the library unwatched. **Catch up now**, on the Mark-it-Watched page,
-applies the rules you already have to the history Plex holds: every show whose
-rule is on is queued, seasons explicitly turned off are skipped, and progress
-appears in the activity list. It asks for confirmation first, because it writes
-real Plex watch history.
+applies the rules you already have to the history Plex holds. It asks for
+confirmation first, because it writes real Plex watch history.
+
+It only ever deals in the difference. Plex reports a watched count on the show
+and season listings, so a show or season already fully watched is skipped
+without its episodes being read at all - a finished 1,000-episode show costs
+one line of an index rather than a thousand-episode fetch. Within a season that
+does have something outstanding, only episodes Plex still counts unwatched are
+marked. Seasons you explicitly turned off are skipped either way, and progress
+appears in the activity list.
+
+Nothing is cached: the watched counts come from Plex on each run, so marking
+something unwatched in Plex is picked up next time rather than being masked by
+a stale local copy.
 
 The separate **Mark show watched now** and **Mark season watched now** actions
 are explicit, confirmed changes to existing Plex history. They queue durable
