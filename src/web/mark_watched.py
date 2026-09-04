@@ -12,7 +12,7 @@ import secrets
 import urllib.parse
 
 import yaml
-from flask import Blueprint, jsonify, request, url_for
+from flask import Blueprint, Response, jsonify, request, url_for
 
 from src.auth import current_identity, has_valid_api_token, require_auth
 from src.sonarr_client import (

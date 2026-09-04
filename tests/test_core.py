@@ -18,6 +18,7 @@ os.environ.setdefault("STATE_FILE", str(_TEST_ROOT / ".runtime-state.json"))
 os.environ.setdefault("PLEX_CLIENT_ID_FILE", str(_TEST_ROOT / ".runtime-client.json"))
 
 import app
+from src.web import library_health as library_health_routes
 from ui_source import rendered_ui
 from src.checks import check_debrid_mount, check_file_threshold, check_mountpoint
 from src.config import (AppConfig, FeatureConfig, LibraryConfig, PathConfig,
@@ -603,7 +604,7 @@ class MetadataAuditTests(unittest.TestCase):
         with patch.object(app, "config", target_config), \
              patch.object(app, "plex_clients", {instance.name: plex}), \
              patch.object(app, "_read_metadata_audits", return_value={}), \
-             patch.object(app, "atomic_write_json") as write:
+             patch.object(library_health_routes, "atomic_write_json") as write:
             response = client.post(
                 "/api/metadata-audit/run",
                 json={"instance": instance.name},
@@ -696,7 +697,7 @@ class MetadataAuditTests(unittest.TestCase):
         with patch.object(app, "config", target_config), \
              patch.object(app, "plex_clients", {instance.name: plex}), \
              patch.object(app, "_read_metadata_audits", return_value={}), \
-             patch.object(app, "atomic_write_json"):
+             patch.object(library_health_routes, "atomic_write_json"):
             response = client.post(
                 "/api/metadata-audit/run",
                 json={"instance": instance.name},
