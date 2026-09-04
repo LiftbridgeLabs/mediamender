@@ -429,6 +429,25 @@ environment override. Manual setup is still supported: use
 `http://MEDIAMENDER:8222/api/webhooks/sonarr` and send the secret in
 `X-Sonarr-Webhook-Secret` or as a Bearer token.
 
+Sonarr reports an import the moment the file lands. For a symlinked debrid or
+usenet library that is well before Plex has scanned it, so mediaMender asks
+Plex to scan the imported folder rather than only polling for it, and keeps
+re-checking for about an hour (`mark_watched.retry_delays`). If Plex rejects
+the path - which happens when Sonarr and Plex map the same media differently -
+it falls back to refreshing that library. Set `mark_watched.scan_on_import` to
+`false` to only poll.
+
+If nothing is being marked watched, run:
+
+```bash
+docker exec -it mediaMender python tools/diagnose_mark_watched.py
+```
+
+It reads only the files mediaMender already writes and reports whether the
+feature is on, whether a webhook has ever arrived, how many rules are enabled,
+and what recent jobs actually did. Add `--plex` to check whether the shows your
+rules name still exist under the same ratingKey.
+
 Only Sonarr `Download` events containing an imported `episodeFile` are queued.
 The HTTP request returns immediately; persistent background work retries until
 Plex has scanned and matched every episode in the import, then applies the

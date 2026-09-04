@@ -16,7 +16,12 @@ features:
 # MEDIAMENDER_SONARR_WEBHOOK_SECRET environment override.
 mark_watched:
   webhook_secret: ""
-  retry_delays: [10, 30, 60, 120, 300]
+  # How long to keep re-checking Plex for a newly imported episode. Sonarr
+  # reports an import the moment the file lands, which for a symlinked debrid
+  # library is well before Plex has scanned it. These delays span about an hour.
+  retry_delays: [15, 30, 60, 120, 300, 600, 900, 1200]
+  # Ask Plex to scan the imported folder while waiting, instead of only polling.
+  scan_on_import: true
   # Background workers that process queued imports. More workers stop one
   # import waiting on a Plex scan from blocking every later webhook.
   workers: 4

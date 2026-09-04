@@ -493,6 +493,35 @@ class MarkWatchedRuleStore:
             self._save()
 
 
+def request_plex_scan(scannable: list[tuple], event: dict) -> list[str]:
+    """Ask Plex to scan the imported episode's folder, or the whole section.
+
+    Plex only accepts a path-limited scan for a path it can see itself. Sonarr
+    reports the path as Sonarr sees it, which is the same path in the usual
+    single-mount setup and a different one when the two containers map media
+    differently, so a rejected path falls back to a section refresh.
+    """
+    notes: list[str] = []
+    folder = ""
+    path = str(event.get("episode_file", {}).get("path", ""))
+    if path:
+        separator = "\\" if "\\" in path and "/" not in path else "/"
+        folder = separator.join(path.split(separator)[:-1])
+    for library_key, plex, section_id in scannable:
+        result = plex.scan_path(section_id, folder) if folder else {"ok": False}
+        if result.get("ok"):
+            notes.append(f"{library_key}: asked Plex to scan {folder}")
+            continue
+        result = plex.refresh_section(section_id)
+        notes.append(
+            f"{library_key}: asked Plex to refresh the whole library"
+            if result.get("ok") else
+            f"{library_key}: Plex refused a scan request "
+            f"({result.get('http') or result.get('error', 'unknown')})"
+        )
+    return notes
+
+
 def process_plex_event(event: dict, app_config, clients: dict,
                        rules: MarkWatchedRuleStore) -> dict:
     """Find imported episodes across configured TV sections, then apply rules."""
@@ -504,6 +533,7 @@ def process_plex_event(event: dict, app_config, clients: dict,
     }
     matched_coordinates = set()
     searched = []
+    scannable: list[tuple] = []
     for instance in app_config.instances:
         plex = clients.get(instance.name)
         if plex is None:
@@ -519,6 +549,7 @@ def process_plex_event(event: dict, app_config, clients: dict,
                 details.append(f"{library_key}: skipped, not a Plex TV library")
                 continue
             searched.append(library_key)
+            scannable.append((library_key, plex, str(section_id)))
             for episode in event["episodes"]:
                 item = plex.find_episode(
                     str(section_id), event["series"]["title"],
@@ -548,11 +579,15 @@ def process_plex_event(event: dict, app_config, clients: dict,
         coordinates = ", ".join(
             f"S{season:02d}E{episode:02d}" for season, episode in sorted(missing)
         )
+        details.append("Searched TV libraries: " + (", ".join(searched) or "none"))
+        # Sonarr finishes an import the moment the file lands, which for a
+        # symlinked debrid library is long before Plex has scanned it. Waiting
+        # passively is why these jobs used to expire unmatched, so ask Plex to
+        # look at the imported folder instead.
+        if app_config.mark_watched.scan_on_import:
+            details.extend(request_plex_scan(scannable, event))
         raise PlexEpisodePending(
-            f"{event['series']['title']} {coordinates}",
-            details + [
-                "Searched TV libraries: " + (", ".join(searched) or "none"),
-            ],
+            f"{event['series']['title']} {coordinates}", details,
         )
     for item in matched:
         library_key = f"{item['instance_name']}::{item['library_name']}"

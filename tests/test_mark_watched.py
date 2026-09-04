@@ -649,6 +649,75 @@ class MarkWatchedRuleTests(unittest.TestCase):
             "\n".join(result["details"]),
         )
 
+    def test_pending_match_asks_plex_to_scan_the_imported_folder(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = None
+        plex.scan_path.return_value = {"ok": True}
+        with self.assertRaises(PlexEpisodePending) as caught:
+            process_plex_event({
+                "series": {"title": "Example Show"},
+                "episodes": [{"season": 2, "episode": 3}],
+                "episode_file": {"path": "/tv/Example Show/Season 02/S02E03.mkv"},
+            }, config, {"Plex": plex}, self.rules)
+        plex.scan_path.assert_called_once_with("7", "/tv/Example Show/Season 02")
+        plex.refresh_section.assert_not_called()
+        self.assertIn(
+            "asked Plex to scan /tv/Example Show/Season 02",
+            "\n".join(caught.exception.details),
+        )
+
+    def test_a_rejected_path_scan_falls_back_to_the_whole_library(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = None
+        # Sonarr and Plex can map the same media at different paths.
+        plex.scan_path.return_value = {"ok": False, "http": 400}
+        plex.refresh_section.return_value = {"ok": True}
+        with self.assertRaises(PlexEpisodePending) as caught:
+            process_plex_event({
+                "series": {"title": "Example Show"},
+                "episodes": [{"season": 2, "episode": 3}],
+                "episode_file": {"path": "/data/tv/Example Show/S02E03.mkv"},
+            }, config, {"Plex": plex}, self.rules)
+        plex.refresh_section.assert_called_once_with("7")
+        self.assertIn(
+            "asked Plex to refresh the whole library",
+            "\n".join(caught.exception.details),
+        )
+
+    def test_scan_on_import_can_be_switched_off(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(
+            instances=[PlexInstanceConfig("Plex", "http://plex", "token", [library])],
+            mark_watched=MarkWatchedConfig(scan_on_import=False),
+        )
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = None
+        with self.assertRaises(PlexEpisodePending):
+            process_plex_event({
+                "series": {"title": "Example Show"},
+                "episodes": [{"season": 2, "episode": 3}],
+                "episode_file": {"path": "/tv/x.mkv"},
+            }, config, {"Plex": plex}, self.rules)
+        plex.scan_path.assert_not_called()
+        plex.refresh_section.assert_not_called()
+
+    def test_default_match_window_outlasts_a_slow_library_scan(self):
+        # 8.7 minutes expired before a symlinked debrid library had been
+        # scanned, and the job then failed permanently.
+        delays = MarkWatchedConfig().retry_delays
+        self.assertGreaterEqual(sum(delays) / 60, 45)
+
     def test_pending_match_reports_the_libraries_it_searched(self):
         library = LibraryConfig("TV", "physical", [], section_id="7")
         config = AppConfig(instances=[PlexInstanceConfig(

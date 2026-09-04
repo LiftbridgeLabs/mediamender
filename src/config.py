@@ -77,7 +77,14 @@ class FeatureConfig:
 @dataclass
 class MarkWatchedConfig:
     webhook_secret: str = ""
-    retry_delays: List[int] = field(default_factory=lambda: [10, 30, 60, 120, 300])
+    # Sonarr reports an import the instant the file lands; a symlinked debrid
+    # library can take far longer than that to appear in Plex. These delays
+    # span roughly an hour, because the previous 8.7 minutes expired before
+    # Plex had scanned and the job then failed permanently.
+    retry_delays: List[int] = field(
+        default_factory=lambda: [15, 30, 60, 120, 300, 600, 900, 1200]
+    )
+    scan_on_import: bool = True
     # None means "every TV library"; an empty list means "none of them". That
     # distinction is easy to get wrong at a call site, so ask shows_library()
     # rather than comparing against None directly.
@@ -382,9 +389,10 @@ def parse_config(raw: dict, config_missing: bool = False) -> AppConfig:
     mark_raw = raw.get("mark_watched", {})
     if not isinstance(mark_raw, dict):
         mark_raw = {}
-    retry_delays = mark_raw.get("retry_delays", [10, 30, 60, 120, 300])
-    if not isinstance(retry_delays, list):
-        retry_delays = [10, 30, 60, 120, 300]
+    default_delays = MarkWatchedConfig().retry_delays
+    retry_delays = mark_raw.get("retry_delays", default_delays)
+    if not isinstance(retry_delays, list) or not retry_delays:
+        retry_delays = default_delays
     mark_watched = MarkWatchedConfig(
         webhook_secret=_env_override(
             "MEDIAMENDER_SONARR_WEBHOOK_SECRET",
@@ -392,6 +400,7 @@ def parse_config(raw: dict, config_missing: bool = False) -> AppConfig:
         ),
         retry_delays=[max(0, int(value)) for value in retry_delays[:10]],
         workers=min(16, max(1, int(mark_raw.get("workers", 4) or 4))),
+        scan_on_import=mark_raw.get("scan_on_import", True) is not False,
         visible_libraries=(
             [str(value) for value in mark_raw.get("visible_libraries", [])]
             if "visible_libraries" in mark_raw and isinstance(mark_raw.get("visible_libraries"), list)
