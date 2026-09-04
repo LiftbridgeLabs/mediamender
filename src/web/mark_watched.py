@@ -131,15 +131,21 @@ def api_mark_watched_retry():
     requeued = summary["requeued"]
     parts = []
     if requeued:
-        parts.append(f"Re-queued {requeued} job(s)")
+        parts.append(f"Checking {requeued} job(s) now")
     if summary["already_queued"]:
-        parts.append(f"{summary['already_queued']} already waiting")
+        parts.append(f"{summary['already_queued']} already queued")
     if summary["in_flight"]:
         parts.append(f"{summary['in_flight']} already running")
+    total = len(runtime.mark_watched.status(limit=10000)["jobs"])
     return jsonify({
         **summary,
         "ok": True,
-        "message": "; ".join(parts) or "Every Mark-it-Watched job already succeeded",
+        "jobs_on_record": total,
+        "message": (
+            "; ".join(parts)
+            or ("No Sonarr import has reached mediaMender yet"
+                if not total else "Every Mark-it-Watched job already succeeded")
+        ),
     })
 
 

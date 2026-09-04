@@ -9,7 +9,7 @@ import queue
 import secrets
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -32,6 +32,18 @@ class PlexEpisodePending(Exception):
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _utc_now_dt() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _humanize(seconds: float) -> str:
+    if seconds < 90:
+        return f"{seconds:.0f} seconds"
+    if seconds < 5400:
+        return f"{seconds / 60:.0f} minutes"
+    return f"{seconds / 3600:.1f} hours"
 
 
 def normalize_sonarr_download(payload: dict) -> dict | None:
@@ -112,7 +124,10 @@ class MarkWatchedManager:
         *,
         autostart: bool = True,
         workers: int = 4,
+        poll_seconds: float = 15,
+        give_up_after_hours: float = 0,
         sleep: Callable[[float], None] = time.sleep,
+        now: Callable[[], datetime] = _utc_now_dt,
     ):
         self.path = Path(data_dir) / "mark-watched-jobs.json"
         self.processor = processor
@@ -120,16 +135,26 @@ class MarkWatchedManager:
         # Each job spends nearly all of its life asleep between Plex polls, so
         # a pool keeps one waiting import from stalling every later webhook.
         self.workers = max(1, int(workers))
+        self.poll_seconds = max(1.0, float(poll_seconds))
+        # 0 means keep checking indefinitely. A library with no real-time scan
+        # trigger can take hours, and a job that gave up stayed unwatched for
+        # good because each webhook identity is only ever queued once.
+        self.give_up_after_hours = max(0.0, float(give_up_after_hours))
         self._sleep = sleep
+        self._now = now
         self._lock = threading.RLock()
         self._queue: queue.Queue[str] = queue.Queue()
         self._inflight: set[str] = set()
         self._records = self._load()
         for job_id, record in self._records.items():
+            # A job interrupted mid-attempt is re-run; one that was waiting on
+            # Plex keeps its due time across the restart.
             if record.get("status") in {"queued", "retrying", "processing"}:
                 record["status"] = "queued"
                 self._queue.put(job_id)
         self._threads: list[threading.Thread] = []
+        self._scheduler: threading.Thread | None = None
+        self._stopped = threading.Event()
         if autostart:
             self.start()
 
@@ -146,6 +171,12 @@ class MarkWatchedManager:
     def start(self) -> None:
         """Bring the pool up to strength, replacing any thread that died."""
         with self._lock:
+            if self._scheduler is None or not self._scheduler.is_alive():
+                self._scheduler = threading.Thread(
+                    target=self._schedule, daemon=True,
+                    name="mark-watched-scheduler",
+                )
+                self._scheduler.start()
             self._threads = [
                 thread for thread in self._threads if thread.is_alive()
             ]
@@ -156,6 +187,10 @@ class MarkWatchedManager:
                 )
                 self._threads.append(thread)
                 thread.start()
+
+    def stop(self) -> None:
+        """Ask the scheduler to finish. Workers are daemons and end with the process."""
+        self._stopped.set()
 
     def live_workers(self) -> int:
         with self._lock:
@@ -173,7 +208,7 @@ class MarkWatchedManager:
             existing = self._records.get(job_id)
             if existing:
                 return dict(existing), False
-            now = _utc_now()
+            now = self._stamp()
             record = {
                 "id": job_id,
                 "status": "queued",
@@ -199,7 +234,7 @@ class MarkWatchedManager:
         event["request_id"] = secrets.token_urlsafe(12)
         encoded = json.dumps(event, sort_keys=True, separators=(",", ":")).encode()
         job_id = hashlib.sha256(encoded).hexdigest()
-        now = _utc_now()
+        now = self._stamp()
         scope = event.get("manual", {}).get("scope", "show")
         record = {
             "id": job_id,
@@ -220,11 +255,14 @@ class MarkWatchedManager:
         )
         return dict(record)
 
+    def _stamp(self) -> str:
+        return self._now().isoformat()
+
     def _update(self, job_id: str, **changes) -> None:
         with self._lock:
             record = self._records[job_id]
             record.update(changes)
-            record["updated_at"] = _utc_now()
+            record["updated_at"] = self._stamp()
             self._save()
 
     def _log(self, job_id: str, message: str, details: list[str] | None = None) -> None:
@@ -234,90 +272,157 @@ class MarkWatchedManager:
             if record is None:
                 return
             trail = record.setdefault("log", [])
-            trail.append({"at": _utc_now(), "message": message})
+            stamp = self._stamp()
+            trail.append({"at": stamp, "message": message})
             for detail in details or []:
-                trail.append({"at": _utc_now(), "message": f"  {detail}"})
+                trail.append({"at": stamp, "message": f"  {detail}"})
             if len(trail) > LOG_TRAIL_LIMIT:
                 del trail[:-LOG_TRAIL_LIMIT]
             self._save()
 
     def process(self, job_id: str) -> dict:
+        """Make one attempt. A job that is still waiting on Plex is rescheduled.
+
+        Attempts used to run in a loop that slept between them, which held a
+        worker for the whole window and ended in permanent failure. A library
+        with no real-time scan trigger can take far longer than any fixed
+        window, so an unmatched job is parked with a due time instead and the
+        scheduler brings it back.
+        """
         with self._lock:
             record = self._records[job_id]
             event = dict(record["event"])
+            attempt = int(record.get("attempts", 0)) + 1
             self._inflight.add(job_id)
         try:
-            return self._process(job_id, event)
+            return self._attempt(job_id, event, attempt)
         finally:
             with self._lock:
                 self._inflight.discard(job_id)
 
-    def _process(self, job_id: str, event: dict) -> dict:
+    def _backoff(self, attempt: int) -> float:
+        """Seconds to wait before attempt ``attempt`` + 1, the last step repeating."""
+        delays = tuple(self.retry_delays) or (60,)
+        return float(delays[min(attempt, len(delays)) - 1])
+
+    def _expired(self, record: dict) -> bool:
+        if not self.give_up_after_hours:
+            return False
+        try:
+            created = datetime.fromisoformat(record["created_at"])
+        except (KeyError, ValueError):
+            return False
+        age = (self._now() - created).total_seconds()
+        return age > self.give_up_after_hours * 3600
+
+    def _attempt(self, job_id: str, event: dict, attempt: int) -> dict:
         if self.processor is None:
             self._update(job_id, status="failed", message="No Plex processor configured")
             return self.get(job_id)
 
-        delays = (0,) + tuple(self.retry_delays)
-        for attempt, delay in enumerate(delays, start=1):
-            if delay:
-                self._update(
-                    job_id, status="retrying", next_retry_seconds=delay,
-                    message=f"Plex match pending; retrying in {delay:g} seconds",
-                )
-                self._log(job_id, f"Waiting {delay:g}s for Plex to scan the import")
-                logger.info(
-                    "Job %s waiting %g seconds for Plex match", job_id[:12], delay,
-                )
-                self._sleep(delay)
-            self._update(
-                job_id, status="processing", attempts=attempt,
-                next_retry_seconds=None, message=f"Checking Plex (attempt {attempt})",
-            )
-            try:
-                logger.info("Processing Mark-it-Watched job %s (attempt %s)",
-                            job_id[:12], attempt)
-                result = self.processor(event) or {}
-                message = result.get("message", "Marked matched Plex episode watched")
-                self._update(
-                    job_id, status="succeeded", result=result, message=message,
-                )
-                self._log(job_id, f"Attempt {attempt}: {message}",
-                          result.get("details"))
-                logger.info("Mark-it-Watched job %s succeeded: %s",
-                            job_id[:12], message)
-                return self.get(job_id)
-            except PlexEpisodePending as exc:
-                self._log(job_id, f"Attempt {attempt}: Plex has not matched {exc}",
-                          getattr(exc, "details", None))
-                if attempt == len(delays):
-                    self._update(
-                        job_id, status="failed",
-                        message=f"Plex match was not available after {attempt} attempts: {exc}",
-                    )
-                    logger.error("Mark-it-Watched job %s exhausted Plex retries: %s",
-                                 job_id[:12], exc)
-                    return self.get(job_id)
-            except Exception as exc:
-                logging.getLogger("mediamender").exception("Mark-it-Watched job failed")
+        self._update(
+            job_id, status="processing", attempts=attempt,
+            next_attempt_at=None, message=f"Checking Plex (attempt {attempt})",
+        )
+        try:
+            logger.info("Processing Mark-it-Watched job %s (attempt %s)",
+                        job_id[:12], attempt)
+            result = self.processor(event) or {}
+            message = result.get("message", "Marked matched Plex episode watched")
+            self._update(job_id, status="succeeded", result=result, message=message)
+            self._log(job_id, f"Attempt {attempt}: {message}", result.get("details"))
+            logger.info("Mark-it-Watched job %s succeeded: %s", job_id[:12], message)
+        except PlexEpisodePending as exc:
+            self._log(job_id, f"Attempt {attempt}: Plex has not matched {exc}",
+                      getattr(exc, "details", None))
+            with self._lock:
+                record = self._records[job_id]
+                expired = self._expired(record)
+            if expired:
                 self._update(
                     job_id, status="failed",
-                    message=f"Plex processing failed: {type(exc).__name__}: {exc}",
+                    message=(
+                        f"Plex still had no match after "
+                        f"{self.give_up_after_hours:g}h and {attempt} attempts: {exc}"
+                    ),
                 )
-                self._log(
-                    job_id,
-                    f"Attempt {attempt} failed: {type(exc).__name__}: {exc}",
+                logger.error("Mark-it-Watched job %s gave up: %s", job_id[:12], exc)
+            else:
+                delay = self._backoff(attempt)
+                due = self._now() + timedelta(seconds=delay)
+                self._update(
+                    job_id, status="waiting", next_attempt_at=due.isoformat(),
+                    message=(
+                        f"Plex has not scanned this episode yet; "
+                        f"checking again in {_humanize(delay)}"
+                    ),
                 )
-                logger.error("Mark-it-Watched job %s failed: %s: %s",
-                             job_id[:12], type(exc).__name__, exc)
-                return self.get(job_id)
+                logger.info("Mark-it-Watched job %s waiting %s for a Plex match",
+                            job_id[:12], _humanize(delay))
+        except Exception as exc:
+            logging.getLogger("mediamender").exception("Mark-it-Watched job failed")
+            self._update(
+                job_id, status="failed",
+                message=f"Plex processing failed: {type(exc).__name__}: {exc}",
+            )
+            self._log(job_id, f"Attempt {attempt} failed: {type(exc).__name__}: {exc}")
+            logger.error("Mark-it-Watched job %s failed: %s: %s",
+                         job_id[:12], type(exc).__name__, exc)
         return self.get(job_id)
+
+    def due_jobs(self) -> list[str]:
+        """Waiting jobs whose next attempt has come round."""
+        now = self._now()
+        due = []
+        with self._lock:
+            for job_id, record in self._records.items():
+                if record.get("status") != "waiting" or job_id in self._inflight:
+                    continue
+                stamp = record.get("next_attempt_at")
+                if not stamp:
+                    due.append(job_id)
+                    continue
+                try:
+                    if datetime.fromisoformat(stamp) <= now:
+                        due.append(job_id)
+                except ValueError:
+                    due.append(job_id)
+        return due
+
+    def promote_due(self) -> list[str]:
+        """Move every due job back onto the queue. Returns the ids moved."""
+        moved = []
+        for job_id in self.due_jobs():
+            with self._lock:
+                record = self._records.get(job_id)
+                if record is None or record.get("status") != "waiting":
+                    continue
+                record["status"] = "queued"
+                self._save()
+            self._queue.put(job_id)
+            moved.append(job_id)
+        return moved
+
+    def _schedule(self) -> None:
+        """Return due jobs to the queue, forever.
+
+        Waits on an Event rather than the injected sleep, so a test double that
+        returns immediately cannot turn this into a busy loop.
+        """
+        while not self._stopped.is_set():
+            try:
+                self.promote_due()
+            except Exception:
+                logger.exception("Mark-it-Watched scheduler pass failed")
+            self._stopped.wait(self.poll_seconds)
 
     def retry_unfinished(self) -> dict:
         """Re-queue every job that has not succeeded so the worker retries it.
 
         Sonarr only sends a webhook identity once, and enqueue() is idempotent
-        on that identity, so a job that exhausted its Plex retries would
-        otherwise stay failed forever with no way to fire it again.
+        on that identity, so a job that gave up would otherwise stay failed
+        forever with no way to fire it again. A job merely waiting on Plex is
+        brought forward rather than left until its due time.
         """
         requeued: list[str] = []
         pending = 0
@@ -336,7 +441,7 @@ class MarkWatchedManager:
                 record.update({
                     "status": "queued",
                     "attempts": 0,
-                    "next_retry_seconds": None,
+                    "next_attempt_at": None,
                     "message": "Re-queued by a manual Mark-it-Watched retry",
                     "updated_at": _utc_now(),
                 })
@@ -493,6 +598,36 @@ class MarkWatchedRuleStore:
             self._save()
 
 
+class ScanThrottle:
+    """Rate-limit Plex scan requests per library.
+
+    A job now waits indefinitely for a slow library, so without this it would
+    ask Plex to scan on every attempt - and the fallback for a path Plex will
+    not accept is a full library refresh, which is expensive.
+    """
+
+    def __init__(self, interval_seconds: float = 900):
+        self.interval_seconds = float(interval_seconds)
+        self._last: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def allow(self, key: str, now: float | None = None) -> bool:
+        moment = time.monotonic() if now is None else now
+        with self._lock:
+            previous = self._last.get(key)
+            if previous is not None and moment - previous < self.interval_seconds:
+                return False
+            self._last[key] = moment
+            return True
+
+    def reset(self) -> None:
+        with self._lock:
+            self._last.clear()
+
+
+scan_throttle = ScanThrottle()
+
+
 def request_plex_scan(scannable: list[tuple], event: dict) -> list[str]:
     """Ask Plex to scan the imported episode's folder, or the whole section.
 
@@ -508,6 +643,9 @@ def request_plex_scan(scannable: list[tuple], event: dict) -> list[str]:
         separator = "\\" if "\\" in path and "/" not in path else "/"
         folder = separator.join(path.split(separator)[:-1])
     for library_key, plex, section_id in scannable:
+        if not scan_throttle.allow(library_key):
+            notes.append(f"{library_key}: a scan was requested recently; not asking again")
+            continue
         result = plex.scan_path(section_id, folder) if folder else {"ok": False}
         if result.get("ok"):
             notes.append(f"{library_key}: asked Plex to scan {folder}")

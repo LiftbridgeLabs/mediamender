@@ -429,13 +429,23 @@ environment override. Manual setup is still supported: use
 `http://MEDIAMENDER:8222/api/webhooks/sonarr` and send the secret in
 `X-Sonarr-Webhook-Secret` or as a Bearer token.
 
-Sonarr reports an import the moment the file lands. For a symlinked debrid or
-usenet library that is well before Plex has scanned it, so mediaMender asks
-Plex to scan the imported folder rather than only polling for it, and keeps
-re-checking for about an hour (`mark_watched.retry_delays`). If Plex rejects
-the path - which happens when Sonarr and Plex map the same media differently -
-it falls back to refreshing that library. Set `mark_watched.scan_on_import` to
-`false` to only poll.
+Sonarr reports an import the moment the file lands. For a symlinked debrid,
+webdav or usenet library that is well before Plex has scanned it, and there is
+no upper bound on how long that takes.
+
+So mediaMender does not give up. An episode Plex has not scanned yet leaves the
+job in a **waiting** state with a due time, and a scheduler brings it back when
+that time comes: after 15s, 30s, a minute, two, five, ten, fifteen, then every
+twenty minutes for as long as the container runs. Waiting costs nothing - the
+job is parked on disk, not holding a worker - and it survives a restart with
+its due time intact. Set `mark_watched.give_up_after_hours` if you would rather
+it stopped eventually.
+
+While waiting, mediaMender asks Plex to scan the imported folder rather than
+only polling for it. If Plex rejects the path - which happens when Sonarr and
+Plex map the same media differently - it falls back to refreshing that library.
+Scan requests are rate-limited to one per library per 15 minutes.
+Set `mark_watched.scan_on_import` to `false` to only poll.
 
 If nothing is being marked watched, run:
 

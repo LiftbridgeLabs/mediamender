@@ -85,6 +85,10 @@ class MarkWatchedConfig:
         default_factory=lambda: [15, 30, 60, 120, 300, 600, 900, 1200]
     )
     scan_on_import: bool = True
+    # 0 keeps checking for as long as the container runs. A webdav or debrid
+    # library can take hours to appear in Plex, and a job that gives up stays
+    # unwatched for good because Sonarr sends each import only once.
+    give_up_after_hours: float = 0
     # None means "every TV library"; an empty list means "none of them". That
     # distinction is easy to get wrong at a call site, so ask shows_library()
     # rather than comparing against None directly.
@@ -401,6 +405,7 @@ def parse_config(raw: dict, config_missing: bool = False) -> AppConfig:
         retry_delays=[max(0, int(value)) for value in retry_delays[:10]],
         workers=min(16, max(1, int(mark_raw.get("workers", 4) or 4))),
         scan_on_import=mark_raw.get("scan_on_import", True) is not False,
+        give_up_after_hours=max(0.0, float(mark_raw.get("give_up_after_hours", 0) or 0)),
         visible_libraries=(
             [str(value) for value in mark_raw.get("visible_libraries", [])]
             if "visible_libraries" in mark_raw and isinstance(mark_raw.get("visible_libraries"), list)

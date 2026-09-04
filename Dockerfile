@@ -25,6 +25,7 @@ COPY app.py worker.py entrypoint.sh ./
 COPY src ./src
 COPY static ./static
 COPY templates ./templates
+COPY tools ./tools
 
 RUN chmod +x /app/entrypoint.sh && \
     chown -R appuser:appgroup /app

@@ -1,6 +1,7 @@
 import json
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -16,6 +17,7 @@ from src.mark_watched import (
     PlexEpisodePending,
     normalize_sonarr_download,
     process_manual_event, process_plex_event,
+    scan_throttle,
 )
 from src.plex_client import PlexClient, normalize_show_title
 
@@ -60,6 +62,7 @@ class SonarrWebhookApiTests(unittest.TestCase):
         manager.retry_unfinished.return_value = {
             "requeued": 2, "already_queued": 1, "in_flight": 0, "job_ids": ["a", "b"],
         }
+        manager.status.return_value = {"jobs": [{"id": "a"}, {"id": "b"}, {"id": "c"}]}
         with patch.object(app, "config", self.config), \
              patch.object(app, "mark_watched", manager), \
              patch.object(app, "has_valid_api_token", return_value=True):
@@ -67,8 +70,22 @@ class SonarrWebhookApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertEqual(payload["requeued"], 2)
-        self.assertEqual(payload["message"], "Re-queued 2 job(s); 1 already waiting")
+        self.assertEqual(payload["message"], "Checking 2 job(s) now; 1 already queued")
         manager.retry_unfinished.assert_called_once_with()
+
+    def test_retry_says_so_when_no_import_has_ever_arrived(self):
+        manager = Mock()
+        manager.retry_unfinished.return_value = {
+            "requeued": 0, "already_queued": 0, "in_flight": 0, "job_ids": [],
+        }
+        manager.status.return_value = {"jobs": []}
+        with patch.object(app, "config", self.config), \
+             patch.object(app, "mark_watched", manager), \
+             patch.object(app, "has_valid_api_token", return_value=True):
+            response = self.client.post("/api/mark-watched/retry")
+        payload = response.get_json()
+        self.assertEqual(payload["jobs_on_record"], 0)
+        self.assertIn("No Sonarr import has reached mediaMender", payload["message"])
 
     def test_retry_endpoint_requires_authentication(self):
         with patch.object(app, "config", self.config):
@@ -308,38 +325,119 @@ class MarkWatchedQueueTests(unittest.TestCase):
         self.assertEqual(first["id"], duplicate["id"])
         self.assertEqual(len(manager.status()["jobs"]), 1)
 
-    def test_pending_match_retries_with_bounded_backoff(self):
+    def _clock(self, start=None):
+        """A clock the test moves by hand, so no test waits on real time."""
+        state = {"now": start or datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)}
+        return state, (lambda: state["now"])
+
+    def test_an_unmatched_job_waits_rather_than_failing(self):
+        def process(_event):
+            raise PlexEpisodePending("not scanned")
+
+        state, clock = self._clock()
+        manager = MarkWatchedManager(
+            str(self.runtime), processor=process, retry_delays=(10, 60),
+            autostart=False, now=clock,
+        )
+        record, _ = manager.enqueue(sonarr_download())
+        manager._queue.get_nowait()
+        result = manager.process(record["id"])
+        self.assertEqual(result["status"], "waiting")
+        self.assertEqual(result["attempts"], 1)
+        self.assertIn("checking again in", result["message"])
+        # Due ten seconds out, so not yet ready to run again.
+        self.assertEqual(manager.due_jobs(), [])
+        state["now"] += timedelta(seconds=11)
+        self.assertEqual(manager.due_jobs(), [record["id"]])
+
+    def test_it_keeps_checking_indefinitely_by_default(self):
         attempts = []
 
         def process(_event):
             attempts.append(True)
-            if len(attempts) < 3:
+            if len(attempts) < 40:
                 raise PlexEpisodePending("not scanned")
             return {"message": "Episode marked watched"}
 
-        sleeps = []
+        state, clock = self._clock()
         manager = MarkWatchedManager(
-            str(self.runtime), processor=process, retry_delays=(1, 2, 3),
-            autostart=False, sleep=sleeps.append,
+            str(self.runtime), processor=process, retry_delays=(10, 60),
+            autostart=False, now=clock,
         )
+        self.assertEqual(manager.give_up_after_hours, 0)
         record, _ = manager.enqueue(sonarr_download())
-        result = manager.process(record["id"])
-        self.assertEqual(result["status"], "succeeded")
-        self.assertEqual(result["attempts"], 3)
-        self.assertEqual(sleeps, [1, 2])
+        manager._queue.get_nowait()
+        for _ in range(40):
+            manager.process(record["id"])
+            state["now"] += timedelta(hours=2)
+        # Nearly three days of waiting, and it was still trying.
+        self.assertEqual(manager.get(record["id"])["status"], "succeeded")
+        self.assertEqual(len(attempts), 40)
 
-    def test_failed_jobs_are_requeued_on_demand(self):
+    def test_backoff_escalates_then_holds_at_the_last_step(self):
+        manager = MarkWatchedManager(
+            str(self.runtime), retry_delays=(10, 60, 300), autostart=False,
+        )
+        self.assertEqual(
+            [manager._backoff(n) for n in range(1, 7)],
+            [10, 60, 300, 300, 300, 300],
+        )
+
+    def test_an_optional_cap_eventually_gives_up(self):
         def process(_event):
             raise PlexEpisodePending("not scanned")
 
+        state, clock = self._clock()
         manager = MarkWatchedManager(
-            str(self.runtime), processor=process, retry_delays=(),
-            autostart=False, sleep=lambda _delay: None,
+            str(self.runtime), processor=process, retry_delays=(10,),
+            autostart=False, give_up_after_hours=6, now=clock,
+        )
+        record, _ = manager.enqueue(sonarr_download())
+        manager._queue.get_nowait()
+        self.assertEqual(manager.process(record["id"])["status"], "waiting")
+        state["now"] += timedelta(hours=7)
+        result = manager.process(record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("6h", result["message"])
+
+    def test_a_waiting_job_keeps_its_due_time_across_a_restart(self):
+        def process(_event):
+            raise PlexEpisodePending("not scanned")
+
+        state, clock = self._clock()
+        manager = MarkWatchedManager(
+            str(self.runtime), processor=process, retry_delays=(600,),
+            autostart=False, now=clock,
+        )
+        record, _ = manager.enqueue(sonarr_download())
+        manager._queue.get_nowait()
+        manager.process(record["id"])
+        due = manager.get(record["id"])["next_attempt_at"]
+
+        restarted = MarkWatchedManager(str(self.runtime), autostart=False, now=clock)
+        reloaded = restarted.get(record["id"])
+        self.assertEqual(reloaded["status"], "waiting")
+        self.assertEqual(reloaded["next_attempt_at"], due)
+        self.assertEqual(restarted.due_jobs(), [])
+        state["now"] += timedelta(seconds=601)
+        self.assertEqual(restarted.promote_due(), [record["id"]])
+        self.assertEqual(restarted._queue.get_nowait(), record["id"])
+
+    def test_waiting_jobs_are_brought_forward_on_demand(self):
+        def process(_event):
+            raise PlexEpisodePending("not scanned")
+
+        state, clock = self._clock()
+        manager = MarkWatchedManager(
+            str(self.runtime), processor=process, retry_delays=(3600,),
+            autostart=False, now=clock,
         )
         record, _ = manager.enqueue(sonarr_download())
         # Mimic the running worker taking the job off the queue.
         manager._queue.get_nowait()
-        self.assertEqual(manager.process(record["id"])["status"], "failed")
+        self.assertEqual(manager.process(record["id"])["status"], "waiting")
+        # An hour out, so the scheduler would not touch it yet.
+        self.assertEqual(manager.due_jobs(), [])
 
         summary = manager.retry_unfinished()
         self.assertEqual(summary["requeued"], 1)
@@ -347,6 +445,7 @@ class MarkWatchedQueueTests(unittest.TestCase):
         requeued = manager.get(record["id"])
         self.assertEqual(requeued["status"], "queued")
         self.assertEqual(requeued["attempts"], 0)
+        self.assertIsNone(requeued["next_attempt_at"])
         self.assertEqual(manager._queue.get_nowait(), record["id"])
 
     def test_retry_leaves_succeeded_and_waiting_jobs_alone(self):
@@ -459,18 +558,34 @@ class MarkWatchedQueueTests(unittest.TestCase):
                 raise PlexEpisodePending("Example Show S02E03", ["Plex::TV: no match"])
             return {"message": "Marked 1", "details": ["Plex::TV: marked watched"]}
 
+        state, clock = self._clock()
         manager = MarkWatchedManager(
             str(self.runtime), processor=process, retry_delays=(5,),
-            autostart=False, sleep=lambda _delay: None,
+            autostart=False, now=clock,
         )
         record, _ = manager.enqueue(sonarr_download())
         manager._queue.get_nowait()
         manager.process(record["id"])
+        waiting = manager.get(record["id"])
+        self.assertEqual(waiting["status"], "waiting")
+        self.assertIn("checking again in", waiting["message"])
+        state["now"] += timedelta(seconds=6)
+        manager.process(record["id"])
+
         trail = [entry["message"] for entry in manager.get(record["id"])["log"]]
         self.assertIn("Attempt 1: Plex has not matched Example Show S02E03", trail)
         self.assertIn("  Plex::TV: no match", trail)
-        self.assertIn("Waiting 5s for Plex to scan the import", trail)
+        self.assertIn("Attempt 2: Marked 1", trail)
         self.assertIn("  Plex::TV: marked watched", trail)
+
+    def test_scan_requests_are_throttled_per_library(self):
+        from src.mark_watched import ScanThrottle
+        throttle = ScanThrottle(interval_seconds=900)
+        self.assertTrue(throttle.allow("Plex::TV", now=0))
+        self.assertFalse(throttle.allow("Plex::TV", now=300))
+        # A different library is not held back by another library's request.
+        self.assertTrue(throttle.allow("Plex::Anime", now=300))
+        self.assertTrue(throttle.allow("Plex::TV", now=1000))
 
     def test_log_trail_is_capped(self):
         manager = MarkWatchedManager(str(self.runtime), autostart=False)
@@ -497,6 +612,7 @@ class MarkWatchedQueueTests(unittest.TestCase):
 
 class MarkWatchedRuleTests(unittest.TestCase):
     def setUp(self):
+        scan_throttle.reset()
         self.runtime = Path("tests/.mark-watched-rule-runtime")
         self.runtime.mkdir(exist_ok=True)
         (self.runtime / "mark-watched-rules.json").unlink(missing_ok=True)

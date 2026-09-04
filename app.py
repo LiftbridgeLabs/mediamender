@@ -109,6 +109,7 @@ mark_watched = MarkWatchedManager(
     ),
     retry_delays=tuple(config.mark_watched.retry_delays),
     workers=config.mark_watched.workers,
+    give_up_after_hours=config.mark_watched.give_up_after_hours,
 )
 sonarr_connection = SonarrConnectionStore(
     os.path.dirname(os.path.abspath(CONFIG_PATH)),
@@ -693,6 +694,7 @@ def _apply_runtime_config(new_config: AppConfig) -> None:
     _worker_recovery_cache.clear()
     mark_watched.retry_delays = tuple(new_config.mark_watched.retry_delays)
     mark_watched.workers = new_config.mark_watched.workers
+    mark_watched.give_up_after_hours = new_config.mark_watched.give_up_after_hours
     mark_watched.start()
     CONFIG_LOAD_ERROR = ""
 
