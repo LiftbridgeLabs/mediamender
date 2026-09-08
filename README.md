@@ -585,9 +585,11 @@ webhook. Plex issues a new ratingKey whenever an item is removed and re-added -
 routine in a symlinked debrid library - so a rule kept against a ratingKey is
 silently orphaned: the import finds no rule while the page that set it still
 shows the show switched on. A show Plex cannot identify falls back to its
-ratingKey. Rules written before this keep working, and move onto the id the next
-time the show is switched on; `tools/diagnose_mark_watched.py` reports how many
-are still keyed the old way.
+ratingKey. Rules written before this keep working, and are moved onto their ids
+in one pass at startup, using a single show listing per library - nothing has to
+be re-entered, and a rule naming a show Plex no longer has is left untouched
+rather than discarded. `tools/diagnose_mark_watched.py` reports how many rules
+are keyed each way.
 
 Settings controls which shared Plex TV libraries are visible. All On and All Off
 apply to the server and library selected on the page, not to every library on

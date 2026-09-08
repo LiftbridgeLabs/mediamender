@@ -386,6 +386,56 @@ def _start_readonly_status_refresh(target_config: AppConfig = None,
     ).start()
 
 
+def _migrate_mark_watched_identities() -> None:
+    """Move existing watch rules off Plex ratingKeys onto TVDB ids.
+
+    A rule keyed by ratingKey is orphaned the moment Plex re-adds the item, so
+    the install quietly stops honouring rules the page still shows as on. Plex
+    hands over the whole mapping in one listing per library, so this runs once
+    at startup rather than asking anyone to re-enter what they already set.
+    """
+    def migrate():
+        for instance in config.instances:
+            plex = plex_clients.get(instance.name)
+            if plex is None:
+                continue
+            for library in instance.libraries:
+                pending = mark_watched_rules.legacy_rating_keys(
+                    instance.name, library.name,
+                )
+                if not pending:
+                    continue
+                try:
+                    section_id = library.section_id or plex.find_section_id(library.name)
+                    if not section_id or plex.get_section_type(str(section_id)) != "show":
+                        continue
+                    shows = plex.list_tv_shows(str(section_id))
+                except Exception as exc:
+                    logger.warning(
+                        "[%s / %s] Could not identify shows for rule migration (%s)",
+                        instance.name, library.name, type(exc).__name__,
+                    )
+                    continue
+                mapping = {
+                    show["rating_key"]: show.get("tvdb_id", "")
+                    for show in shows if show["rating_key"] in pending
+                }
+                moved = mark_watched_rules.migrate_identities(
+                    instance.name, library.name, mapping,
+                )
+                stranded = len(pending) - moved
+                logger.info(
+                    "[%s / %s] Moved %s watch rule(s) onto TVDB ids%s",
+                    instance.name, library.name, moved,
+                    f"; {stranded} still name a show Plex no longer has"
+                    if stranded else "",
+                )
+
+    threading.Thread(
+        target=migrate, daemon=True, name="mark-watched-rule-migration",
+    ).start()
+
+
 def _setup_scheduler(new_config: AppConfig = None):
     target = new_config or config
     scheduler.remove_all_jobs()
@@ -433,6 +483,8 @@ except Exception as exc:
 scheduler.start()
 _refresh_next_runs()
 _start_readonly_status_refresh()
+if config.features.mark_watched:
+    _migrate_mark_watched_identities()
 
 
 def _validate_provider_checks(checks, context: str) -> None:

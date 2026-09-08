@@ -722,6 +722,47 @@ class MarkWatchedRuleStore:
                 "season_override": seasons.get(season_key) if explicit else None,
             }
 
+    def migrate_identities(self, instance: str, library: str,
+                           tvdb_by_rating_key: dict) -> int:
+        """Re-key this library's ratingKey rules onto their TVDB ids.
+
+        Switching every show off and on by hand is not a migration, and the
+        bulk buttons cannot stand in for one: they set a rule for every show in
+        the library, not only the ones that already had one. Plex can supply
+        the mapping in a single listing, so do it without the operator having
+        to touch anything.
+
+        A rule whose ratingKey Plex no longer knows is left exactly as it is.
+        Nothing can identify it any more, and discarding it would silently
+        change what the install does.
+        """
+        moved = 0
+        with self._lock:
+            for rating_key, tvdb_id in tvdb_by_rating_key.items():
+                if not tvdb_id:
+                    continue
+                legacy = self._show_key(instance, library, str(rating_key))
+                if legacy not in self._data["shows"]:
+                    continue
+                key = self._show_key(instance, library, str(rating_key), tvdb_id)
+                if key == legacy or key in self._data["shows"]:
+                    continue
+                self._data["shows"][key] = self._data["shows"][legacy]
+                self._migrate_legacy(instance, library, str(rating_key), key)
+                moved += 1
+            if moved:
+                self._save()
+        return moved
+
+    def legacy_rating_keys(self, instance: str, library: str) -> set:
+        """ratingKeys this library still has rules against."""
+        prefix = f"{instance}::{library}::"
+        with self._lock:
+            return {
+                key[len(prefix):] for key in self._data["shows"]
+                if key.startswith(prefix) and not key[len(prefix):].startswith("tvdb-")
+            }
+
     def all_rules(self) -> dict:
         with self._lock:
             return json.loads(json.dumps(self._data))

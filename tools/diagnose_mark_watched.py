@@ -68,9 +68,21 @@ def report_config(raw: dict) -> dict:
             print(f"      {key}")
 
     delays = mark.get("retry_delays") or [15, 30, 60, 120, 300, 600, 900, 1200]
-    print(f"  Plex match window        : {round(sum(delays) / 60, 1)} minutes "
-          f"over {len(delays) + 1} attempts")
-    print(f"  Scan on import           : {mark.get('scan_on_import', True) is not False}")
+    # The delays are the ramp, not the deadline: the last one repeats until the
+    # give-up window closes. Reporting their sum as "the match window" said 8.7
+    # minutes for a job that in fact keeps checking for days.
+    give_up = mark.get("give_up_after_hours", 120)
+    print(f"  Retry ramp               : {', '.join(str(int(d)) + 's' for d in delays)}, "
+          f"then every {int(delays[-1])}s")
+    print(f"  Gives up after           : "
+          f"{f'{give_up:g} hours' if give_up else 'never'}")
+    scanning = mark.get("scan_on_import", True) is not False
+    print(f"  Scan on import           : {scanning}")
+    if not scanning:
+        print("    -> mediaMender waits for Plex to notice the file on its own.")
+        print("       On a debrid or webdav library that can take far longer")
+        print("       than the ramp above. Turn it on under Mark-it-Watched >")
+        print("       Configure to ask Plex to scan the imported folder.")
 
     tv = []
     for instance in raw.get("plex_instances", []) or []:
@@ -172,8 +184,10 @@ def report_sonarr(state: dict) -> None:
     for url, entry in connections.items():
         status = entry.get("status", "?")
         print(f"  {url}: {status}")
-        if status != "success":
-            print(f"      {entry.get('error', '')}")
+        # The store writes "connected", so this printed a blank line for every
+        # healthy connection.
+        if status != "connected" and entry.get("error"):
+            print(f"      {entry['error']}")
         print(f"      callback: {entry.get('callback_url', '')}")
 
 

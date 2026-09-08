@@ -899,6 +899,39 @@ class MarkWatchedRuleTests(unittest.TestCase):
             self.rules.rule("Plex", "TV", "55555", 2, tvdb_id="73141")["enabled"],
         )
 
+    def test_existing_rules_are_migrated_without_being_re_entered(self):
+        """Switching 111 shows off and on by hand is not a migration, and the
+        bulk buttons cannot stand in for one - they would set a rule for every
+        show in the library, not only the ones that already had one."""
+        self.rules.set_show("Plex", "TV", "10", True)
+        self.rules.set_show("Plex", "TV", "11", False)
+        self.rules.set_season("Plex", "TV", "10", 2, False)
+        # 12 has no rule; 13's rule names a show Plex no longer has.
+        self.rules.set_show("Plex", "TV", "13", True)
+
+        moved = self.rules.migrate_identities("Plex", "TV", {
+            "10": "73141", "11": "73142", "12": "73143",
+        })
+        self.assertEqual(moved, 2)
+        stored = self.rules.all_rules()
+        self.assertEqual(stored["shows"]["Plex::TV::tvdb-73141"], True)
+        self.assertEqual(stored["shows"]["Plex::TV::tvdb-73142"], False)
+        self.assertEqual(stored["seasons"]["Plex::TV::tvdb-73141::2"], False)
+        # A show that never had a rule does not acquire one.
+        self.assertNotIn("Plex::TV::tvdb-73143", stored["shows"])
+        # A rule Plex can no longer identify is left alone, not discarded.
+        self.assertEqual(stored["shows"]["Plex::TV::13"], True)
+        self.assertEqual(
+            self.rules.legacy_rating_keys("Plex", "TV"), {"13"},
+        )
+
+    def test_migrating_twice_changes_nothing(self):
+        self.rules.set_show("Plex", "TV", "10", True)
+        self.rules.migrate_identities("Plex", "TV", {"10": "73141"})
+        before = self.rules.all_rules()
+        self.assertEqual(self.rules.migrate_identities("Plex", "TV", {"10": "73141"}), 0)
+        self.assertEqual(self.rules.all_rules(), before)
+
     def test_a_show_plex_cannot_identify_still_uses_its_rating_key(self):
         self.rules.set_show("Plex", "TV", "10", True)
         self.assertTrue(self.rules.rule("Plex", "TV", "10", 0)["enabled"])
