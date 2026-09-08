@@ -22,3 +22,4 @@ tests/.mark-watched-*
 
 # Agent scratch
 .tmp/
+.claude/
