@@ -604,6 +604,7 @@ def api_mark_watched_libraries():
             for show in shows:
                 rule = runtime.mark_watched_rules.rule(
                     instance.name, library.name, show["rating_key"], 0,
+                    tvdb_id=show.get("tvdb_id", ""),
                 )
                 show["rule_enabled"] = rule["show_enabled"]
                 show["poster_url"] = url_for(
@@ -708,6 +709,7 @@ def api_mark_watched_shows():
     for show in shows:
         rule = runtime.mark_watched_rules.rule(
             instance_name, library_name, show["rating_key"], 0,
+            tvdb_id=show.get("tvdb_id", ""),
         )
         show["rule_enabled"] = rule["show_enabled"]
         show["poster_url"] = url_for(
@@ -741,10 +743,12 @@ def api_mark_watched_seasons():
     if plex is None or not show_key.isdigit():
         return jsonify({"error": "Unknown Plex show"}), 404
     try:
+        tvdb = plex.get_show_tvdb_id(show_key)
         seasons = plex.list_show_seasons(show_key)
         for season in seasons:
             rule = runtime.mark_watched_rules.rule(
                 instance_name, library_name, show_key, season["index"],
+                tvdb_id=tvdb,
             )
             season["rule"] = rule
             season["poster_url"] = url_for(
@@ -768,9 +772,13 @@ def api_mark_watched_rules():
     _instance, _library, plex = _mark_watched_library(instance_name, library_name)
     if plex is None or not show_key.isdigit():
         return jsonify({"ok": False, "error": "Unknown Plex show"}), 404
+    # Keyed by TVDB id where Plex knows one, so the rule survives the item
+    # being removed and re-added under a new ratingKey.
+    tvdb = plex.get_show_tvdb_id(show_key)
     if data.get("scope") == "show" and isinstance(data.get("enabled"), bool):
         runtime.mark_watched_rules.set_show(
             instance_name, library_name, show_key, data["enabled"],
+            tvdb_id=tvdb,
         )
     elif data.get("scope") == "season" and (
         isinstance(data.get("enabled"), bool) or data.get("enabled") is None
@@ -781,7 +789,7 @@ def api_mark_watched_rules():
             return jsonify({"ok": False, "error": "Valid season_index required"}), 400
         runtime.mark_watched_rules.set_season(
             instance_name, library_name, show_key,
-            season_index, data.get("enabled"),
+            season_index, data.get("enabled"), tvdb_id=tvdb,
         )
     else:
         return jsonify({"ok": False, "error": "Invalid rule update"}), 400
@@ -861,8 +869,9 @@ def _enumerate_enabled_rules():
                 continue
             for show in plex.list_tv_shows(str(section_id)):
                 key = show["rating_key"]
+                tvdb = show.get("tvdb_id", "")
                 if not runtime.mark_watched_rules.rule(
-                    instance.name, library.name, key, 0,
+                    instance.name, library.name, key, 0, tvdb_id=tvdb,
                 )["show_enabled"]:
                     continue
                 # Plex reports these on the show listing itself, so a show that
@@ -876,6 +885,7 @@ def _enumerate_enabled_rules():
                     season for season in seasons
                     if runtime.mark_watched_rules.rule(
                         instance.name, library.name, key, season["index"],
+                        tvdb_id=tvdb,
                     )["enabled"]
                 ]
                 outstanding = [
@@ -984,7 +994,8 @@ def api_mark_watched_all():
             if not section_id or plex.get_section_type(str(section_id)) != "show":
                 continue
             for show in plex.list_tv_shows(str(section_id)):
-                show_keys.append((instance.name, library.name, show["rating_key"]))
+                show_keys.append((instance.name, library.name,
+                                  show["rating_key"], show.get("tvdb_id", "")))
     if (only_instance or only_library) and not show_keys:
         return jsonify({
             "ok": False,

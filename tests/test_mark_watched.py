@@ -23,6 +23,13 @@ from src.mark_watched import (
 from src.plex_client import PlexClient, normalize_show_title
 
 
+def _plex_with_tvdb(tvdb="73141"):
+    """A Plex double that can identify a show the way a real server does."""
+    plex = Mock()
+    plex.get_show_tvdb_id.return_value = tvdb
+    return plex
+
+
 def sonarr_download():
     return {
         "eventType": "Download",
@@ -229,7 +236,7 @@ class MarkWatchedUiApiTests(unittest.TestCase):
             "Plex", "http://plex", "token", [library],
         )])
         with patch.object(app, "config", config), \
-             patch.object(app, "plex_clients", {"Plex": Mock()}), \
+             patch.object(app, "plex_clients", {"Plex": _plex_with_tvdb()}), \
              patch.object(app.mark_watched_rules, "set_season") as save:
             response = self._client().post(
                 "/api/mark-watched/rules",
@@ -238,7 +245,8 @@ class MarkWatchedUiApiTests(unittest.TestCase):
                 headers={"X-CSRF-Token": "known-token"},
             )
         self.assertEqual(response.status_code, 200)
-        save.assert_called_once_with("Plex", "TV", "10", 2, False)
+        # Keyed by the id that survives Plex re-adding the item.
+        save.assert_called_once_with("Plex", "TV", "10", 2, False, tvdb_id="73141")
 
     def test_catch_up_requires_destructive_confirmation(self):
         response = self._client().post(
@@ -860,6 +868,48 @@ class MarkWatchedRuleTests(unittest.TestCase):
         self.assertFalse(explicit["enabled"])
         self.assertEqual(explicit["source"], "season")
 
+    def test_a_rule_survives_plex_reissuing_the_shows_rating_key(self):
+        """The whole point of keying by TVDB id: a debrid library removes and
+        re-adds items constantly, and Plex hands each one a fresh ratingKey."""
+        self.rules.set_show("Plex", "TV", "10", True, tvdb_id="73141")
+        # Same show, same library, new key.
+        after = self.rules.rule("Plex", "TV", "99999", 0, tvdb_id="73141")
+        self.assertTrue(after["enabled"])
+        self.assertTrue(after["show_known"])
+
+    def test_a_rating_key_rule_is_still_honoured_and_then_upgraded(self):
+        """Nothing already set has to be re-entered."""
+        self.rules.set_show("Plex", "TV", "10", True)
+        self.rules.set_season("Plex", "TV", "10", 2, False)
+        legacy = self.rules.rule("Plex", "TV", "10", 0, tvdb_id="73141")
+        self.assertTrue(legacy["enabled"])
+        self.assertFalse(
+            self.rules.rule("Plex", "TV", "10", 2, tvdb_id="73141")["enabled"],
+        )
+
+        # Writing it again moves the rule, and its overrides, onto the id.
+        self.rules.set_show("Plex", "TV", "10", True, tvdb_id="73141")
+        stored = self.rules.all_rules()
+        self.assertIn("Plex::TV::tvdb-73141", stored["shows"])
+        self.assertNotIn("Plex::TV::10", stored["shows"])
+        self.assertIn("Plex::TV::tvdb-73141::2", stored["seasons"])
+        self.assertNotIn("Plex::TV::10::2", stored["seasons"])
+        # And the override still applies under the new key.
+        self.assertFalse(
+            self.rules.rule("Plex", "TV", "55555", 2, tvdb_id="73141")["enabled"],
+        )
+
+    def test_a_show_plex_cannot_identify_still_uses_its_rating_key(self):
+        self.rules.set_show("Plex", "TV", "10", True)
+        self.assertTrue(self.rules.rule("Plex", "TV", "10", 0)["enabled"])
+        self.assertIn("Plex::TV::10", self.rules.all_rules()["shows"])
+
+    def test_two_libraries_keep_separate_rules_for_the_same_show(self):
+        self.rules.set_show("Plex", "TV", "10", True, tvdb_id="73141")
+        self.assertFalse(
+            self.rules.rule("Plex", "Anime", "10", 0, tvdb_id="73141")["enabled"],
+        )
+
     def test_clearing_season_override_restores_inheritance(self):
         self.rules.set_show("Plex", "TV", "10", False)
         self.rules.set_season("Plex", "TV", "10", 1, True)
@@ -1345,7 +1395,10 @@ class MarkWatchedPermissionTests(unittest.TestCase):
         )])
         plex = Mock()
         plex.get_section_type.return_value = "show"
-        plex.list_tv_shows.return_value = [{"rating_key": "10"}, {"rating_key": "11"}]
+        plex.list_tv_shows.return_value = [
+            {"rating_key": "10", "tvdb_id": "73141"},
+            {"rating_key": "11", "tvdb_id": "73142"},
+        ]
         client = app.app.test_client()
         with client.session_transaction() as browser_session:
             browser_session.update({"authenticated": True, "username": "viewer",
@@ -1360,7 +1413,7 @@ class MarkWatchedPermissionTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         set_all.assert_called_once_with(
-            [("Plex", "TV", "10"), ("Plex", "TV", "11")], False,
+            [("Plex", "TV", "10", "73141"), ("Plex", "TV", "11", "73142")], False,
         )
         plex.mark_watched.assert_not_called()
 
@@ -1380,7 +1433,7 @@ class MarkWatchedPermissionTests(unittest.TestCase):
         )])
         plex = Mock()
         plex.get_section_type.return_value = "show"
-        plex.list_tv_shows.return_value = [{"rating_key": "10"}]
+        plex.list_tv_shows.return_value = [{"rating_key": "10", "tvdb_id": "73141"}]
         other = Mock()
         client = app.app.test_client()
         with client.session_transaction() as browser_session:
@@ -1397,7 +1450,7 @@ class MarkWatchedPermissionTests(unittest.TestCase):
                 headers={"X-CSRF-Token": "known-token"},
             )
         self.assertEqual(response.status_code, 200)
-        set_all.assert_called_once_with([("Plex", "TV", "10")], False)
+        set_all.assert_called_once_with([("Plex", "TV", "10", "73141")], False)
         self.assertEqual(response.get_json()["scope"], "Plex / TV")
         # The other server was never even asked for its shows.
         other.list_tv_shows.assert_not_called()

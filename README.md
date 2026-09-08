@@ -580,9 +580,19 @@ and which username's rules were consulted for the decision. A job that matched
 an episode but marked nothing is badged as skipped rather than a plain success,
 because the trail's `no watch rule enabled` line is the reason it did nothing.
 
+Rules are stored against the show's TVDB id, the same id Sonarr names in its
+webhook. Plex issues a new ratingKey whenever an item is removed and re-added -
+routine in a symlinked debrid library - so a rule kept against a ratingKey is
+silently orphaned: the import finds no rule while the page that set it still
+shows the show switched on. A show Plex cannot identify falls back to its
+ratingKey. Rules written before this keep working, and move onto the id the next
+time the show is switched on; `tools/diagnose_mark_watched.py` reports how many
+are still keyed the old way.
+
 Settings controls which shared Plex TV libraries are visible. All On and All Off
-update the single future rule set only; they never rewrite existing Plex watch
-history.
+apply to the server and library selected on the page, not to every library on
+every server, and they update the future rule set only; they never rewrite
+existing Plex watch history.
 
 ## Auth
 

@@ -102,6 +102,9 @@ class PlexClient:
         })
         self._sections_cache: List[Dict] | None = None
         self._sections_cached_at = 0.0
+        # A ratingKey keeps its TVDB id for as long as the key exists, so this
+        # never needs invalidating: a re-added item arrives as a new key.
+        self._tvdb_cache: Dict[str, str] = {}
 
     def _get(self, path: str, params: dict = None, timeout: int = 15):
         return self.session.get(f"{self.url}{path}", params=params, timeout=timeout)
@@ -116,6 +119,43 @@ class PlexClient:
     def list_tv_shows(self, section_id: str) -> List[Dict]:
         return self.list_tv_shows_page(section_id, 0, 100000)["shows"]
 
+    @staticmethod
+    def tvdb_id(item: Dict) -> str:
+        """The show's TVDB id, which outlives the ratingKey Plex assigns it.
+
+        Plex issues a new ratingKey whenever an item is removed and re-added -
+        routine for a symlinked debrid library - so anything remembered against
+        a ratingKey is silently orphaned. The TVDB id survives that, and Sonarr
+        names the same one in its webhook.
+        """
+        for entry in item.get("Guid", []) or []:
+            value = str(entry.get("id", ""))
+            if value.startswith("tvdb://"):
+                return value[7:].split("?")[0].strip()
+        # Libraries still on the legacy agent carry it in the guid instead.
+        legacy = str(item.get("guid", ""))
+        if "thetvdb://" in legacy:
+            return legacy.split("thetvdb://", 1)[1].split("/")[0].split("?")[0].strip()
+        return ""
+
+    def get_show_tvdb_id(self, rating_key: str) -> str:
+        """Look up one show's TVDB id, remembering what Plex answers."""
+        key = str(rating_key)
+        if key in self._tvdb_cache:
+            return self._tvdb_cache[key]
+        try:
+            response = self._get(
+                f"/library/metadata/{key}", params={"includeGuids": 1}, timeout=15,
+            )
+            response.raise_for_status()
+            items = self._metadata(response)
+        except (requests.RequestException, ValueError) as exc:
+            logger.debug("Plex could not identify show %s: %s", key, exc)
+            return ""
+        found = self.tvdb_id(items[0]) if items else ""
+        self._tvdb_cache[key] = found
+        return found
+
     def list_tv_shows_page(self, section_id: str, start: int = 0,
                            size: int = 24, query: str = "") -> Dict:
         """Return one Plex-native page of shows without loading the library."""
@@ -123,6 +163,7 @@ class PlexClient:
         params = {
             "type": 2,
             "sort": "titleSort:asc",
+            "includeGuids": 1,
             "X-Plex-Container-Start": max(0, int(start)),
             "X-Plex-Container-Size": max(1, min(int(size), 100000)),
         }
@@ -139,6 +180,7 @@ class PlexClient:
         items = self._metadata(response)
         shows = [{
             "rating_key": str(item.get("ratingKey", "")),
+            "tvdb_id": self.tvdb_id(item),
             "title": str(item.get("title", "Unknown")),
             "year": item.get("year"),
             "thumb": str(item.get("thumb", "")),

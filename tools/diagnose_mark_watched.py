@@ -97,6 +97,14 @@ def report_rules(rules: dict) -> set:
     on = {key for key, value in shows.items() if value}
     print(f"  Shows with auto-watch ON : {len(on)} of {len(shows)}")
     print(f"  Season overrides         : {len(seasons)}")
+    # A rule keyed by ratingKey is orphaned the moment Plex re-adds the item.
+    fragile = {key for key in on if not key.split("::")[-1].startswith("tvdb-")}
+    print(f"  Keyed by TVDB id         : {len(on) - len(fragile)}")
+    if fragile:
+        print(f"  Keyed by Plex ratingKey  : {len(fragile)}")
+        print("    -> These break whenever Plex re-adds the item, which a")
+        print("       debrid library does routinely. Switching the show off")
+        print("       and on again from the rules page stores it by TVDB id.")
     if not on:
         print("    -> No show has a rule enabled, so imports match and stop there.")
     libraries = collections.Counter(

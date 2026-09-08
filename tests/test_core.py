@@ -486,6 +486,29 @@ class PlexClientTests(unittest.TestCase):
              patch.object(client, "list_tv_shows_page", return_value={"shows": []}):
             self.assertIsNone(client.find_episode("17", "Intervention", 22, 14))
 
+    def test_tvdb_id_is_read_from_either_plex_agent(self):
+        modern = {"Guid": [{"id": "imdb://tt0367279"}, {"id": "tmdb://1622"},
+                           {"id": "tvdb://73141"}]}
+        self.assertEqual(PlexClient.tvdb_id(modern), "73141")
+        legacy = {"guid": "com.plexapp.agents.thetvdb://73141/1/1?lang=en"}
+        self.assertEqual(PlexClient.tvdb_id(legacy), "73141")
+        # A show Plex matched against something else is not guessed at.
+        self.assertEqual(PlexClient.tvdb_id({"Guid": [{"id": "tmdb://1622"}]}), "")
+        self.assertEqual(PlexClient.tvdb_id({}), "")
+
+    def test_the_show_listing_asks_plex_for_guids(self):
+        client = PlexClient("http://plex:32400", "token")
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"MediaContainer": {"totalSize": 1, "Metadata": [
+            {"ratingKey": "10", "title": "Supernatural",
+             "Guid": [{"id": "tvdb://73141"}]},
+        ]}}
+        with patch.object(client, "_get", return_value=response) as get:
+            page = client.list_tv_shows_page("7")
+        self.assertEqual(get.call_args.kwargs["params"]["includeGuids"], 1)
+        self.assertEqual(page["shows"][0]["tvdb_id"], "73141")
+
     def test_count_failure_is_not_reported_as_zero(self):
         client = PlexClient("http://plex:32400", "token")
         with patch.object(client, "get_section_type", return_value="show"), \

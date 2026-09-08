@@ -640,32 +640,74 @@ class MarkWatchedRuleStore:
         atomic_write_json(str(self.path), self._data)
 
     @staticmethod
-    def _show_key(instance: str, library: str, show_rating_key: str) -> str:
-        return f"{instance}::{library}::{show_rating_key}"
+    def _show_key(instance: str, library: str, show_rating_key: str,
+                  tvdb_id: str = "") -> str:
+        """Identify a show by something that outlives its Plex ratingKey.
 
-    def set_show(self, instance: str, library: str,
-                 show_rating_key: str, enabled: bool) -> None:
+        Plex issues a new ratingKey whenever an item is removed and re-added,
+        which a symlinked debrid library does as a matter of course. A rule
+        stored against the old key is then orphaned: the import sees no rule at
+        all, while the page that set it still shows the show switched on. The
+        TVDB id survives a re-add, and Sonarr names the same one in its
+        webhook, so both sides agree without having to consult Plex.
+
+        A show Plex cannot identify still falls back to its ratingKey, which is
+        the best available and no worse than before.
+        """
+        identity = f"tvdb-{tvdb_id}" if tvdb_id else str(show_rating_key)
+        return f"{instance}::{library}::{identity}"
+
+    def _resolve(self, instance: str, library: str, show_rating_key: str,
+                 tvdb_id: str) -> str:
+        """The key this show's rule lives under.
+
+        Prefers the durable one, but honours a ratingKey rule written before
+        the install knew any better, so nothing has to be re-entered.
+        """
+        preferred = self._show_key(instance, library, show_rating_key, tvdb_id)
+        if not tvdb_id or preferred in self._data["shows"]:
+            return preferred
+        legacy = self._show_key(instance, library, show_rating_key)
+        return legacy if legacy in self._data["shows"] else preferred
+
+    def _migrate_legacy(self, instance: str, library: str,
+                        show_rating_key: str, key: str) -> None:
+        """Retire a ratingKey entry now that a durable one has replaced it."""
+        legacy = self._show_key(instance, library, show_rating_key)
+        if legacy == key:
+            return
+        self._data["shows"].pop(legacy, None)
+        prefix = f"{legacy}::"
+        for old in [k for k in self._data["seasons"] if k.startswith(prefix)]:
+            self._data["seasons"][f"{key}::{old[len(prefix):]}"] = \
+                self._data["seasons"].pop(old)
+
+    def set_show(self, instance: str, library: str, show_rating_key: str,
+                 enabled: bool, tvdb_id: str = "") -> None:
         with self._lock:
-            self._data["shows"][
-                self._show_key(instance, library, show_rating_key)
-            ] = bool(enabled)
+            key = self._show_key(instance, library, show_rating_key, tvdb_id)
+            self._data["shows"][key] = bool(enabled)
+            if tvdb_id:
+                self._migrate_legacy(instance, library, show_rating_key, key)
             self._save()
 
     def set_season(self, instance: str, library: str, show_rating_key: str,
-                   season_index: int, enabled: bool | None) -> None:
-        key = f"{self._show_key(instance, library, show_rating_key)}::{int(season_index)}"
+                   season_index: int, enabled: bool | None,
+                   tvdb_id: str = "") -> None:
         with self._lock:
+            show_key = self._resolve(instance, library, show_rating_key, tvdb_id)
+            key = f"{show_key}::{int(season_index)}"
             if enabled is None:
                 self._data["seasons"].pop(key, None)
             else:
                 self._data["seasons"][key] = bool(enabled)
             self._save()
 
-    def rule(self, instance: str, library: str,
-             show_rating_key: str, season_index: int) -> dict:
-        show_key = self._show_key(instance, library, show_rating_key)
-        season_key = f"{show_key}::{int(season_index)}"
+    def rule(self, instance: str, library: str, show_rating_key: str,
+             season_index: int, tvdb_id: str = "") -> dict:
         with self._lock:
+            show_key = self._resolve(instance, library, show_rating_key, tvdb_id)
+            season_key = f"{show_key}::{int(season_index)}"
             shows = self._data["shows"]
             seasons = self._data["seasons"]
             show_enabled = bool(shows.get(show_key, False))
@@ -674,11 +716,8 @@ class MarkWatchedRuleStore:
                 "enabled": bool(seasons[season_key]) if explicit else show_enabled,
                 "source": "season" if explicit else "show",
                 "show_enabled": show_enabled,
-                # "switched off" and "never seen" are different problems: a
-                # rule is stored against the show's Plex ratingKey, and Plex
-                # issues a new one whenever an item is removed and re-added,
-                # which a debrid library does routinely. That orphans the rule
-                # while the page still looks like it was set.
+                # "switched off" and "never stored" are different problems, and
+                # only one of them has a fix the operator can act on.
                 "show_known": show_key in shows,
                 "season_override": seasons.get(season_key) if explicit else None,
             }
@@ -692,17 +731,19 @@ class MarkWatchedRuleStore:
         """Set a rule for each named show, and clear only their overrides.
 
         Every season override used to be discarded, including those belonging
-        to libraries this call never touched.
+        to libraries this call never touched. An entry may carry a TVDB id as a
+        fourth element; one without is keyed by ratingKey as before.
         """
         with self._lock:
-            for instance, library, rating_key in show_keys:
-                self._data["shows"][
-                    self._show_key(instance, library, rating_key)
-                ] = bool(enabled)
-            affected = {
-                self._show_key(instance, library, rating_key) + "::"
-                for instance, library, rating_key in show_keys
-            }
+            affected = set()
+            for entry in show_keys:
+                instance, library, rating_key = entry[0], entry[1], entry[2]
+                tvdb = entry[3] if len(entry) > 3 else ""
+                key = self._show_key(instance, library, rating_key, tvdb)
+                self._data["shows"][key] = bool(enabled)
+                if tvdb:
+                    self._migrate_legacy(instance, library, rating_key, key)
+                affected.add(key + "::")
             self._data["seasons"] = {
                 key: value for key, value in self._data["seasons"].items()
                 if not any(key.startswith(prefix) for prefix in affected)
@@ -874,9 +915,12 @@ def process_plex_event(event: dict, app_config, clients: dict,
             f"{library_key} S{item['season_index']:02d}"
             f"E{item['episode_index']:02d} (show ratingKey {item['show_rating_key']})"
         )
+        # Sonarr names the TVDB id in every webhook, so the rule can be found
+        # without asking Plex what its current ratingKey means.
         decision = rules.rule(
             item["instance_name"], item["library_name"],
             item["show_rating_key"], item["season_index"],
+            tvdb_id=str(event["series"].get("tvdb_id") or ""),
         )
         enabled = decision["enabled"]
         reason = (
