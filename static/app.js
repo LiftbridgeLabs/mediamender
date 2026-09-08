@@ -514,6 +514,9 @@ function markWatchedJobBadge(job) {
 
 function markWatchedJobHint(job) {
   if (job.status === 'failed') return 'This job stopped without marking anything';
+  if (job.status === 'superseded') {
+    return 'A newer import of the same episode replaced this job';
+  }
   if (job.status === 'waiting') return 'Plex has not scanned this episode yet';
   if (markWatchedJobBadge(job) === 'skipped' && job.status === 'succeeded') {
     return 'Plex had the episode but no watch rule was enabled for it';
@@ -523,6 +526,21 @@ function markWatchedJobHint(job) {
       ? 'Marked watched in Plex' : 'Nothing to do; already watched in Plex';
   }
   return job.status;
+}
+
+// Sonarr announces each imported episode separately, so a season landing
+// produces a row per episode. Without the coordinate they read as the same
+// record repeated.
+function markWatchedJobEpisodes(job) {
+  if (job.event?.source === 'manual') {
+    const season = job.event?.manual?.season_index;
+    return season === undefined || season === null ? '' : `S${String(season).padStart(2,'0')}`;
+  }
+  const episodes = job.event?.episodes || [];
+  const coords = episodes.map(item =>
+    `S${String(item.season ?? 0).padStart(2,'0')}E${String(item.episode ?? 0).padStart(2,'0')}`);
+  if (coords.length > 3) return `${coords[0]}–${coords[coords.length-1]} (${coords.length})`;
+  return coords.join(', ');
 }
 
 function renderMarkWatchedJobs(data) {
@@ -558,6 +576,14 @@ function renderMarkWatchedJobs(data) {
           `${h(fmtStamp(entry.at))}  ${h((entry.outcome||'').padEnd(9))} ${h(entry.event_type||'-')}  ${h(entry.series||'')}  ${h(entry.detail||'')}`
         ).join('\n')}</pre></details>`
     : '';
+  // Each open trail keeps its own scroll position: replacing the markup put
+  // every one of them back at the top, which on a four-second poll meant a
+  // long trail could not be read at all.
+  const scrolled = new Map();
+  target.querySelectorAll('.mw-job-log[open] pre').forEach(pre => {
+    const key = pre.parentElement?.dataset?.log;
+    if (key && pre.scrollTop) scrolled.set(key, pre.scrollTop);
+  });
   const markup = health + banner + hookRows + (jobs.length ? jobs.map(job => {
     const source = job.event?.source === 'manual' ? `Manual ${job.event?.manual?.scope || 'update'}` : 'Sonarr webhook';
     const attempts = Number(job.attempts || 0);
@@ -571,13 +597,20 @@ function renderMarkWatchedJobs(data) {
       ? `<details class="mw-job-log" data-log="${h(job.id || '')}"${_markWatchedOpenLogs.has(job.id)?' open':''}><summary>${trail.length} log line${trail.length===1?'':'s'}</summary><pre>${trail.map(entry =>
           `${h(fmtStamp(entry.at))}  ${h(entry.message || '')}`).join('\n')}</pre></details>`
       : '';
-    return `<div class="repair-history-item"><span class="badge ${markWatchedJobBadge(job)}" title="${h(markWatchedJobHint(job))}">${h(job.status)}</span><div><div class="repair-history-title">${h(job.event?.series?.title || 'Plex update')}</div><div class="repair-history-meta">${h(source)} · ${h(fmtAgo(job.updated_at || job.created_at))}${attempts?` · attempt ${attempts}`:''}${nextCheck}${counts}<br>${h(job.message || '')}</div>${log}</div></div>`;
+    // Sonarr sends one import per episode, so a season arriving looks like the
+    // same show queued over and over unless the record says which episode.
+    const episodes = markWatchedJobEpisodes(job);
+    return `<div class="repair-history-item"><span class="badge ${markWatchedJobBadge(job)}" title="${h(markWatchedJobHint(job))}">${h(job.status)}</span><div><div class="repair-history-title">${h(job.event?.series?.title || 'Plex update')}${episodes?` <span class="mw-job-episode">${h(episodes)}</span>`:''}</div><div class="repair-history-meta">${h(source)} · ${h(fmtAgo(job.updated_at || job.created_at))}${attempts?` · attempt ${attempts}`:''}${nextCheck}${counts}<br>${h(job.message || '')}</div>${log}</div></div>`;
   }).join('') : '<div class="empty-msg">No automatic or manual jobs yet.</div>');
   // Polling every few seconds used to replace this markup wholesale, which
   // collapsed any log trail the reader had opened and moved the ground under
   // them mid-scroll. Redraw only on a real change, and restore what was open.
   if (markup === target.innerHTML) return;
   target.innerHTML = markup;
+  scrolled.forEach((top, key) => {
+    const pre = target.querySelector(`.mw-job-log[data-log="${key}"] pre`);
+    if (pre) pre.scrollTop = top;
+  });
   if (!target.dataset.logListener) {
     // "toggle" does not bubble, so it has to be caught on the way down.
     target.addEventListener('toggle', event => {

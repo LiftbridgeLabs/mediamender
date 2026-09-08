@@ -618,6 +618,40 @@ class MarkWatchedQueueTests(unittest.TestCase):
         self.assertEqual(manager.get(done["id"])["status"], "succeeded")
         self.assertEqual(manager.get(waiting["id"])["status"], "queued")
 
+    def test_an_upgrade_supersedes_the_job_waiting_on_the_old_file(self):
+        """An upgrade is a new file, so a new webhook identity, so a second
+        job chasing the very same episode - listed twice and worked twice."""
+        manager = MarkWatchedManager(
+            str(self.runtime), processor=lambda _event: {"message": "done"},
+            autostart=False, sleep=lambda _delay: None,
+        )
+        first, created = manager.enqueue(sonarr_download())
+        self.assertTrue(created)
+        upgrade = sonarr_download()
+        upgrade["episodeFile"] = dict(upgrade["episodeFile"], id=999, path="/new.mkv")
+        upgrade["isUpgrade"] = True
+        second, created = manager.enqueue(upgrade)
+        self.assertTrue(created)
+        self.assertNotEqual(first["id"], second["id"])
+
+        self.assertEqual(manager.get(first["id"])["status"], "superseded")
+        self.assertEqual(manager.get(second["id"])["status"], "queued")
+        # And the retired job stays retired.
+        self.assertEqual(manager.retry_unfinished()["requeued"], 0)
+
+    def test_a_different_episode_is_not_superseded(self):
+        manager = MarkWatchedManager(
+            str(self.runtime), processor=lambda _event: {"message": "done"},
+            autostart=False, sleep=lambda _delay: None,
+        )
+        first, _ = manager.enqueue(sonarr_download())
+        other = sonarr_download()
+        other["episodes"] = [dict(other["episodes"][0], episodeNumber=9, id=99)]
+        other["episodeFile"] = dict(other["episodeFile"], id=999, path="/e9.mkv")
+        second, _ = manager.enqueue(other)
+        self.assertEqual(manager.get(first["id"])["status"], "queued")
+        self.assertEqual(manager.get(second["id"])["status"], "queued")
+
     def test_retry_reconsiders_an_import_that_marked_nothing(self):
         """The job succeeded, but it marked nothing because of the rule as it
         stood then - which is exactly what switching a show on changes."""

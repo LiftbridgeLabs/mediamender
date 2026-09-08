@@ -546,6 +546,13 @@ panel. The panel refreshes while the page is open. The same transitions are
 written under the `mediamender.mark_watched` logger, so they can also be
 followed through the container log or the Settings log viewer.
 
+Sonarr announces each imported episode separately, so a season arriving is one
+job per episode. The activity list names the coordinate beside the show, since
+`Stat (2022)` five times over is otherwise indistinguishable from the same
+record repeated. An upgrade arrives as a new file and so as a new webhook
+identity: the job still waiting on the replaced file is marked `superseded`
+rather than left to chase the same episode alongside its replacement.
+
 A job that exhausts its Plex retries stays `failed`, and because each webhook
 identity is queued only once, resending the same Sonarr payload reuses that
 failed job instead of running it again. **Run pending jobs now**, next to the

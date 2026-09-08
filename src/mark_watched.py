@@ -294,13 +294,59 @@ class MarkWatchedManager:
                 "event": event,
             }
             self._records[job_id] = record
+            superseded = self._supersede_older(job_id, event)
             self._save()
             self._queue.put(job_id)
             logger.info(
-                "Queued Sonarr import %s for %s",
+                "Queued Sonarr import %s for %s%s",
                 job_id[:12], event["series"]["title"],
+                f" (superseding {superseded} earlier job(s))" if superseded else "",
             )
             return dict(record), True
+
+    @staticmethod
+    def _coordinates(event: dict) -> tuple:
+        """The episodes an import covers, as an identity independent of the file."""
+        return (
+            str(event.get("series", {}).get("title", "")),
+            tuple(sorted(
+                (int(item.get("season", -1)), int(item.get("episode", -1)))
+                for item in event.get("episodes", []) or []
+            )),
+        )
+
+    def _supersede_older(self, job_id: str, event: dict) -> int:
+        """Retire unfinished jobs covering the episodes this import replaces.
+
+        An upgrade arrives as a new file, and so as a new webhook identity. The
+        job waiting on the old file is then still queued to mark the very same
+        episode, which shows up as the same import listed twice and has two
+        workers chasing one episode.
+        """
+        target = self._coordinates(event)
+        if not target[1]:
+            return 0
+        retired = 0
+        for other_id, record in self._records.items():
+            if other_id == job_id or other_id in self._inflight:
+                continue
+            other = record.get("event") or {}
+            if other.get("source") == "manual" or record.get("status") in {
+                "succeeded", "failed",
+            }:
+                continue
+            if self._coordinates(other) != target:
+                continue
+            # Its own status, not "failed": a superseded job is finished, and
+            # Run pending jobs now must not drag it back onto the queue.
+            record.update({
+                "status": "superseded",
+                "next_attempt_at": None,
+                "message": "Superseded by a newer import of the same episode",
+                "updated_at": _utc_now(),
+            })
+            retired += 1
+        return retired
 
     def enqueue_manual(self, event: dict) -> dict:
         """Queue an explicitly confirmed manual Plex history update."""
@@ -547,6 +593,8 @@ class MarkWatchedManager:
             for job_id, record in self._records.items():
                 status = record.get("status")
                 skipped = self._matched_but_marked_nothing(record)
+                if status == "superseded":
+                    continue
                 if status == "succeeded" and not skipped:
                     continue
                 if job_id in self._inflight:

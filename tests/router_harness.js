@@ -245,10 +245,10 @@ check('an empty log explains itself',
       /begins at version/.test(bannerFor({total: 0, outcomes: {}, recent: []})), true);
 
 // An open log trail must survive the four-second poll.
-function jobsPayload(message) {
+function jobsPayload(message, episodes = []) {
   return {workers: 4, live_workers: 4, webhooks: {total: 1, outcomes: {queued: 1}, recent: []},
           jobs: [{id: 'job-1', status: 'waiting', message,
-                  event: {series: {title: 'Stat (2022)'}},
+                  event: {series: {title: 'Stat (2022)'}, episodes},
                   log: [{at: '2026-09-08T10:00:00Z', message: 'Attempt 1'}]}]};
 }
 const jobsNode = nodes.get('mark-watched-jobs');
@@ -268,6 +268,19 @@ api.renderMarkWatchedJobs(jobsPayload('checking again in 45 seconds'));
 check('an unchanged poll does not touch the DOM at all', writes, 0);
 api.renderMarkWatchedJobs(jobsPayload('checking again in 30 seconds'));
 check('a changed poll does redraw', writes, 1);
+
+// Sonarr sends one import per episode, so the row has to say which.
+api.renderMarkWatchedJobs(jobsPayload('waiting', [{season: 1, episode: 5}]));
+check('a single episode is named', /S01E05/.test(jobsNode.innerHTML), true);
+api.renderMarkWatchedJobs(jobsPayload('waiting', [
+  {season: 1, episode: 5}, {season: 1, episode: 6}, {season: 1, episode: 7},
+  {season: 1, episode: 8},
+]));
+check('a season pack is summarised as a range',
+      /S01E05–S01E08 \(4\)/.test(jobsNode.innerHTML), true);
+api.renderMarkWatchedJobs(jobsPayload('waiting'));
+check('a job with no episodes says nothing extra',
+      /mw-job-episode/.test(jobsNode.innerHTML), false);
 
 // Selecting the page you are already on must refresh it.
 const loaderCalls = [];
