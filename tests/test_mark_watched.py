@@ -853,7 +853,7 @@ class MarkWatchedRuleTests(unittest.TestCase):
         inherited = self.rules.rule("Plex", "TV", "10", 2)
         self.assertEqual(inherited, {
             "enabled": True, "source": "show", "show_enabled": True,
-            "season_override": None,
+            "show_known": True, "season_override": None,
         })
         self.rules.set_season("Plex", "TV", "10", 2, False)
         explicit = self.rules.rule("Plex", "TV", "10", 2)
@@ -965,6 +965,43 @@ class MarkWatchedRuleTests(unittest.TestCase):
             "(show default False)",
             details,
         )
+
+    def test_a_rule_switched_off_reads_differently_from_one_never_stored(self):
+        """A rule is keyed by the show's Plex ratingKey, and Plex issues a new
+        one when an item is removed and re-added - routine in a debrid library.
+        The rule is then orphaned while the page still shows it switched on, so
+        the summary has to tell that apart from a rule genuinely turned off."""
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = {
+            "rating_key": "30", "show_rating_key": "88",
+            "season_rating_key": "20", "season_index": 2,
+            "episode_index": 3, "title": "Done",
+        }
+        event = {"series": {"title": "Celebrity Ex on the Beach"},
+                 "episodes": [{"season": 2, "episode": 3}]}
+
+        # The show Plex now reports has no rule of its own: the one that was
+        # set names a ratingKey Plex has stopped using.
+        self.rules.set_show("Plex", "TV", "10", True)
+        orphaned = process_plex_event(event, config, {"Plex": plex}, self.rules)
+        self.assertEqual(orphaned["marked"], 0)
+        self.assertIn("Plex::TV", orphaned["message"])
+        self.assertIn("ratingKey 88", orphaned["message"])
+        self.assertIn("re-added", orphaned["message"])
+        self.assertIn("no rule stored for ratingKey 88",
+                      "\n".join(orphaned["details"]))
+
+        # A rule that really is switched off says so instead.
+        self.rules.set_show("Plex", "TV", "88", False)
+        disabled = process_plex_event(event, config, {"Plex": plex}, self.rules)
+        self.assertEqual(disabled["marked"], 0)
+        self.assertIn("switched off", disabled["message"])
+        self.assertNotIn("re-added", disabled["message"])
 
     def test_season_override_off_beats_an_enabled_show_default(self):
         library = LibraryConfig("TV", "physical", [], section_id="7")

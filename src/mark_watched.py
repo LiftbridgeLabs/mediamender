@@ -674,6 +674,12 @@ class MarkWatchedRuleStore:
                 "enabled": bool(seasons[season_key]) if explicit else show_enabled,
                 "source": "season" if explicit else "show",
                 "show_enabled": show_enabled,
+                # "switched off" and "never seen" are different problems: a
+                # rule is stored against the show's Plex ratingKey, and Plex
+                # issues a new one whenever an item is removed and re-added,
+                # which a debrid library does routinely. That orphans the rule
+                # while the page still looks like it was set.
+                "show_known": show_key in shows,
                 "season_override": seasons.get(season_key) if explicit else None,
             }
 
@@ -861,6 +867,7 @@ def process_plex_event(event: dict, app_config, clients: dict,
         raise PlexEpisodePending(
             f"{event['series']['title']} {coordinates}", details,
         )
+    unmatched_rules = []
     for item in matched:
         library_key = f"{item['instance_name']}::{item['library_name']}"
         location = (
@@ -878,14 +885,37 @@ def process_plex_event(event: dict, app_config, clients: dict,
             else f"show default {decision['show_enabled']}"
         )
         if not enabled:
+            if decision["source"] == "show" and not decision["show_known"]:
+                reason = (
+                    f"no rule stored for ratingKey {item['show_rating_key']}; "
+                    f"if this show was switched on before, Plex has since "
+                    f"re-added it under a new key - switch it on again"
+                )
             details.append(f"{location}: no watch rule enabled ({reason})")
+            unmatched_rules.append((item, decision))
             continue
         item["plex"].mark_watched(item["rating_key"])
         marked.append(item)
         details.append(f"{location}: marked watched ({reason})")
     if not marked:
+        # Name the library and key that were checked. "No rule was enabled" on
+        # its own sent operators looking at a rule page that showed the show
+        # switched on, with nothing to connect the two.
+        item, decision = unmatched_rules[0] if unmatched_rules else (None, {})
+        where = (
+            f" in {item['instance_name']}::{item['library_name']} "
+            f"(show ratingKey {item['show_rating_key']})" if item else ""
+        )
+        orphaned = bool(item) and decision.get("source") == "show"             and not decision.get("show_known")
         return {
-            "message": "Plex matched the import; no automatic watch rule was enabled",
+            "message": (
+                f"Plex matched the import{where}, but no rule is stored for that "
+                f"show. Plex reassigns a ratingKey when an item is removed and "
+                f"re-added, so a rule set earlier may need switching on again."
+                if orphaned else
+                f"Plex matched the import{where}; the automatic watch rule is "
+                f"switched off"
+            ),
             "matched": len(matched), "marked": 0, "details": details,
         }
     return {
