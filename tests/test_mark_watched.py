@@ -1642,6 +1642,10 @@ class MarkWatchedSettingsTests(unittest.TestCase):
             html,
         )
         self.assertIn("Install webhook", html)
+        # Switching a rule on is forward-only, so the page has to offer the
+        # catch-up rather than leave the show sitting unwatched in Plex.
+        self.assertIn("which covers imports from now on", html)
+        self.assertIn("still unwatched. Mark", html)
         self.assertIn("Repair / test", html)
         self.assertIn("readJsonResponse", html)
         self.assertIn('id="mark-watched-instance"', html)

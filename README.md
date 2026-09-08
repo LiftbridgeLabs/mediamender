@@ -520,9 +520,11 @@ shown. Search is scoped to the entire selected Plex TV library, and page control
 are available both above and below the poster grid.
 
 A rule only governs future imports, so switching one on leaves every episode
-already in the library unwatched. **Catch up now**, on the Mark-it-Watched page,
-applies the rules you already have to the history Plex holds. It asks for
-confirmation first, because it writes real Plex watch history.
+already in the library unwatched - the show keeps sitting in Plex's Continue
+Watching and the rule looks as though it did nothing. Switching one on for a
+show that still has unwatched episodes therefore offers to mark them straight
+away. **Catch up now** does the same across every show whose rule is on. Both
+ask for confirmation first, because they write real Plex watch history.
 
 It only ever deals in the difference. Plex reports a watched count on the show
 and season listings, so a show or season already fully watched is skipped

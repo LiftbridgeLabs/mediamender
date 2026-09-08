@@ -350,6 +350,19 @@ async function setShowRule(showIndex, enabled) {
   show.rule_enabled = enabled;
   renderMarkWatchedLibraries();
   toast(`${show.title}: future imports will ${enabled?'':'not '}be marked watched`, 'pass');
+  // A rule governs imports from here on, so switching one on leaves whatever
+  // is already in the library untouched — the show stays in Plex's Continue
+  // Watching and nothing appears to have happened. Offer the catch-up here,
+  // rather than leaving it to be discovered on another button.
+  const outstanding = Number(show.leaf_count || 0) - Number(show.viewed_leaf_count || 0);
+  if (!enabled || outstanding < 1) return;
+  if (!confirm(
+    `Auto-watch is on for ${show.title}, which covers imports from now on.\n\n` +
+    `${outstanding} episode${outstanding===1?'':'s'} already in Plex ` +
+    `${outstanding===1?'is':'are'} still unwatched. Mark ${outstanding===1?'it':'them'} ` +
+    'watched now?\n\nThis changes existing Plex watch history and cannot be undone.'
+  )) return;
+  await applyMarkWatchedNow(showIndex, null, outstanding, null, true);
 }
 
 async function toggleMarkWatchedSeasons(showIndex) {
@@ -450,14 +463,19 @@ async function applyEnabledRulesNow(button) {
   }
 }
 
-async function applyMarkWatchedNow(showIndex, seasonIndex, episodeCount, button) {
+// `confirmed` is set by callers that have already asked; button may be absent
+// when the action was not started from one.
+async function applyMarkWatchedNow(showIndex, seasonIndex, episodeCount,
+                                   button, confirmed = false) {
   const show = _markWatchedData.shows[showIndex];
   const scope = seasonIndex === null ? 'show' : 'season';
   const label = scope === 'show' ? show.title : `${show.title} season ${seasonIndex}`;
-  if (!confirm(`Mark every currently unwatched episode in ${label} as watched now?\n\nThis queues up to ${episodeCount} episodes and modifies existing Plex watch history. mediaMender cannot undo this action.`)) return;
-  button.disabled = true;
-  button.dataset.label ||= button.innerHTML;
-  button.innerHTML = '<span class="spin"></span> queueing&hellip;';
+  if (!confirmed && !confirm(`Mark every currently unwatched episode in ${label} as watched now?\n\nThis queues up to ${episodeCount} episodes and modifies existing Plex watch history. mediaMender cannot undo this action.`)) return;
+  if (button) {
+    button.disabled = true;
+    button.dataset.label ||= button.innerHTML;
+    button.innerHTML = '<span class="spin"></span> queueing&hellip;';
+  }
   try {
     const payload = {
       scope, confirm:'MARK WATCHED NOW', instance:_markWatchedData.instance,
@@ -475,8 +493,10 @@ async function applyMarkWatchedNow(showIndex, seasonIndex, episodeCount, button)
   } catch (error) {
     toast(error.message || 'Manual watch update could not be queued', 'fail');
   } finally {
-    button.disabled = false;
-    button.innerHTML = button.dataset.label;
+    if (button) {
+      button.disabled = false;
+      button.innerHTML = button.dataset.label;
+    }
   }
 }
 
