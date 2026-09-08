@@ -10,6 +10,7 @@ import yaml
 
 import app
 from ui_source import ui_text
+from src.web import mark_watched as mark_watched_routes
 from src.auth import hash_password
 from src.config import AppConfig, AppUser, LibraryConfig, MarkWatchedConfig, PlexInstanceConfig
 from src.mark_watched import (
@@ -223,6 +224,89 @@ class MarkWatchedUiApiTests(unittest.TestCase):
         plex.list_tv_shows_page.assert_called_once_with(
             "7", 12, 12, query="Star Trek",
         )
+
+    def _filterable_library(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.list_tv_shows_page.return_value = {"shows": [
+            {"rating_key": "10", "title": "Alpha", "leaf_count": 10,
+             "viewed_leaf_count": 10, "tvdb_id": "1"},
+            {"rating_key": "11", "title": "Bravo", "leaf_count": 10,
+             "viewed_leaf_count": 3, "tvdb_id": "2"},
+            {"rating_key": "12", "title": "Charlie", "leaf_count": 10,
+             "viewed_leaf_count": 8, "tvdb_id": "3"},
+        ], "total": 3}
+        return config, plex
+
+    def _shows_request(self, query, enabled=(), overrides=()):
+        config, plex = self._filterable_library()
+        mark_watched_routes._show_cache.clear()
+        with patch.object(app, "config", config), \
+             patch.object(app, "plex_clients", {"Plex": plex}), \
+             patch.object(app.mark_watched_rules, "rule",
+                          side_effect=lambda i, l, key, s, tvdb_id="": {
+                              "show_enabled": key in enabled}), \
+             patch.object(app.mark_watched_rules, "has_season_override",
+                          side_effect=lambda i, l, key, tvdb_id="": key in overrides):
+            response = self._client().get(
+                f"/api/mark-watched/shows?instance=Plex&library=TV{query}"
+            )
+        return response, plex
+
+    def test_shows_can_be_filtered_by_rule_state(self):
+        """A rule lives in mediaMender, not Plex, so this cannot be a Plex
+        query - the library is paged locally when a filter is on."""
+        response, _ = self._shows_request("&filter=on", enabled={"11", "12"})
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        self.assertEqual([show["title"] for show in body["shows"]],
+                         ["Bravo", "Charlie"])
+        self.assertEqual(body["total"], 2)
+
+        response, _ = self._shows_request("&filter=off", enabled={"11", "12"})
+        self.assertEqual([show["title"] for show in response.get_json()["shows"]],
+                         ["Alpha"])
+
+    def test_shows_can_be_filtered_to_those_with_season_overrides(self):
+        response, _ = self._shows_request("&filter=overrides", overrides={"12"})
+        self.assertEqual([show["title"] for show in response.get_json()["shows"]],
+                         ["Charlie"])
+
+    def test_shows_can_be_sorted_by_how_much_is_unwatched(self):
+        response, _ = self._shows_request("&sort=unwatched")
+        self.assertEqual([show["title"] for show in response.get_json()["shows"]],
+                         ["Bravo", "Charlie", "Alpha"])
+
+    def test_sorting_by_newest_episode_asks_plex_and_falls_back(self):
+        config, plex = self._filterable_library()
+        mark_watched_routes._show_cache.clear()
+        # A server that refuses the episode-level sort still gets an answer.
+        plex.list_tv_shows_page.side_effect = [
+            RuntimeError("500"), {"shows": [], "total": 0},
+        ]
+        with patch.object(app, "config", config), \
+             patch.object(app, "plex_clients", {"Plex": plex}):
+            response = self._client().get(
+                "/api/mark-watched/shows?instance=Plex&library=TV&sort=added"
+            )
+        self.assertEqual(response.status_code, 200)
+        tried = [call.kwargs.get("sort") for call in plex.list_tv_shows_page.call_args_list]
+        self.assertEqual(tried, ["episode.addedAt:desc", "addedAt:desc"])
+
+    def test_an_unknown_filter_or_sort_is_refused(self):
+        for query in ("&filter=nonsense", "&sort=nonsense"):
+            response, _ = self._shows_request(query)
+            self.assertEqual(response.status_code, 400)
+
+    def test_the_plain_listing_still_uses_plex_paging(self):
+        """The default view must not pull the whole library down."""
+        response, plex = self._shows_request("&page=2&page_size=12")
+        self.assertEqual(response.status_code, 200)
+        plex.list_tv_shows_page.assert_called_once_with("7", 12, 12)
 
     def test_show_search_rejects_unbounded_query(self):
         response = self._client().get(

@@ -699,8 +699,22 @@ def api_mark_watched_shows():
     section_id = library.section_id or plex.find_section_id(library.name)
     if not section_id or plex.get_section_type(str(section_id)) != "show":
         return jsonify({"error": "Mark-it-Watched supports TV libraries only"}), 400
+    rule_filter = str(request.args.get("filter", "all")).strip() or "all"
+    order = str(request.args.get("sort", "title")).strip() or "title"
+    if rule_filter not in SHOW_FILTERS:
+        return jsonify({"error": "Unknown filter"}), 400
+    if order not in SHOW_SORTS:
+        return jsonify({"error": "Unknown sort"}), 400
     try:
-        if search:
+        # A rule lives here, not in Plex, and an unwatched count has to be
+        # compared across the whole library rather than within a page - so
+        # anything but the plain title listing is paged locally.
+        if rule_filter != "all" or order != "title":
+            result = _filtered_show_page(
+                plex, str(section_id), instance_name, library_name,
+                search, rule_filter, order, page, page_size,
+            )
+        elif search:
             result = plex.list_tv_shows_page(
                 str(section_id), (page - 1) * page_size, page_size,
                 query=search,
@@ -715,11 +729,7 @@ def api_mark_watched_shows():
         return jsonify({"error": "Plex shows could not be loaded"}), 502
     shows = result["shows"]
     for show in shows:
-        rule = runtime.mark_watched_rules.rule(
-            instance_name, library_name, show["rating_key"], 0,
-            tvdb_id=show.get("tvdb_id", ""),
-        )
-        show["rule_enabled"] = rule["show_enabled"]
+        _annotate_rule(show, instance_name, library_name)
         show["poster_url"] = url_for(
             ".api_mark_watched_poster", instance_name=instance_name,
             key=show.get("thumb", ""),
@@ -737,6 +747,8 @@ def api_mark_watched_shows():
         "pages": pages,
         "total": total,
         "search": search,
+        "filter": rule_filter,
+        "sort": order,
     })
 
 
@@ -767,6 +779,85 @@ def api_mark_watched_seasons():
         return jsonify({"seasons": seasons})
     except Exception as exc:
         return jsonify({"error": f"Could not load Plex seasons: {type(exc).__name__}"}), 502
+
+
+SHOW_FILTERS = ("all", "on", "off", "overrides")
+SHOW_SORTS = ("title", "unwatched", "added")
+# Plex's own ordering for "the show whose newest episode arrived last". Not
+# every server accepts it, so the listing falls back rather than failing.
+_PLEX_SORTS = {
+    "title": ("titleSort:asc",),
+    "unwatched": ("titleSort:asc",),
+    "added": ("episode.addedAt:desc", "addedAt:desc", "titleSort:asc"),
+}
+# One full listing serves every page of a filtered view. Short-lived, because
+# it is only bridging the clicks of a single visit.
+_SHOW_CACHE_SECONDS = 60.0
+_show_cache: dict = {}
+_show_cache_lock = threading.Lock()
+
+
+def _annotate_rule(show: dict, instance_name: str, library_name: str) -> None:
+    rules = runtime.mark_watched_rules
+    tvdb = show.get("tvdb_id", "")
+    show["rule_enabled"] = rules.rule(
+        instance_name, library_name, show["rating_key"], 0, tvdb_id=tvdb,
+    )["show_enabled"]
+    show["has_overrides"] = rules.has_season_override(
+        instance_name, library_name, show["rating_key"], tvdb_id=tvdb,
+    )
+
+
+def _library_shows(plex, section_id: str, order: str) -> list:
+    """Every show in one library, in the order Plex will give us."""
+    key = (id(plex), section_id, order)
+    now = time.monotonic()
+    with _show_cache_lock:
+        cached = _show_cache.get(key)
+        if cached and now - cached[0] < _SHOW_CACHE_SECONDS:
+            return cached[1]
+    shows = []
+    for candidate in _PLEX_SORTS[order]:
+        try:
+            shows = plex.list_tv_shows_page(
+                section_id, 0, 100000, sort=candidate,
+            )["shows"]
+            break
+        except Exception:
+            runtime.logger.debug("Plex would not sort %s by %s", section_id, candidate)
+    with _show_cache_lock:
+        _show_cache[key] = (now, shows)
+        # Only ever a handful of libraries; drop anything long stale.
+        for stale in [k for k, v in _show_cache.items()
+                      if now - v[0] > _SHOW_CACHE_SECONDS * 10]:
+            _show_cache.pop(stale, None)
+    return shows
+
+
+def _filtered_show_page(plex, section_id: str, instance_name: str,
+                        library_name: str, search: str, rule_filter: str,
+                        order: str, page: int, page_size: int) -> dict:
+    """Page a library by rule state or unwatched count, which Plex cannot do."""
+    shows = [dict(show) for show in _library_shows(plex, section_id, order)]
+    if search:
+        needle = search.casefold()
+        shows = [show for show in shows if needle in show["title"].casefold()]
+    for show in shows:
+        _annotate_rule(show, instance_name, library_name)
+    if rule_filter == "on":
+        shows = [show for show in shows if show["rule_enabled"]]
+    elif rule_filter == "off":
+        shows = [show for show in shows if not show["rule_enabled"]]
+    elif rule_filter == "overrides":
+        shows = [show for show in shows if show["has_overrides"]]
+    if order == "unwatched":
+        shows.sort(key=lambda show: (
+            -(int(show.get("leaf_count", 0)) - int(show.get("viewed_leaf_count", 0))),
+            show["title"].casefold(),
+        ))
+    start = (page - 1) * page_size
+    return {"shows": shows[start:start + page_size], "total": len(shows),
+            "start": start}
 
 
 @bp.route("/api/mark-watched/rules", methods=["POST"])

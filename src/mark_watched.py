@@ -828,6 +828,15 @@ class MarkWatchedRuleStore:
                 self._save()
         return moved
 
+    def has_season_override(self, instance: str, library: str,
+                            show_rating_key: str, tvdb_id: str = "") -> bool:
+        """Whether any season of this show departs from the show's own rule."""
+        with self._lock:
+            prefix = self._resolve(
+                instance, library, show_rating_key, tvdb_id,
+            ) + "::"
+            return any(key.startswith(prefix) for key in self._data["seasons"])
+
     def legacy_rating_keys(self, instance: str, library: str) -> set:
         """ratingKeys this library still has rules against."""
         prefix = f"{instance}::{library}::"

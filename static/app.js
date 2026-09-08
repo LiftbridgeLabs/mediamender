@@ -163,6 +163,7 @@ function showPage(name, btn) {
 let _markWatchedData = {
   instances: [], libraries: [], instance: '', library: '', shows: [],
   page: 1, page_size: 12, pages: 1, total: 0, search: '', loaded: false,
+  filter: 'all', sort: 'title',
 };
 let _markWatchedAbort = null;
 let _markWatchedSearchTimer = null;
@@ -269,6 +270,16 @@ async function setMarkWatchedPageSize(value) {
   await loadMarkWatchedPage(1, true);
 }
 
+async function setMarkWatchedFilter(value) {
+  _markWatchedData.filter = value || 'all';
+  await loadMarkWatchedPage(1, true);
+}
+
+async function setMarkWatchedSort(value) {
+  _markWatchedData.sort = value || 'title';
+  await loadMarkWatchedPage(1, true);
+}
+
 function queueMarkWatchedSearch(value) {
   _markWatchedData.search = String(value || '').trim();
   _markWatchedData.page = 1;
@@ -287,6 +298,12 @@ async function loadMarkWatchedPage(page = 1, scrollToControls = false) {
     page: String(Math.max(1, page)), page_size: String(_markWatchedData.page_size),
   });
   if (_markWatchedData.search) query.set('q', _markWatchedData.search);
+  if (_markWatchedData.filter && _markWatchedData.filter !== 'all') {
+    query.set('filter', _markWatchedData.filter);
+  }
+  if (_markWatchedData.sort && _markWatchedData.sort !== 'title') {
+    query.set('sort', _markWatchedData.sort);
+  }
   try {
     const response = await fetch(`/api/mark-watched/shows?${query}`, {signal:_markWatchedAbort.signal});
     const data = await readJsonResponse(response);
@@ -300,6 +317,22 @@ async function loadMarkWatchedPage(page = 1, scrollToControls = false) {
   } catch (error) {
     if (error.name !== 'AbortError') container.innerHTML = `<div class="empty-msg">${h(error.message)}</div>`;
   }
+}
+
+// The list can be empty for three different reasons, and "no shows found" is
+// unhelpful for all of them.
+function markWatchedEmptyMessage() {
+  const filters = {
+    on: 'no show in this library has auto-watch on',
+    off: 'every show in this library has auto-watch on',
+    overrides: 'no show in this library has a season override',
+  };
+  const search = _markWatchedData.search;
+  const filtered = filters[_markWatchedData.filter];
+  if (search && filtered) return `No show matching “${search}” matches that filter.`;
+  if (search) return `No shows match “${search}”.`;
+  if (filtered) return `Nothing to show: ${filtered}.`;
+  return 'No shows found on this page.';
 }
 
 function renderMarkWatchedLibraries() {
@@ -316,12 +349,12 @@ function renderMarkWatchedLibraries() {
               <div class="mw-title" title="${h(show.title)}">${h(show.title)}</div>
               <div class="mw-meta">${show.year || 'Year unknown'} &middot; ${show.viewed_leaf_count}/${show.leaf_count} watched</div>
               <button class="btn btn-secondary btn-sm mw-rule ${show.rule_enabled?'on':''}" onclick="setShowRule(${showIndex},${show.rule_enabled?'false':'true'})">Auto-watch ${show.rule_enabled?'On':'Off'}</button>
-              <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:7px;" onclick="toggleMarkWatchedSeasons(${showIndex})">Season overrides</button>
+              <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:7px;" onclick="toggleMarkWatchedSeasons(${showIndex})">Season overrides${show.has_overrides?' <span class="mw-override-dot" title="Some seasons depart from this show’s rule">●</span>':''}</button>
               <button class="btn btn-warn btn-sm" style="width:100%;margin-top:7px;" onclick="applyMarkWatchedNow(${showIndex},null,${show.leaf_count || 0},this)">Mark show watched now</button>
             </div>
           </article>
           <div class="mw-seasons" id="mw-seasons-${showIndex}"></div>
-        `).join('') || `<div class="empty-msg">${_markWatchedData.search?`No shows match “${h(_markWatchedData.search)}”.`:'No shows found on this page.'}</div>`}
+        `).join('') || `<div class="empty-msg">${h(markWatchedEmptyMessage())}</div>`}
       </div>
     </section>`;
 }

@@ -608,6 +608,15 @@ be re-entered, and a rule naming a show Plex no longer has is left untouched
 rather than discarded. `tools/diagnose_mark_watched.py` reports how many rules
 are keyed each way.
 
+The show list can be filtered to auto-watch on, auto-watch off, or shows with a
+season override, and sorted by title, by how many episodes are still unwatched,
+or by which show gained an episode most recently. A rule lives in mediaMender
+rather than in Plex and an unwatched count only means anything across the whole
+library, so those views are paged locally from one cached listing per library;
+the plain title view still pages inside Plex and never pulls the library down.
+A show whose seasons depart from its own rule carries a dot on its **Season
+overrides** button.
+
 Settings controls which shared Plex TV libraries are visible. All On and All Off
 apply to the server and library selected on the page, not to every library on
 every server, and they update the future rule set only; they never rewrite

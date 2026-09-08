@@ -389,6 +389,8 @@
     <label><span class="form-label">Plex server</span><select class="form-input" id="mark-watched-instance" onchange="selectMarkWatchedInstance(this.value)"><option>Loading&hellip;</option></select></label>
     <label><span class="form-label">TV library</span><select class="form-input" id="mark-watched-library" onchange="selectMarkWatchedLibrary(this.value)"><option>Select a server</option></select></label>
     <label><span class="form-label">Shows per page</span><select class="form-input" id="mark-watched-page-size" onchange="setMarkWatchedPageSize(this.value)"><option value="12" selected>12</option><option value="24">24</option><option value="36">36</option><option value="48">48</option></select></label>
+    <label><span class="form-label">Show</span><select class="form-input" id="mark-watched-filter" onchange="setMarkWatchedFilter(this.value)"><option value="all" selected>All shows</option><option value="on">Auto-watch on</option><option value="off">Auto-watch off</option><option value="overrides">Has season overrides</option></select></label>
+    <label><span class="form-label">Sort by</span><select class="form-input" id="mark-watched-sort" onchange="setMarkWatchedSort(this.value)"><option value="title" selected>Title</option><option value="unwatched">Unwatched episodes</option><option value="added">Newest episode added</option></select></label>
     <label><span class="form-label">Search shows</span><input class="form-input" id="mark-watched-search" type="search" placeholder="Search this TV library" oninput="queueMarkWatchedSearch(this.value)"></label>
   </div></div>
   <div class="mw-pagination" id="mark-watched-pagination-top"></div>
