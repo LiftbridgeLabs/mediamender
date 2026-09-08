@@ -550,10 +550,18 @@ A job that exhausts its Plex retries stays `failed`, and because each webhook
 identity is queued only once, resending the same Sonarr payload reuses that
 failed job instead of running it again. **Run pending jobs now**, next to the
 Mark-it-Watched activity heading, puts every job that has not succeeded back on
-the queue with a fresh attempt count. Succeeded jobs are left alone, as are jobs
-already waiting or currently running, so the button is safe to press repeatedly.
-It also brings the worker pool back to strength, which makes it the recovery
-control for a queue that has stopped draining.
+the queue with a fresh attempt count. It also re-runs imports that succeeded
+having matched an episode and marked nothing, because the reason they marked
+nothing was the rule as it stood at the time - the badge shows those in amber.
+Imports that marked what their rule asked for are left alone, as are manual
+catch-ups that found nothing to do and jobs currently running, so the button is
+safe to press repeatedly. It also brings the worker pool back to strength,
+which makes it the recovery control for a queue that has stopped draining.
+
+It works on the job history, so it can only revisit imports mediaMender has
+actually seen. Episodes that arrived before mediaMender was installed, or that
+Sonarr never announced, have no job to re-run: **Catch up now** is the control
+for those, since it works from the rules and Plex rather than from the log.
 
 Jobs run on a pool of background workers, so one import waiting on a Plex scan
 no longer blocks every later webhook behind it. Set `mark_watched.workers` in

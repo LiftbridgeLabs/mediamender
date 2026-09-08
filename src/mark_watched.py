@@ -510,21 +510,44 @@ class MarkWatchedManager:
                 logger.exception("Mark-it-Watched scheduler pass failed")
             self._stopped.wait(self.poll_seconds)
 
+    @staticmethod
+    def _matched_but_marked_nothing(record: dict) -> bool:
+        """A finished import that found the episode and marked none of it.
+
+        The job did everything asked of it, so it is recorded as succeeded -
+        but the reason it marked nothing was the rule as it stood at the time,
+        and that is precisely what changes when someone switches a show on. A
+        manual catch-up marking nothing means the opposite, that there was
+        nothing left to do, so those are left alone.
+        """
+        if record.get("status") != "succeeded":
+            return False
+        if (record.get("event") or {}).get("source") == "manual":
+            return False
+        result = record.get("result") or {}
+        return bool(result.get("matched")) and not result.get("marked")
+
     def retry_unfinished(self) -> dict:
-        """Re-queue every job that has not succeeded so the worker retries it.
+        """Re-queue jobs worth another attempt, and say what was re-queued.
 
         Sonarr only sends a webhook identity once, and enqueue() is idempotent
         on that identity, so a job that gave up would otherwise stay failed
         forever with no way to fire it again. A job merely waiting on Plex is
         brought forward rather than left until its due time.
+
+        Imports that matched an episode but marked nothing are included, even
+        though they succeeded: they are the ones a newly enabled rule changes
+        the answer for, and re-running one costs a single Plex lookup.
         """
         requeued: list[str] = []
+        reconsidered = 0
         pending = 0
         in_flight = 0
         with self._lock:
             for job_id, record in self._records.items():
                 status = record.get("status")
-                if status == "succeeded":
+                skipped = self._matched_but_marked_nothing(record)
+                if status == "succeeded" and not skipped:
                     continue
                 if job_id in self._inflight:
                     in_flight += 1
@@ -532,6 +555,8 @@ class MarkWatchedManager:
                 if status == "queued":
                     pending += 1
                     continue
+                if skipped:
+                    reconsidered += 1
                 record.update({
                     "status": "queued",
                     "attempts": 0,
@@ -553,6 +578,7 @@ class MarkWatchedManager:
             )
         return {
             "requeued": len(requeued),
+            "reconsidered": reconsidered,
             "already_queued": pending,
             "in_flight": in_flight,
             "job_ids": requeued,

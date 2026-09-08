@@ -272,7 +272,12 @@ def api_mark_watched_retry():
     requeued = summary["requeued"]
     parts = []
     if requeued:
-        parts.append(f"Checking {requeued} job(s) now")
+        reconsidered = summary.get("reconsidered", 0)
+        parts.append(
+            f"Checking {requeued} job(s) now"
+            + (f", including {reconsidered} that matched but marked nothing"
+               if reconsidered else "")
+        )
     if summary["already_queued"]:
         parts.append(f"{summary['already_queued']} already queued")
     if summary["in_flight"]:
@@ -285,7 +290,10 @@ def api_mark_watched_retry():
         "message": (
             "; ".join(parts)
             or ("No Sonarr import has reached mediaMender yet"
-                if not total else "Every Mark-it-Watched job already succeeded")
+                if not total else
+                "Every import either marked what its rule asked for or is "
+                "already running. To mark episodes that arrived before a rule "
+                "was switched on, use Catch up now.")
         ),
     })
 

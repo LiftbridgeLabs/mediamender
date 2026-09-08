@@ -618,6 +618,55 @@ class MarkWatchedQueueTests(unittest.TestCase):
         self.assertEqual(manager.get(done["id"])["status"], "succeeded")
         self.assertEqual(manager.get(waiting["id"])["status"], "queued")
 
+    def test_retry_reconsiders_an_import_that_marked_nothing(self):
+        """The job succeeded, but it marked nothing because of the rule as it
+        stood then - which is exactly what switching a show on changes."""
+        manager = MarkWatchedManager(
+            str(self.runtime),
+            processor=lambda _event: {"message": "no rule", "matched": 1, "marked": 0},
+            autostart=False, sleep=lambda _delay: None,
+        )
+        record, _ = manager.enqueue(sonarr_download())
+        manager._queue.get_nowait()
+        manager.process(record["id"])
+        self.assertEqual(manager.get(record["id"])["status"], "succeeded")
+
+        summary = manager.retry_unfinished()
+        self.assertEqual(summary["requeued"], 1)
+        self.assertEqual(summary["reconsidered"], 1)
+        self.assertEqual(manager.get(record["id"])["status"], "queued")
+
+    def test_retry_leaves_an_import_that_marked_something_alone(self):
+        manager = MarkWatchedManager(
+            str(self.runtime),
+            processor=lambda _event: {"message": "ok", "matched": 1, "marked": 1},
+            autostart=False, sleep=lambda _delay: None,
+        )
+        record, _ = manager.enqueue(sonarr_download())
+        manager._queue.get_nowait()
+        manager.process(record["id"])
+        summary = manager.retry_unfinished()
+        self.assertEqual(summary["requeued"], 0)
+        self.assertEqual(manager.get(record["id"])["status"], "succeeded")
+
+    def test_retry_leaves_a_manual_catch_up_that_marked_nothing_alone(self):
+        """For a manual catch-up, marking nothing means there was nothing left
+        to do - the opposite of what it means for an import."""
+        manager = MarkWatchedManager(
+            str(self.runtime),
+            processor=lambda _event: {"message": "all watched", "matched": 1175,
+                                      "marked": 0, "already_watched": 1175},
+            autostart=False, sleep=lambda _delay: None,
+        )
+        record = manager.enqueue_manual({
+            "series": {"title": "One Piece"}, "manual": {"scope": "show"},
+        })
+        manager._queue.get_nowait()
+        manager.process(record["id"])
+        summary = manager.retry_unfinished()
+        self.assertEqual(summary["requeued"], 0)
+        self.assertEqual(manager.get(record["id"])["status"], "succeeded")
+
     def test_retry_skips_a_job_the_worker_is_still_running(self):
         summaries = []
 

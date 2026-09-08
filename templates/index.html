@@ -394,7 +394,7 @@
   <div class="mw-pagination" id="mark-watched-pagination-top"></div>
   <div id="mark-watched-libraries"><div class="empty-msg">Open this tab to load Plex TV libraries.</div></div>
   <div class="mw-pagination" id="mark-watched-pagination-bottom"></div>
-  <div class="repair-section-heading"><h2 class="repair-section-title">Mark-it-Watched activity</h2><div class="repair-section-line"></div><button class="btn btn-primary btn-sm" id="mark-watched-retry" onclick="retryMarkWatchedJobs(this)" title="Re-queue every job that has not succeeded yet">&#8635;&nbsp; Run pending jobs now</button><button class="btn btn-secondary btn-sm" onclick="loadMarkWatchedJobs()">Refresh activity</button></div>
+  <div class="repair-section-heading"><h2 class="repair-section-title">Mark-it-Watched activity</h2><div class="repair-section-line"></div><button class="btn btn-primary btn-sm" id="mark-watched-retry" onclick="retryMarkWatchedJobs(this)" title="Re-checks jobs that failed or are waiting, plus imports that matched an episode but marked nothing. It does not revisit episodes that arrived before a rule was switched on - use Catch up now for those.">&#8635;&nbsp; Run pending jobs now</button><button class="btn btn-secondary btn-sm" onclick="loadMarkWatchedJobs()">Refresh activity</button></div>
   <div class="repair-history-list" id="mark-watched-jobs"><div class="empty-msg">No automatic or manual jobs yet.</div></div>
 
   </div>
