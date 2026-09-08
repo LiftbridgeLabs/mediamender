@@ -18,3 +18,7 @@ venv/
 
 # Test runtime scratch
 tests/.runtime-*
+tests/.mark-watched-*
+
+# Agent scratch
+.tmp/
