@@ -1401,7 +1401,8 @@ class MarkWatchedSettingsTests(unittest.TestCase):
         self.assertNotIn('id="ss-mark-watched"', html)
         self.assertIn('id="mark-watched-sonarr-connect"', html)
         self.assertIn(
-            "async function connectSonarr(configuredUrl = '', actionButton = null)",
+            "async function connectSonarr(configuredUrl = '', actionButton = null, "
+            "callbackFieldId = '')",
             html,
         )
         self.assertIn("Install webhook", html)

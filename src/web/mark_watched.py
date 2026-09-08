@@ -371,10 +371,21 @@ def _mark_watched_sonarr_status_response():
         connection["api_key_available"] = bool(_sonarr_api_key({}, sonarr_url))
         connections.append(connection)
 
+    # Each Sonarr answers from its own network, so each one carries its own
+    # callback. Offer the suggestion only where nothing has been saved yet, and
+    # say up front when a saved one cannot travel the way the operator expects.
+    suggested = suggested_callback_url()
+    for connection in connections:
+        connection["callback_url"] = connection.get("callback_url") or ""
+        connection["suggested_callback_url"] = suggested
+        connection["callback_warning"] = callback_route_warning(
+            connection.get("sonarr_url", ""), connection["callback_url"],
+        ) if connection["callback_url"] else ""
+
     return jsonify({
         "ok": True,
         "connections": connections,
-        "suggested_callback_url": suggested_callback_url(),
+        "suggested_callback_url": suggested,
     })
 
 

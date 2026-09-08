@@ -1993,15 +1993,11 @@ async function loadSonarrConnectionStatus() {
     const data = await readJsonResponse(response, 'Sonarr status');
     if (!response.ok) throw new Error(data.error || 'Could not load Sonarr status');
     const connections = data.connections || [];
-    const latest = connections[0] || {};
     // Never the browser's own origin: Sonarr calls this from inside the
     // container network, where a public hostname routes back out through a
-    // proxy that answers instead of us.
-    if (!callback.value) {
-      callback.value = latest.callback_url || data.suggested_callback_url || '';
-    } else if (latest.callback_url) {
-      callback.value = latest.callback_url;
-    }
+    // proxy that answers instead of us. This box is only the callback for a
+    // Sonarr being added; each saved connection carries its own below.
+    if (!callback.value) callback.value = data.suggested_callback_url || '';
     const configured = connections.filter(item => item.configured_from_environment).length;
     const connected = connections.filter(item => item.status === 'connected').length;
     const failed = connections.filter(item => item.status === 'failed').length;
@@ -2013,14 +2009,22 @@ async function loadSonarrConnectionStatus() {
       status.textContent = 'No Sonarr connections recorded yet.';
       status.style.color = '';
     }
-    if (list) list.innerHTML = connections.map(connection => {
+    if (list) list.innerHTML = connections.map((connection, index) => {
       const installed = connection.status === 'connected';
       const action = installed ? 'Repair / test' : connection.status === 'failed' ? 'Retry webhook' : 'Install webhook';
       const version = connection.sonarr_version ? ` · v${h(connection.sonarr_version)}` : '';
       const verified = connection.last_success ? `<br><span>Last verified ${h(fmtAgo(connection.last_success))}</span>` : '';
       const missingKey = !connection.api_key_available ? '<br><span style="color:var(--warn2);">API key required</span>' : '';
-      const remove = connection.saved_record ? `<button class="btn btn-danger btn-sm" onclick="removeSonarrConnection(${h(JSON.stringify(connection.sonarr_url || ''))},${installed||connection.notification_id?'true':'false'},${connection.api_key_available?'true':'false'},this)">Remove</button>` : '';
-      return `<div class="metadata-setting-row"><div><strong>${h(connection.sonarr_instance || connection.environment_label || 'Sonarr')}</strong><br><span>${h(connection.sonarr_url || '')}${version}</span>${verified}${missingKey}${connection.error?`<br><span style="color:var(--fail2);">${h(connection.error)}</span>`:''}</div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;"><span class="badge ${installed?'success':connection.status==='failed'?'error':'skipped'}">${installed?'webhook installed':connection.status==='failed'?'needs attention':'not connected'}</span><button class="btn ${installed?'btn-secondary':'btn-primary'} btn-sm" onclick="connectSonarr(${h(JSON.stringify(connection.sonarr_url || ''))},this)">${action}</button>${remove}</div></div>`;
+      const url = h(JSON.stringify(connection.sonarr_url || ''));
+      const remove = connection.saved_record ? `<button class="btn btn-danger btn-sm" onclick="removeSonarrConnection(${url},${installed||connection.notification_id?'true':'false'},${connection.api_key_available?'true':'false'},this)">Remove</button>` : '';
+      // Each Sonarr may sit on a different network, so each one gets its own
+      // callback rather than sharing the field above.
+      const field = `mw-callback-${index}`;
+      const suggestion = connection.suggested_callback_url || data.suggested_callback_url || '';
+      const warning = connection.callback_warning
+        ? `<div class="form-hint" style="color:var(--warn2);">${h(connection.callback_warning)}</div>` : '';
+      const callbackRow = `<div class="form-group" style="margin-top:10px;"><label class="form-label" for="${field}">Callback URL this Sonarr should call</label><input class="form-input" id="${field}" type="url" value="${h(connection.callback_url || '')}" placeholder="${h(suggestion)}"><div class="form-hint">A hostname or IP reachable from <strong>this</strong> Sonarr's network. Saved when you select ${installed?'Repair / test':action}.</div>${warning}</div>`;
+      return `<div class="metadata-setting-row" style="display:block;"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:space-between;"><div><strong>${h(connection.sonarr_instance || connection.environment_label || 'Sonarr')}</strong><br><span>${h(connection.sonarr_url || '')}${version}</span>${verified}${missingKey}${connection.error?`<br><span style="color:var(--fail2);">${h(connection.error)}</span>`:''}</div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;"><span class="badge ${installed?'success':connection.status==='failed'?'error':'skipped'}">${installed?'webhook installed':connection.status==='failed'?'needs attention':'not connected'}</span><button class="btn ${installed?'btn-secondary':'btn-primary'} btn-sm" onclick="connectSonarr(${url},this,${h(JSON.stringify(field))})">${action}</button>${remove}</div></div>${callbackRow}</div>`;
     }).join('') || '<div class="empty-msg">No Sonarr environment URLs found. Enter one above to connect it manually.</div>';
   } catch (error) {
     status.textContent = error.message || 'Could not load Sonarr status';
@@ -2028,14 +2032,19 @@ async function loadSonarrConnectionStatus() {
   }
 }
 
-async function connectSonarr(configuredUrl = '', actionButton = null) {
+async function connectSonarr(configuredUrl = '', actionButton = null, callbackFieldId = '') {
   const button = actionButton || document.getElementById('mark-watched-sonarr-connect');
   const status = document.getElementById('mark-watched-sonarr-status');
   const apiKey = document.getElementById('mark-watched-sonarr-api-key');
+  // A saved connection carries its own callback field; the one at the top of
+  // the card belongs to the Sonarr being added.
+  const field = callbackFieldId
+    ? document.getElementById(callbackFieldId)
+    : document.getElementById('mark-watched-callback-url');
   const payload = {
     sonarr_url: configuredUrl || document.getElementById('mark-watched-sonarr-url')?.value.trim() || '',
     api_key: apiKey?.value || '',
-    callback_url: document.getElementById('mark-watched-callback-url')?.value.trim() || '',
+    callback_url: field?.value.trim() || field?.placeholder.trim() || '',
   };
   if (!payload.sonarr_url || !payload.callback_url) {
     toast('Sonarr URL and callback URL are required', 'fail');

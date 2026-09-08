@@ -405,7 +405,7 @@
           <div class="form-grid">
             <div class="form-group"><label class="form-label">Sonarr URL</label><input class="form-input" id="mark-watched-sonarr-url" type="url" placeholder="http://sonarr:8989" autocomplete="url"></div>
             <div class="form-group"><label class="form-label">Sonarr API key</label><input class="form-input" id="mark-watched-sonarr-api-key" type="password" placeholder="Used once and never saved" autocomplete="new-password"></div>
-            <div class="form-group"><label class="form-label">mediaMender callback URL</label><input class="form-input" id="mark-watched-callback-url" type="url" placeholder="http://mediamender:8222/api/webhooks/sonarr"><div class="form-hint">Use a hostname or IP that the Sonarr host/container can reach.</div></div>
+            <div class="form-group"><label class="form-label">mediaMender callback URL</label><input class="form-input" id="mark-watched-callback-url" type="url" placeholder="http://mediamender:8222/api/webhooks/sonarr"><div class="form-hint">Used for the Sonarr entered above. Each saved connection keeps its own, editable on its card below.</div></div>
           </div>
           <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><button class="btn btn-primary" id="mark-watched-sonarr-connect" onclick="connectSonarr()">Connect entered Sonarr</button><span id="mark-watched-sonarr-status" class="form-hint">Loading configured Sonarr instances&hellip;</span></div>
           <div class="metadata-settings-list" id="mark-watched-sonarr-connections" style="margin-top:14px;"></div>

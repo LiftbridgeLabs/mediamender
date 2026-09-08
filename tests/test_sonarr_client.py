@@ -528,6 +528,39 @@ class SonarrProvisioningApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("suggested_callback_url", response.get_json())
 
+    def test_each_connection_carries_its_own_callback_and_warning(self):
+        # One Sonarr can sit outside the Docker network the others share, so
+        # the callback is a property of the connection, not of the install.
+        store = Mock()
+        store.status.return_value = {"connections": [
+            {"sonarr_url": "http://sonarr-unlimited:8989", "status": "connected",
+             "callback_url": "https://mediamender.example.io/api/webhooks/sonarr"},
+            {"sonarr_url": "https://sonarr.example.com", "status": "connected",
+             "callback_url": "https://mm.example.com/api/webhooks/sonarr"},
+        ]}
+        with patch.object(app, "config", AppConfig(instances=[])),              patch.object(app, "sonarr_connection", store):
+            response = self._client().get("/api/mark-watched/sonarr")
+        connections = {item["sonarr_url"]: item
+                       for item in response.get_json()["connections"]}
+        misrouted = connections["http://sonarr-unlimited:8989"]
+        self.assertEqual(misrouted["callback_url"],
+                         "https://mediamender.example.io/api/webhooks/sonarr")
+        self.assertIn("leaves the Docker network", misrouted["callback_warning"])
+        self.assertTrue(misrouted["suggested_callback_url"])
+        self.assertEqual(
+            connections["https://sonarr.example.com"]["callback_warning"], "")
+
+    def test_a_connection_with_no_saved_callback_is_not_warned_about(self):
+        store = Mock()
+        store.status.return_value = {"connections": [
+            {"sonarr_url": "http://sonarr:8989", "status": "not_connected"},
+        ]}
+        with patch.object(app, "config", AppConfig(instances=[])),              patch.object(app, "sonarr_connection", store):
+            response = self._client().get("/api/mark-watched/sonarr")
+        connection = response.get_json()["connections"][0]
+        self.assertEqual(connection["callback_url"], "")
+        self.assertEqual(connection["callback_warning"], "")
+
     def test_an_unreachable_callback_explains_the_route(self):
         client = self._provisioning_client()
         log = Mock()

@@ -462,6 +462,12 @@ passing test for a request mediaMender never saw. Use the container address -
 to pin the suggestion. mediaMender warns when the Sonarr URL is an internal name
 and the callback is not.
 
+The callback belongs to the connection, not to the install: each Sonarr on the
+**Mark-it-Watched > Configure** tab has its own callback field on its card, so a
+Sonarr outside the network the others share can be given an address that
+actually reaches this container from where it runs. Editing the field and
+selecting **Repair / test** saves it and re-provisions that webhook.
+
 Sonarr reporting a successful test is weaker evidence than it looks: it proves
 something answered the callback URL, not that mediaMender did. A reverse proxy,
 an auth layer, or anything else in front of this container will return its own
