@@ -509,6 +509,99 @@ class PlexClientTests(unittest.TestCase):
         self.assertEqual(get.call_args.kwargs["params"]["includeGuids"], 1)
         self.assertEqual(page["shows"][0]["tvdb_id"], "73141")
 
+    def _anime_client(self, episodes):
+        """A Plex that answers no filtered query, only its own show listing."""
+        import requests
+        client = PlexClient("http://plex:32400", "token")
+        refused = Mock()
+        refused.raise_for_status.side_effect = requests.HTTPError("500")
+        patches = [
+            patch.object(client, "_get", side_effect=[refused, refused]),
+            patch.object(client, "list_tv_shows_page", return_value={"shows": [
+                {"rating_key": "12", "title": "One Piece"}]}),
+            patch.object(client, "list_show_episodes", return_value=episodes),
+        ]
+        return client, patches
+
+    def test_an_anime_episode_is_found_by_its_absolute_number(self):
+        """Sonarr reports the season/episode pair from its metadata source
+        while the library was scanned by absolute number. Neither is wrong;
+        they simply do not agree."""
+        client, patches = self._anime_client([
+            {"rating_key": "900", "season_index": 1, "episode_index": 1054,
+             "title": "The Fated Reunion", "show_title": "One Piece", "view_count": 0},
+            {"rating_key": "901", "season_index": 1, "episode_index": 54,
+             "title": "Something Else", "show_title": "One Piece", "view_count": 0},
+        ])
+        for item in patches:
+            item.start()
+        try:
+            found = client.find_episode(
+                "7", "One Piece", 21, 54,
+                absolute=1054, episode_title="The Fated Reunion",
+            )
+        finally:
+            for item in patches:
+                item.stop()
+        self.assertEqual(found["rating_key"], "900")
+        self.assertIn("absolute number 1054", found["matched_by"])
+
+    def test_an_absolute_match_needs_the_title_to_agree(self):
+        """Acting on a bare episode index would mark whatever sits at that
+        number, which for anime is a different episode entirely."""
+        client, patches = self._anime_client([
+            {"rating_key": "900", "season_index": 1, "episode_index": 1054,
+             "title": "A Completely Different Episode", "show_title": "One Piece",
+             "view_count": 0},
+        ])
+        for item in patches:
+            item.start()
+        try:
+            found = client.find_episode(
+                "7", "One Piece", 21, 54,
+                absolute=1054, episode_title="The Fated Reunion",
+            )
+        finally:
+            for item in patches:
+                item.stop()
+        self.assertIsNone(found)
+
+    def test_a_uniquely_titled_episode_is_found_when_no_numbering_agrees(self):
+        client, patches = self._anime_client([
+            {"rating_key": "900", "season_index": 21, "episode_index": 7,
+             "title": "The Fated Reunion", "show_title": "One Piece", "view_count": 0},
+        ])
+        for item in patches:
+            item.start()
+        try:
+            found = client.find_episode(
+                "7", "One Piece", 21, 54,
+                absolute=1054, episode_title="The Fated Reunion",
+            )
+        finally:
+            for item in patches:
+                item.stop()
+        self.assertEqual(found["rating_key"], "900")
+        self.assertIn("S21E07", found["matched_by"])
+
+    def test_a_repeated_episode_title_is_not_acted_on(self):
+        client, patches = self._anime_client([
+            {"rating_key": "900", "season_index": 1, "episode_index": 3,
+             "title": "Pilot", "show_title": "One Piece", "view_count": 0},
+            {"rating_key": "901", "season_index": 2, "episode_index": 9,
+             "title": "Pilot", "show_title": "One Piece", "view_count": 0},
+        ])
+        for item in patches:
+            item.start()
+        try:
+            found = client.find_episode(
+                "7", "One Piece", 21, 54, absolute=None, episode_title="Pilot",
+            )
+        finally:
+            for item in patches:
+                item.stop()
+        self.assertIsNone(found)
+
     def test_describe_show_says_what_the_library_actually_holds(self):
         client = PlexClient("http://plex:32400", "token")
         with patch.object(client, "list_tv_shows_page", return_value={"shows": [

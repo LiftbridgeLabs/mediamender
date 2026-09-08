@@ -78,10 +78,16 @@ def normalize_sonarr_download(payload: dict) -> dict | None:
             number = int(episode["episodeNumber"])
         except (KeyError, TypeError, ValueError):
             continue
+        try:
+            # Anime libraries are routinely scanned by this instead.
+            absolute = int(episode["absoluteEpisodeNumber"])
+        except (KeyError, TypeError, ValueError):
+            absolute = None
         normalized_episodes.append({
             "id": episode.get("id"),
             "season": season,
             "episode": number,
+            "absolute": absolute,
             "title": str(episode.get("title", "")),
         })
     if not normalized_episodes:
@@ -1017,6 +1023,8 @@ def process_plex_event(event: dict, app_config, clients: dict,
                 item = plex.find_episode(
                     str(section_id), event["series"]["title"],
                     episode["season"], episode["episode"],
+                    absolute=episode.get("absolute"),
+                    episode_title=episode.get("title", ""),
                 )
                 if item is None:
                     continue
@@ -1031,11 +1039,15 @@ def process_plex_event(event: dict, app_config, clients: dict,
                     if plex_title and plex_title.strip().casefold()
                     != event["series"]["title"].strip().casefold() else ""
                 )
+                # Anime routinely matches on a different number than Sonarr
+                # reported, so say which one actually found it.
+                how = str(item.get("matched_by", ""))
+                via = f", found by {how}" if how and how != "season and episode" else ""
                 details.append(
                     f"{library_key}: matched S{episode['season']:02d}"
                     f"E{episode['episode']:02d} (show ratingKey "
                     f"{item['show_rating_key']}, episode {item['rating_key']}"
-                    f"{renamed})"
+                    f"{via}{renamed})"
                 )
     missing = expected_coordinates - matched_coordinates
     if missing:

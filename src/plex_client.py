@@ -47,6 +47,15 @@ def normalize_show_title(value: str) -> str:
     return " ".join(words)
 
 
+def normalize_episode_title(value: str) -> str:
+    """Reduce an episode title to something two metadata sources can share."""
+    text = "".join(
+        character if character.isalnum() else " "
+        for character in str(value).strip().casefold()
+    )
+    return " ".join(text.split())
+
+
 def trash_item_key(item: Dict) -> tuple:
     """Return the most stable identity available for a Plex trash item."""
     rating_key = str(item.get("rating_key", ""))
@@ -264,8 +273,15 @@ class PlexClient:
             return []
 
     def find_episode(self, section_id: str, show_title: str,
-                     season: int, episode: int) -> Optional[Dict]:
-        """Locate one episode, tolerating a title Plex spells differently."""
+                     season: int, episode: int, absolute: int | None = None,
+                     episode_title: str = "") -> Optional[Dict]:
+        """Locate one episode, tolerating a title Plex spells differently.
+
+        `absolute` is Sonarr's absolute episode number, which anime libraries
+        are routinely scanned by while Sonarr reports the season/episode pair
+        from its own metadata source. The two disagree constantly, so the
+        season coordinate alone finds nothing for a show numbered that way.
+        """
         expected = show_title.strip().casefold()
         # The cheapest query, when the server will take it.
         for item in self._section_items(section_id, {
@@ -297,14 +313,30 @@ class PlexClient:
 
         # Last resort, and the only route that uses no filtering at all: find
         # the show, then read its own episode list. Slower, but a server that
-        # refuses every filter still answers this.
+        # refuses every filter still answers this, and it is also the only
+        # route that can reconcile two different numbering schemes.
         return self._find_episode_through_show(
             section_id, show_title, normalized, season, episode,
+            absolute, episode_title,
         )
 
+    @staticmethod
+    def _as_match(found: Dict, show: Dict, matched_by: str) -> Dict:
+        return {
+            "rating_key": found["rating_key"],
+            "show_rating_key": show["rating_key"],
+            "season_rating_key": "",
+            "season_index": found["season_index"],
+            "episode_index": found["episode_index"],
+            "title": found["title"],
+            "show_title": found["show_title"] or show["title"],
+            "matched_by": matched_by,
+        }
+
     def _find_episode_through_show(self, section_id: str, show_title: str,
-                                   normalized: str, season: int,
-                                   episode: int) -> Optional[Dict]:
+                                   normalized: str, season: int, episode: int,
+                                   absolute: int | None = None,
+                                   episode_title: str = "") -> Optional[Dict]:
         try:
             shows = self.list_tv_shows_page(
                 section_id, 0, 50, query=show_title,
@@ -325,15 +357,36 @@ class PlexClient:
             for found in episodes:
                 if (found["season_index"] == int(season)
                         and found["episode_index"] == int(episode)):
-                    return {
-                        "rating_key": found["rating_key"],
-                        "show_rating_key": show["rating_key"],
-                        "season_rating_key": "",
-                        "season_index": int(season),
-                        "episode_index": int(episode),
-                        "title": found["title"],
-                        "show_title": found["show_title"] or show["title"],
-                    }
+                    return self._as_match(found, show, "season and episode")
+
+            # Anime is the common case: Sonarr reports a season/episode pair
+            # while the library was scanned by absolute number, or the reverse.
+            # An episode index alone is far too weak to act on - it would mark
+            # whatever happens to sit at that number - so an alternate match
+            # must be confirmed by the episode's own title.
+            wanted_title = normalize_episode_title(episode_title)
+            if not wanted_title:
+                return None
+            if absolute is not None:
+                for found in episodes:
+                    if found["episode_index"] != int(absolute):
+                        continue
+                    if normalize_episode_title(found["title"]) == wanted_title:
+                        return self._as_match(found, show, f"absolute number {absolute}")
+
+            # Neither numbering agreed, so fall back on the title itself, and
+            # only when exactly one episode carries it.
+            named = [
+                found for found in episodes
+                if normalize_episode_title(found["title"]) == wanted_title
+            ]
+            if len(named) == 1:
+                found = named[0]
+                return self._as_match(
+                    found, show,
+                    f"episode title, as S{found['season_index']:02d}"
+                    f"E{found['episode_index']:02d}",
+                )
             return None
         return None
 

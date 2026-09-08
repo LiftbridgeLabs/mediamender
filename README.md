@@ -592,6 +592,17 @@ Rule files written by earlier versions were keyed by mediaMender username and
 are migrated on first load: every show or season left On under any account name
 stays On, and the flattened file is written back on the next rule change.
 
+Sonarr and Plex do not always number an episode the same way either, and anime
+is where they disagree most: Sonarr reports the season/episode pair from its
+metadata source while the library was very often scanned by absolute number, so
+`S21E54` and `S01E1054` are the same episode and neither side is wrong. Sonarr
+sends the absolute number alongside the pair, so when the pair finds nothing
+mediaMender tries the absolute number, and failing that the episode title.
+Neither alternative is acted on unless the episode's own title agrees - an
+index by itself would mark whichever episode happens to sit at that number -
+and a title shared by more than one episode is left alone. The job log names
+which of the three found the match.
+
 Sonarr and Plex do not always spell a series the same way. Episode lookup first
 asks Plex for the exact title, then retries on the season and episode coordinate
 alone and compares titles ignoring case, punctuation, a leading article, and a

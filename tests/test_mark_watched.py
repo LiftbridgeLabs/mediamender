@@ -1031,6 +1031,21 @@ class MarkWatchedQueueTests(unittest.TestCase):
         self.assertEqual(len(trail), LOG_TRAIL_LIMIT)
         self.assertEqual(trail[-1]["message"], f"line {LOG_TRAIL_LIMIT + 19}")
 
+    def test_the_absolute_episode_number_is_kept(self):
+        """Anime libraries are commonly scanned by it, and it is the only way
+        to reconcile the two numbering schemes later."""
+        payload = sonarr_download()
+        payload["episodes"] = [{
+            "id": 45, "seasonNumber": 21, "episodeNumber": 54,
+            "absoluteEpisodeNumber": 1054, "title": "The Fated Reunion",
+        }]
+        event = normalize_sonarr_download(payload)
+        self.assertEqual(event["episodes"][0]["absolute"], 1054)
+
+    def test_an_episode_without_an_absolute_number_is_still_accepted(self):
+        event = normalize_sonarr_download(sonarr_download())
+        self.assertIsNone(event["episodes"][0]["absolute"])
+
     def test_normalizer_accepts_sonarr_test_without_queueing(self):
         self.assertIsNone(normalize_sonarr_download({"eventType": "Test"}))
 
