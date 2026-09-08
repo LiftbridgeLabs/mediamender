@@ -486,6 +486,69 @@ class SonarrProvisioningApiTests(unittest.TestCase):
                 headers={"X-CSRF-Token": "known-token"},
             )
 
+    def test_a_callback_leaving_the_docker_network_is_called_out(self):
+        from src.web.mark_watched import callback_route_warning
+        warning = callback_route_warning(
+            "http://sonarr-unlimited:8989",
+            "https://mediamender.example.io/api/webhooks/sonarr",
+        )
+        self.assertIn("leaves the Docker network", warning)
+        self.assertIn("mediamender.example.io", warning)
+
+    def test_a_container_to_container_callback_is_not_flagged(self):
+        from src.web.mark_watched import callback_route_warning
+        self.assertEqual(callback_route_warning(
+            "http://sonarr:8989", "http://mediamender:8222/api/webhooks/sonarr",
+        ), "")
+
+    def test_two_public_hostnames_are_not_flagged(self):
+        # Sonarr reached over the internet is a deliberate setup, not a mistake.
+        from src.web.mark_watched import callback_route_warning
+        self.assertEqual(callback_route_warning(
+            "https://sonarr.example.com", "https://mm.example.com/api/webhooks/sonarr",
+        ), "")
+
+    def test_the_suggested_callback_is_not_the_browser_origin(self):
+        from src.web.mark_watched import suggested_callback_url
+        with patch.dict("os.environ", {"MEDIAMENDER_CALLBACK_URL":
+                                       "http://mediamender:8222/api/webhooks/sonarr"}):
+            self.assertEqual(
+                suggested_callback_url(),
+                "http://mediamender:8222/api/webhooks/sonarr",
+            )
+        self.assertTrue(
+            suggested_callback_url().endswith("/api/webhooks/sonarr"),
+        )
+
+    def test_status_offers_a_callback_suggestion(self):
+        store = Mock()
+        store.status.return_value = {"connections": []}
+        with patch.object(app, "config", AppConfig(instances=[])),              patch.object(app, "sonarr_connection", store):
+            response = self._client().get("/api/mark-watched/sonarr")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("suggested_callback_url", response.get_json())
+
+    def test_an_unreachable_callback_explains_the_route(self):
+        client = self._provisioning_client()
+        log = Mock()
+        log.summary.return_value = {"total": 0}
+        config = AppConfig(
+            instances=[], mark_watched=MarkWatchedConfig(webhook_secret="webhook-secret"),
+        )
+        store = Mock()
+        store.prepare.return_value = {"connection_id": "c1"}
+        store.success.return_value = {"status": "connected"}
+        with patch.object(app, "config", config),              patch.object(mark_watched_routes, "SonarrClient", return_value=client),              patch.object(app, "webhook_log", log),              patch.object(app, "sonarr_connection", store):
+            response = self._client().post(
+                "/api/mark-watched/sonarr/connect",
+                json={"sonarr_url": "http://sonarr-unlimited:8989", "api_key": "k",
+                      "callback_url": "https://mediamender.example.io"},
+                headers={"X-CSRF-Token": "known-token"},
+            )
+        payload = response.get_json()
+        self.assertIs(payload["callback_verified"], False)
+        self.assertIn("leaves the Docker network", payload["message"])
+
     def test_connect_confirms_the_test_actually_reached_us(self):
         client = self._provisioning_client()
         log = Mock()

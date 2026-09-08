@@ -14,6 +14,7 @@ import urllib.parse
 import yaml
 from flask import Blueprint, Response, jsonify, request, url_for
 
+import socket
 import threading
 import time
 
@@ -55,6 +56,48 @@ def _mark_watched_library(instance_name: str, library_name: str):
 # How long to wait for Sonarr's test callback to land. Module level so tests
 # can shorten it without waiting out a real timeout.
 WEBHOOK_ARRIVAL_TIMEOUT = 8.0
+
+
+def suggested_callback_url() -> str:
+    """An address Sonarr can use to reach this container.
+
+    The browser's own origin is the wrong default. Reaching mediaMender through
+    a public hostname sends Sonarr's callback back out through whatever proxy
+    serves that name, and a proxy answers with its own 2xx - so Sonarr reports
+    a passing test that never arrived here.
+    """
+    override = os.environ.get("MEDIAMENDER_CALLBACK_URL", "").strip()
+    if override:
+        return override
+    host = os.environ.get("MEDIAMENDER_HOSTNAME", "").strip() or socket.gethostname()
+    return f"http://{host}:8222/api/webhooks/sonarr"
+
+
+def callback_route_warning(sonarr_url: str, callback_url: str) -> str:
+    """Explain a callback that will not travel the way the operator expects."""
+    try:
+        sonarr_host = urllib.parse.urlparse(sonarr_url).hostname or ""
+        callback = urllib.parse.urlparse(callback_url)
+    except ValueError:
+        return ""
+    callback_host = callback.hostname or ""
+    if not sonarr_host or not callback_host:
+        return ""
+    if sonarr_host == callback_host:
+        return ""
+    # A dotless Sonarr host is a container name on a Docker network; a dotted
+    # callback host is a name resolved outside it.
+    internal_sonarr = "." not in sonarr_host
+    external_callback = "." in callback_host and not callback_host.startswith("127.")
+    if internal_sonarr and external_callback:
+        return (
+            f"Sonarr is at an internal address ({sonarr_host}) but the callback "
+            f"points at {callback_host}. That route leaves the Docker network "
+            f"and comes back through whatever serves that name, which will "
+            f"answer instead of {PRODUCT_NAME}. Use an address Sonarr can "
+            f"resolve directly, such as {suggested_callback_url()}."
+        )
+    return ""
 
 
 def _await_webhook(before: int, timeout: float | None = None) -> bool:
@@ -328,7 +371,11 @@ def _mark_watched_sonarr_status_response():
         connection["api_key_available"] = bool(_sonarr_api_key({}, sonarr_url))
         connections.append(connection)
 
-    return jsonify({"ok": True, "connections": connections})
+    return jsonify({
+        "ok": True,
+        "connections": connections,
+        "suggested_callback_url": suggested_callback_url(),
+    })
 
 
 @bp.route("/api/mark-watched/sonarr/connect", methods=["POST"])
@@ -371,6 +418,7 @@ def api_mark_watched_sonarr_connect():
             key: value for key, value in connection.items()
             if key != "connection_id"
         }
+        route_warning = callback_route_warning(sonarr_url, callback_url)
         if not arrived:
             runtime.logger.warning(
                 "Sonarr accepted its test for %s but nothing reached this "
@@ -386,15 +434,19 @@ def api_mark_watched_sonarr_connect():
             "ok": True,
             "connection": public_connection,
             "callback_verified": arrived,
+            "callback_warning": route_warning,
             "message": (
                 f"Sonarr webhook {result['action']}, and its test reached "
                 f"{PRODUCT_NAME}."
                 if arrived else
-                f"Sonarr webhook {result['action']} and Sonarr reported the "
-                f"test succeeded, but nothing reached {PRODUCT_NAME}. Something "
-                f"between them answered instead — check that {callback_url} "
-                f"resolves to this container from Sonarr's network, and that no "
-                f"reverse proxy or auth layer intercepts it."
+                (route_warning or (
+                    f"Sonarr webhook {result['action']} and Sonarr reported the "
+                    f"test succeeded, but nothing reached {PRODUCT_NAME}. "
+                    f"Something between them answered instead — check that "
+                    f"{callback_url} resolves to this container from Sonarr's "
+                    f"network, and that no reverse proxy or auth layer "
+                    f"intercepts it."
+                ))
             ),
         })
     except (ValueError, SonarrError) as exc:

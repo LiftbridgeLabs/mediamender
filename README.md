@@ -71,6 +71,7 @@ Device → Variable**:
 | `LOG_DIR` | `data/logs` | Directory where log files are written |
 | `BROWSE_ROOTS` | `/mnt,/media,/data,/home` | Comma-separated list of root paths the file browser is allowed to enter |
 | `SESSION_COOKIE_SECURE` | `false` | Set to `true` when serving over HTTPS — marks the session cookie as Secure so it's never sent over plain HTTP |
+| `MEDIAMENDER_CALLBACK_URL` | — | Address Sonarr should call for Mark-it-Watched, e.g. `http://mediamender:8222/api/webhooks/sonarr`. Set this when a reverse proxy serves the UI, so the suggested callback is one Sonarr can reach directly |
 
 `PUID=99`, `PGID=100`, and your local `TZ` are the only variables most Unraid
 installations need. After selecting **Apply**, open the WebUI from the Docker
@@ -451,6 +452,15 @@ simply keeps waiting.
 **If nothing is being marked watched, look at the webhook log first.** The
 activity page lists every request Sonarr has made, including the ones turned
 away, and says plainly when there have been none.
+
+**The callback URL must be one Sonarr can resolve from its own network.** If
+you reach mediaMender through a reverse proxy, the address in your browser is
+the wrong one to give Sonarr: the call leaves the Docker network, comes back
+through the proxy, and the proxy answers with its own 2xx. Sonarr records a
+passing test for a request mediaMender never saw. Use the container address -
+`http://mediamender:8222/api/webhooks/sonarr` - or set `MEDIAMENDER_CALLBACK_URL`
+to pin the suggestion. mediaMender warns when the Sonarr URL is an internal name
+and the callback is not.
 
 Sonarr reporting a successful test is weaker evidence than it looks: it proves
 something answered the callback URL, not that mediaMender did. A reverse proxy,

@@ -1988,14 +1988,20 @@ async function loadSonarrConnectionStatus() {
   const callback = document.getElementById('mark-watched-callback-url');
   const list = document.getElementById('mark-watched-sonarr-connections');
   if (!status || !callback) return;
-  if (!callback.value) callback.value = `${window.location.origin}/api/webhooks/sonarr`;
   try {
     const response = await fetch('/api/mark-watched/sonarr');
     const data = await readJsonResponse(response, 'Sonarr status');
     if (!response.ok) throw new Error(data.error || 'Could not load Sonarr status');
     const connections = data.connections || [];
     const latest = connections[0] || {};
-    if (latest.callback_url) callback.value = latest.callback_url;
+    // Never the browser's own origin: Sonarr calls this from inside the
+    // container network, where a public hostname routes back out through a
+    // proxy that answers instead of us.
+    if (!callback.value) {
+      callback.value = latest.callback_url || data.suggested_callback_url || '';
+    } else if (latest.callback_url) {
+      callback.value = latest.callback_url;
+    }
     const configured = connections.filter(item => item.configured_from_environment).length;
     const connected = connections.filter(item => item.status === 'connected').length;
     const failed = connections.filter(item => item.status === 'failed').length;
