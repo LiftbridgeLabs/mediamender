@@ -450,10 +450,30 @@ simply keeps waiting.
 
 **If nothing is being marked watched, look at the webhook log first.** The
 activity page lists every request Sonarr has made, including the ones turned
-away, and says plainly when there have been none. A Sonarr connection showing
-*connected* only proves its Test event reached mediaMender; it does not prove
-real imports are being sent. If the log is empty, check that the connection in
-Sonarr has **On File Import** enabled.
+away, and says plainly when there have been none.
+
+Sonarr reporting a successful test is weaker evidence than it looks: it proves
+something answered the callback URL, not that mediaMender did. A reverse proxy,
+an auth layer, or anything else in front of this container will return its own
+2xx and Sonarr will count that as a pass. **Connect** and **Repair / test**
+therefore watch mediaMender's own webhook log while Sonarr runs its test, and
+say explicitly whether the request arrived here. If Sonarr passes but nothing
+arrives, the callback URL is not reaching this container.
+
+To check reachability from Sonarr's own network position:
+
+```bash
+docker exec sonarr curl -sS -o /dev/null -w '%{http_code}
+'   -X POST http://mediamender:8222/api/webhooks/sonarr   -H "X-Sonarr-Webhook-Secret: $(grep webhook_secret data/config.yml | cut -d'"' -f2)"   -H 'Content-Type: application/json' -d '{"eventType":"Test"}'
+```
+
+A `200` means the path works and the request will appear in the webhook log.
+Anything else - or a `200` that leaves the log empty - is something between
+Sonarr and mediaMender answering on its behalf.
+
+If requests do arrive but no import is ever queued, check that the connection
+in Sonarr has **On File Import** enabled; a connection passes its test with
+every event type switched off.
 
 While waiting, mediaMender asks Plex to scan the imported folder rather than
 only polling for it. If Plex rejects the path - which happens when Sonarr and

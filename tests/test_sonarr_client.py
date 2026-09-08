@@ -271,6 +271,12 @@ class SonarrClientTests(unittest.TestCase):
 
 
 class SonarrProvisioningApiTests(unittest.TestCase):
+    def setUp(self):
+        # Do not wait out the real callback-arrival window in every test.
+        patcher = patch.object(mark_watched_routes, "WEBHOOK_ARRIVAL_TIMEOUT", 0.01)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _client(self, role="admin", permissions=None):
         client = app.app.test_client()
         with client.session_transaction() as browser_session:
@@ -454,6 +460,55 @@ class SonarrProvisioningApiTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         store.prepare.assert_called_once_with("http://sonarr:8989", "user")
+
+    def _provisioning_client(self):
+        client = Mock()
+        client.system_status.return_value = {"version": "5.0.1"}
+        client.provision_webhook.return_value = {
+            "action": "created", "notification_id": 12,
+            "callback_url": "http://mediamender:8222/api/webhooks/sonarr",
+            "sonarr_version": "5.0.1", "sonarr_instance": "TV",
+        }
+        return client
+
+    def _connect(self, client, webhook_log):
+        config = AppConfig(
+            instances=[], mark_watched=MarkWatchedConfig(webhook_secret="webhook-secret"),
+        )
+        store = Mock()
+        store.prepare.return_value = {"connection_id": "connection-1"}
+        store.success.return_value = {"status": "connected", "notification_id": 12}
+        with patch.object(app, "config", config),              patch.object(mark_watched_routes, "SonarrClient", return_value=client),              patch.object(app, "webhook_log", webhook_log),              patch.object(app, "sonarr_connection", store):
+            return self._client().post(
+                "/api/mark-watched/sonarr/connect",
+                json={"sonarr_url": "http://sonarr:8989", "api_key": "k",
+                      "callback_url": "http://mediamender:8222"},
+                headers={"X-CSRF-Token": "known-token"},
+            )
+
+    def test_connect_confirms_the_test_actually_reached_us(self):
+        client = self._provisioning_client()
+        log = Mock()
+        # Sonarr's test callback lands while provision_webhook runs.
+        log.summary.side_effect = [{"total": 0}, {"total": 1}]
+        response = self._connect(client, log)
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertIs(payload["callback_verified"], True)
+        self.assertIn("reached", payload["message"])
+
+    def test_connect_reports_a_test_that_never_arrived(self):
+        client = self._provisioning_client()
+        log = Mock()
+        # Sonarr says the test passed, but nothing reached this container:
+        # a proxy or auth layer in front of mediaMender answered instead.
+        log.summary.return_value = {"total": 0}
+        response = self._connect(client, log)
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertIs(payload["callback_verified"], False)
+        self.assertIn("nothing reached", payload["message"])
+        self.assertIn("reverse proxy", payload["message"])
 
     def test_connect_uses_key_once_and_returns_no_secrets(self):
         config = AppConfig(

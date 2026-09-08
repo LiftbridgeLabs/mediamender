@@ -15,8 +15,10 @@ import yaml
 from flask import Blueprint, Response, jsonify, request, url_for
 
 import threading
+import time
 
 from src.auth import current_identity, has_valid_api_token, require_auth
+from src.branding import PRODUCT_NAME
 from src.sonarr_client import (
     SonarrClient, SonarrError, normalize_callback_url, normalize_sonarr_url,
 )
@@ -48,6 +50,27 @@ def _mark_watched_library(instance_name: str, library_name: str):
                 if library.name == library_name:
                     return instance, library, runtime.plex_clients.get(instance.name)
     return None, None, None
+
+
+# How long to wait for Sonarr's test callback to land. Module level so tests
+# can shorten it without waiting out a real timeout.
+WEBHOOK_ARRIVAL_TIMEOUT = 8.0
+
+
+def _await_webhook(before: int, timeout: float | None = None) -> bool:
+    """Wait briefly for a webhook to land, and say whether one did.
+
+    Sonarr issues its test synchronously, but the callback arrives on another
+    thread, so give it a moment rather than reading the count immediately.
+    """
+    deadline = time.monotonic() + (
+        WEBHOOK_ARRIVAL_TIMEOUT if timeout is None else timeout
+    )
+    while time.monotonic() < deadline:
+        if runtime.webhook_log.summary()["total"] > before:
+            return True
+        time.sleep(0.2)
+    return runtime.webhook_log.summary()["total"] > before
 
 
 def _ensure_sonarr_webhook_secret() -> str:
@@ -329,10 +352,17 @@ def api_mark_watched_sonarr_connect():
         webhook_secret = _ensure_sonarr_webhook_secret()
         owner = runtime._current_username()
         pending = runtime.sonarr_connection.prepare(sonarr_url, owner)
+        # Sonarr calling its own test proves the URL answered something. It
+        # does not prove mediaMender answered: a reverse proxy sitting in front
+        # of this container will happily return its own 2xx, and Sonarr counts
+        # that as a pass. Watch our own webhook log instead.
+        before = runtime.webhook_log.summary()["total"]
         result = client.provision_webhook(
             callback_url, webhook_secret, status=sonarr_status,
             connection_id=pending["connection_id"],
         )
+        arrived = _await_webhook(before)
+        result["callback_verified"] = arrived
         connection = runtime.sonarr_connection.success(
             sonarr_url, result, owner=owner,
             connection_id=pending["connection_id"],
@@ -341,6 +371,12 @@ def api_mark_watched_sonarr_connect():
             key: value for key, value in connection.items()
             if key != "connection_id"
         }
+        if not arrived:
+            runtime.logger.warning(
+                "Sonarr accepted its test for %s but nothing reached this "
+                "container. Something between Sonarr and mediaMender answered "
+                "on its behalf; check %s.", sonarr_url, callback_url,
+            )
         runtime.logger.info(
             "Sonarr webhook %s for %s (notification %s)",
             result["action"], result.get("sonarr_instance", "Sonarr"),
@@ -349,8 +385,16 @@ def api_mark_watched_sonarr_connect():
         return jsonify({
             "ok": True,
             "connection": public_connection,
+            "callback_verified": arrived,
             "message": (
-                f"Sonarr webhook {result['action']} and its Test event succeeded."
+                f"Sonarr webhook {result['action']}, and its test reached "
+                f"{PRODUCT_NAME}."
+                if arrived else
+                f"Sonarr webhook {result['action']} and Sonarr reported the "
+                f"test succeeded, but nothing reached {PRODUCT_NAME}. Something "
+                f"between them answered instead — check that {callback_url} "
+                f"resolves to this container from Sonarr's network, and that no "
+                f"reverse proxy or auth layer intercepts it."
             ),
         })
     except (ValueError, SonarrError) as exc:

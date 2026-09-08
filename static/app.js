@@ -2050,7 +2050,17 @@ async function connectSonarr(configuredUrl = '', actionButton = null) {
     _settingsData.mark_watched.webhook_secret_configured = true;
     renderMarkWatchedSettings();
     await loadSonarrConnectionStatus();
-    toast(data.message || 'Sonarr connected', 'pass');
+    // Sonarr passing its own test only proves something answered the URL.
+    // Say so loudly when that something was not us.
+    if (data.callback_verified === false) {
+      status.textContent = data.message;
+      status.style.color = 'var(--warn2)';
+      toast('Sonarr saved the webhook, but its test never reached this container', 'fail');
+    } else {
+      status.textContent = data.message || 'Sonarr connected';
+      status.style.color = 'var(--pass2)';
+      toast(data.message || 'Sonarr connected', 'pass');
+    }
   } catch (error) {
     if (apiKey) apiKey.value = '';
     status.textContent = error.message || 'Sonarr connection failed';
