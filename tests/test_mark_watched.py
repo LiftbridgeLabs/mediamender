@@ -722,6 +722,52 @@ class MarkWatchedQueueTests(unittest.TestCase):
         self.assertIn("Attempt 2: Marked 1", trail)
         self.assertIn("  Plex::TV: marked watched", trail)
 
+    def test_a_plex_error_is_retried_rather_than_abandoned(self):
+        """Plex answering one request with a 500 used to end the job on its
+        first attempt, which is the opposite of waiting for a library to
+        appear. Only the give-up window may end a job."""
+        attempts = []
+
+        def process(event):
+            attempts.append(True)
+            if len(attempts) < 2:
+                raise RuntimeError("500 Server Error for /library/sections/17/all")
+            return {"message": "Marked 1"}
+
+        state, clock = self._clock()
+        manager = MarkWatchedManager(
+            str(self.runtime), processor=process, retry_delays=(5,),
+            autostart=False, now=clock,
+        )
+        record, _ = manager.enqueue(sonarr_download())
+        manager._queue.get_nowait()
+        manager.process(record["id"])
+        waiting = manager.get(record["id"])
+        self.assertEqual(waiting["status"], "waiting")
+        self.assertIn("500 Server Error", waiting["message"])
+        self.assertIn("checking again in", waiting["message"])
+
+        state["now"] += timedelta(seconds=6)
+        manager.process(record["id"])
+        self.assertEqual(manager.get(record["id"])["status"], "succeeded")
+
+    def test_a_plex_error_still_gives_up_once_the_window_closes(self):
+        def process(event):
+            raise RuntimeError("Plex is gone")
+
+        state, clock = self._clock()
+        manager = MarkWatchedManager(
+            str(self.runtime), processor=process, retry_delays=(5,),
+            autostart=False, now=clock, give_up_after_hours=1,
+        )
+        record, _ = manager.enqueue(sonarr_download())
+        manager._queue.get_nowait()
+        state["now"] += timedelta(hours=2)
+        manager.process(record["id"])
+        failed = manager.get(record["id"])
+        self.assertEqual(failed["status"], "failed")
+        self.assertIn("kept failing", failed["message"])
+
     def test_a_vanished_import_stops_waiting_immediately(self):
         import tempfile, os
         from src.mark_watched import ImportVanished
@@ -1140,7 +1186,7 @@ class PlexMarkWatchedClientTests(unittest.TestCase):
             {"type": "episode", "ratingKey": "99", "grandparentRatingKey": "11",
              "grandparentTitle": "Some Other Show", "parentIndex": 3, "index": 18},
         ]}}
-        with patch.object(client, "_get", side_effect=[empty, coordinate]):
+        with patch.object(client, "_get", side_effect=[empty, coordinate]),              patch.object(client, "list_tv_shows_page", return_value={"shows": []}):
             self.assertIsNone(client.find_episode("7", "Big City Greens", 3, 18))
 
     def test_show_title_normalization(self):

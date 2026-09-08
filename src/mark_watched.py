@@ -417,40 +417,52 @@ class MarkWatchedManager:
         except PlexEpisodePending as exc:
             self._log(job_id, f"Attempt {attempt}: Plex has not matched {exc}",
                       getattr(exc, "details", None))
-            with self._lock:
-                record = self._records[job_id]
-                expired = self._expired(record)
-            if expired:
-                self._update(
-                    job_id, status="failed",
-                    message=(
-                        f"Plex still had no match after "
-                        f"{self.give_up_after_hours:g}h and {attempt} attempts: {exc}"
-                    ),
-                )
-                logger.error("Mark-it-Watched job %s gave up: %s", job_id[:12], exc)
-            else:
-                delay = self._backoff(attempt)
-                due = self._now() + timedelta(seconds=delay)
-                self._update(
-                    job_id, status="waiting", next_attempt_at=due.isoformat(),
-                    message=(
-                        f"Plex has not scanned this episode yet; "
-                        f"checking again in {_humanize(delay)}"
-                    ),
-                )
-                logger.info("Mark-it-Watched job %s waiting %s for a Plex match",
-                            job_id[:12], _humanize(delay))
+            self._retry_or_give_up(
+                job_id, attempt,
+                waiting="Plex has not scanned this episode yet",
+                give_up=(
+                    f"Plex still had no match after "
+                    f"{self.give_up_after_hours:g}h and {attempt} attempts: {exc}"
+                ),
+            )
         except Exception as exc:
             logging.getLogger("mediamender").exception("Mark-it-Watched job failed")
-            self._update(
-                job_id, status="failed",
-                message=f"Plex processing failed: {type(exc).__name__}: {exc}",
-            )
             self._log(job_id, f"Attempt {attempt} failed: {type(exc).__name__}: {exc}")
             logger.error("Mark-it-Watched job %s failed: %s: %s",
                          job_id[:12], type(exc).__name__, exc)
+            self._retry_or_give_up(
+                job_id, attempt,
+                waiting=f"Plex processing failed ({type(exc).__name__}: {exc})",
+                give_up=(
+                    f"Plex processing kept failing for "
+                    f"{self.give_up_after_hours:g}h: {type(exc).__name__}: {exc}"
+                ),
+            )
         return self.get(job_id)
+
+    def _retry_or_give_up(self, job_id: str, attempt: int, *,
+                          waiting: str, give_up: str) -> None:
+        """End a job for one reason only: the give-up window ran out.
+
+        An unexpected error used to end it on its first attempt instead, so a
+        Plex restart, a dropped connection, or a single 500 abandoned an import
+        that would have succeeded minutes later - the opposite of waiting for a
+        debrid library to appear.
+        """
+        with self._lock:
+            expired = self._expired(self._records[job_id])
+        if expired:
+            self._update(job_id, status="failed", message=give_up)
+            logger.error("Mark-it-Watched job %s gave up: %s", job_id[:12], give_up)
+            return
+        delay = self._backoff(attempt)
+        due = self._now() + timedelta(seconds=delay)
+        self._update(
+            job_id, status="waiting", next_attempt_at=due.isoformat(),
+            message=f"{waiting}; checking again in {_humanize(delay)}",
+        )
+        logger.info("Mark-it-Watched job %s waiting %s: %s",
+                    job_id[:12], _humanize(delay), waiting)
 
     def due_jobs(self) -> list[str]:
         """Waiting jobs whose next attempt has come round."""

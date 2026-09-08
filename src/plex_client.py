@@ -1,3 +1,4 @@
+import logging
 import time
 
 import requests
@@ -6,6 +7,8 @@ from typing import Optional, List, Dict
 
 from src.version import __version__
 from src.branding import PRODUCT_NAME, PRODUCT_SLUG
+
+logger = logging.getLogger("mediamender.plex")
 
 
 # Plex media type IDs
@@ -199,18 +202,33 @@ class PlexClient:
             "show_title": str(item.get("grandparentTitle", "")),
         }
 
+    def _section_items(self, section_id: str, params: dict) -> List[Dict]:
+        """Run one section query, treating a refusal as an empty answer.
+
+        Not every Plex server accepts every filter, and one that does not
+        answers with a 500 rather than refusing the parameter. Raising there
+        aborted the whole lookup, so a server that would not filter by title
+        could never be searched by any other means either.
+        """
+        try:
+            response = self._get(
+                f"/library/sections/{section_id}/all", params=params, timeout=30,
+            )
+            response.raise_for_status()
+            return self._metadata(response)
+        except (requests.RequestException, ValueError) as exc:
+            logger.debug("Plex rejected a section query (%s): %s", params, exc)
+            return []
+
     def find_episode(self, section_id: str, show_title: str,
                      season: int, episode: int) -> Optional[Dict]:
         """Locate one episode, tolerating a title Plex spells differently."""
-        response = self._get(
-            f"/library/sections/{section_id}/all",
-            params={"type": 4, "grandparentTitle": show_title,
-                    "parentIndex": int(season), "index": int(episode)},
-            timeout=30,
-        )
-        response.raise_for_status()
         expected = show_title.strip().casefold()
-        for item in self._metadata(response):
+        # The cheapest query, when the server will take it.
+        for item in self._section_items(section_id, {
+            "type": 4, "grandparentTitle": show_title,
+            "parentIndex": int(season), "index": int(episode),
+        }):
             if str(item.get("grandparentTitle", "")).strip().casefold() != expected:
                 continue
             match = self._episode_match(item, season, episode)
@@ -224,19 +242,56 @@ class PlexClient:
         normalized = normalize_show_title(show_title)
         if not normalized:
             return None
-        response = self._get(
-            f"/library/sections/{section_id}/all",
-            params={"type": 4, "parentIndex": int(season), "index": int(episode)},
-            timeout=30,
-        )
-        response.raise_for_status()
-        for item in self._metadata(response):
+        for item in self._section_items(section_id, {
+            "type": 4, "parentIndex": int(season), "index": int(episode),
+        }):
             candidate = str(item.get("grandparentTitle", ""))
             if normalize_show_title(candidate) != normalized:
                 continue
             match = self._episode_match(item, season, episode)
             if match:
                 return match
+
+        # Last resort, and the only route that uses no filtering at all: find
+        # the show, then read its own episode list. Slower, but a server that
+        # refuses every filter still answers this.
+        return self._find_episode_through_show(
+            section_id, show_title, normalized, season, episode,
+        )
+
+    def _find_episode_through_show(self, section_id: str, show_title: str,
+                                   normalized: str, season: int,
+                                   episode: int) -> Optional[Dict]:
+        try:
+            shows = self.list_tv_shows_page(
+                section_id, 0, 50, query=show_title,
+            )["shows"]
+        except (requests.RequestException, ValueError) as exc:
+            logger.debug("Plex could not search %s for %r: %s",
+                         section_id, show_title, exc)
+            return None
+        for show in shows:
+            if normalize_show_title(show["title"]) != normalized:
+                continue
+            try:
+                episodes = self.list_show_episodes(show["rating_key"])
+            except (requests.RequestException, ValueError) as exc:
+                logger.debug("Plex could not list episodes of %s: %s",
+                             show["rating_key"], exc)
+                return None
+            for found in episodes:
+                if (found["season_index"] == int(season)
+                        and found["episode_index"] == int(episode)):
+                    return {
+                        "rating_key": found["rating_key"],
+                        "show_rating_key": show["rating_key"],
+                        "season_rating_key": "",
+                        "season_index": int(season),
+                        "episode_index": int(episode),
+                        "title": found["title"],
+                        "show_title": found["show_title"] or show["title"],
+                    }
+            return None
         return None
 
     def _scrobble_endpoint(self) -> tuple[str, str]:

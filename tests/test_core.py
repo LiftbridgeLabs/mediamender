@@ -436,6 +436,56 @@ class PlexClientTests(unittest.TestCase):
             self.assertEqual(client.get_library_item_count("7"), 123)
         self.assertEqual(get.call_args.kwargs["params"]["type"], 4)
 
+    def _episode_response(self, metadata):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"MediaContainer": {"Metadata": metadata}}
+        return response
+
+    def test_a_filter_plex_refuses_does_not_abort_the_lookup(self):
+        """Some servers answer an unsupported filter with a 500 rather than
+        refusing the parameter. Raising there abandoned the search entirely,
+        so an episode Plex was holding was reported as a hard failure."""
+        import requests
+        client = PlexClient("http://plex:32400", "token")
+        episode = {
+            "type": "episode", "ratingKey": "9001", "grandparentRatingKey": "12",
+            "grandparentTitle": "Intervention", "parentIndex": 22, "index": 14,
+            "title": "Ep",
+        }
+        refused = Mock()
+        refused.raise_for_status.side_effect = requests.HTTPError("500 Server Error")
+        with patch.object(client, "_get",
+                          side_effect=[refused, self._episode_response([episode])]):
+            found = client.find_episode("17", "Intervention", 22, 14)
+        self.assertEqual(found["rating_key"], "9001")
+
+    def test_a_server_refusing_every_filter_is_searched_through_the_show(self):
+        import requests
+        client = PlexClient("http://plex:32400", "token")
+        refused = Mock()
+        refused.raise_for_status.side_effect = requests.HTTPError("500 Server Error")
+        shows = {"shows": [{"rating_key": "12", "title": "Intervention"}]}
+        episodes = [
+            {"rating_key": "9001", "season_index": 22, "episode_index": 14,
+             "title": "Ep", "show_title": "Intervention", "view_count": 0},
+        ]
+        with patch.object(client, "_get", side_effect=[refused, refused]), \
+             patch.object(client, "list_tv_shows_page", return_value=shows), \
+             patch.object(client, "list_show_episodes", return_value=episodes):
+            found = client.find_episode("17", "Intervention", 22, 14)
+        self.assertEqual(found["rating_key"], "9001")
+        self.assertEqual(found["show_rating_key"], "12")
+
+    def test_an_episode_plex_really_does_not_have_is_still_not_found(self):
+        import requests
+        client = PlexClient("http://plex:32400", "token")
+        refused = Mock()
+        refused.raise_for_status.side_effect = requests.HTTPError("500 Server Error")
+        with patch.object(client, "_get", side_effect=[refused, refused]), \
+             patch.object(client, "list_tv_shows_page", return_value={"shows": []}):
+            self.assertIsNone(client.find_episode("17", "Intervention", 22, 14))
+
     def test_count_failure_is_not_reported_as_zero(self):
         client = PlexClient("http://plex:32400", "token")
         with patch.object(client, "get_section_type", return_value="show"), \
