@@ -553,6 +553,14 @@ record repeated. An upgrade arrives as a new file and so as a new webhook
 identity: the job still waiting on the replaced file is marked `superseded`
 rather than left to chase the same episode alongside its replacement.
 
+A job that keeps finding nothing reports what each library actually holds for
+that show - whether Plex has it at all, and which seasons with how many
+episodes. Sonarr and Plex do not always agree on numbering, and an episode Plex
+never had under that number will not arrive however long the job waits, which
+otherwise reads exactly like one still being scanned. **Stop waiting**, on any
+queued or waiting job, closes it without touching Plex; a stopped job stays
+stopped and **Run pending jobs now** will not revive it.
+
 A job that exhausts its Plex retries stays `failed`, and because each webhook
 identity is queued only once, resending the same Sonarr payload reuses that
 failed job instead of running it again. **Run pending jobs now**, next to the

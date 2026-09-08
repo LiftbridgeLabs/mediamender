@@ -509,6 +509,26 @@ class PlexClientTests(unittest.TestCase):
         self.assertEqual(get.call_args.kwargs["params"]["includeGuids"], 1)
         self.assertEqual(page["shows"][0]["tvdb_id"], "73141")
 
+    def test_describe_show_says_what_the_library_actually_holds(self):
+        client = PlexClient("http://plex:32400", "token")
+        with patch.object(client, "list_tv_shows_page", return_value={"shows": [
+                 {"rating_key": "42", "title": "Stat (2022)"}]}), \
+             patch.object(client, "list_show_seasons", return_value=[
+                 {"rating_key": "43", "index": 1, "leaf_count": 20},
+                 {"rating_key": "44", "index": 2, "leaf_count": 26},
+             ]):
+            described = client.describe_show("7", "Stat")
+        self.assertIn("ratingKey 42", described)
+        self.assertIn("S01 (20 episodes)", described)
+        self.assertIn("S02 (26 episodes)", described)
+
+    def test_describe_show_says_when_the_library_lacks_the_show(self):
+        client = PlexClient("http://plex:32400", "token")
+        with patch.object(client, "list_tv_shows_page",
+                          return_value={"shows": [{"rating_key": "1", "title": "Other"}]}):
+            self.assertEqual(client.describe_show("7", "Stat"),
+                             "does not have this show")
+
     def test_count_failure_is_not_reported_as_zero(self):
         client = PlexClient("http://plex:32400", "token")
         with patch.object(client, "get_section_type", return_value="show"), \

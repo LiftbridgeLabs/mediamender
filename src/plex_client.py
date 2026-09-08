@@ -337,6 +337,39 @@ class PlexClient:
             return None
         return None
 
+    def describe_show(self, section_id: str, show_title: str) -> str:
+        """What this library actually holds for a show, for a job that is stuck.
+
+        "Plex has not scanned this episode yet" is the same message whether the
+        show is absent, the season is absent, or Plex simply numbers the
+        episode differently from Sonarr - and only the last of those will never
+        resolve itself by waiting.
+        """
+        normalized = normalize_show_title(show_title)
+        if not normalized:
+            return ""
+        try:
+            shows = self.list_tv_shows_page(section_id, 0, 50, query=show_title)["shows"]
+        except (requests.RequestException, ValueError):
+            return ""
+        show = next(
+            (item for item in shows
+             if normalize_show_title(item["title"]) == normalized), None,
+        )
+        if show is None:
+            return "does not have this show"
+        try:
+            seasons = self.list_show_seasons(show["rating_key"])
+        except (requests.RequestException, ValueError):
+            return f"has this show (ratingKey {show['rating_key']})"
+        if not seasons:
+            return f"has this show (ratingKey {show['rating_key']}) with no seasons yet"
+        held = ", ".join(
+            f"S{season['index']:02d} ({season['leaf_count']} episodes)"
+            for season in sorted(seasons, key=lambda item: item["index"])
+        )
+        return f"has this show (ratingKey {show['rating_key']}) holding {held}"
+
     def _scrobble_endpoint(self) -> tuple[str, str]:
         response = self._get("/media/providers")
         response.raise_for_status()

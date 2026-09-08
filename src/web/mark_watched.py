@@ -254,6 +254,29 @@ def api_mark_watched_status():
     })
 
 
+@bp.route("/api/mark-watched/jobs/<job_id>/cancel", methods=["POST"])
+@require_auth
+@requires_feature("mark_watched")
+def api_mark_watched_cancel(job_id: str):
+    """Stop one job waiting for an episode that is never going to arrive."""
+    try:
+        record = runtime.mark_watched.cancel(str(job_id))
+    except OSError:
+        runtime.logger.exception("Could not cancel Mark-it-Watched job")
+        return jsonify({"ok": False, "error": "Could not save the cancelled job"}), 500
+    if record is None:
+        return jsonify({"ok": False, "error": "No such Mark-it-Watched job"}), 404
+    return jsonify({
+        "ok": True,
+        "status": record["status"],
+        "message": (
+            "Stopped waiting on this import"
+            if record["status"] == "cancelled"
+            else f"This job had already {record['status']}"
+        ),
+    })
+
+
 @bp.route("/api/mark-watched/retry", methods=["POST"])
 @require_auth
 @requires_feature("mark_watched")

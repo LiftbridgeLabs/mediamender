@@ -736,6 +736,40 @@ class MarkWatchedQueueTests(unittest.TestCase):
         self.assertEqual(manager.get(first["id"])["status"], "queued")
         self.assertEqual(manager.get(second["id"])["status"], "queued")
 
+    def test_a_stuck_job_can_be_stopped_and_stays_stopped(self):
+        """An episode Plex numbers differently never arrives, so without this
+        the record sits at the top of the list until the give-up window."""
+        def process(_event):
+            raise PlexEpisodePending("Stat (2022) S02E54")
+
+        manager = MarkWatchedManager(
+            str(self.runtime), processor=process, retry_delays=(300,),
+            autostart=False, sleep=lambda _delay: None,
+        )
+        record, _ = manager.enqueue(sonarr_download())
+        manager._queue.get_nowait()
+        manager.process(record["id"])
+        self.assertEqual(manager.get(record["id"])["status"], "waiting")
+
+        stopped = manager.cancel(record["id"])
+        self.assertEqual(stopped["status"], "cancelled")
+        self.assertIsNone(stopped["next_attempt_at"])
+        self.assertEqual(manager.due_jobs(), [])
+        # Run pending jobs now must not undo a deliberate stop.
+        self.assertEqual(manager.retry_unfinished()["requeued"], 0)
+        self.assertEqual(manager.get(record["id"])["status"], "cancelled")
+
+    def test_cancelling_a_finished_job_leaves_it_as_it_is(self):
+        manager = MarkWatchedManager(
+            str(self.runtime), processor=lambda _event: {"message": "done"},
+            autostart=False, sleep=lambda _delay: None,
+        )
+        record, _ = manager.enqueue(sonarr_download())
+        manager._queue.get_nowait()
+        manager.process(record["id"])
+        self.assertEqual(manager.cancel(record["id"])["status"], "succeeded")
+        self.assertIsNone(manager.cancel("not-a-job"))
+
     def test_retry_reconsiders_an_import_that_marked_nothing(self):
         """The job succeeded, but it marked nothing because of the rule as it
         stood then - which is exactly what switching a show on changes."""
@@ -1363,6 +1397,32 @@ class MarkWatchedRuleTests(unittest.TestCase):
         self.assertIn(
             "Searched TV libraries: Plex::TV", "\n".join(caught.exception.details),
         )
+
+    def test_a_pending_job_reports_what_plex_actually_holds(self):
+        """A job can wait for days on an episode Plex numbers differently, and
+        "not scanned yet" reads the same as one that is genuinely still
+        arriving. Say which of the two this is."""
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = None
+        plex.describe_show.return_value = (
+            "has this show (ratingKey 42) holding S01 (20 episodes), "
+            "S02 (26 episodes)"
+        )
+        with self.assertRaises(PlexEpisodePending) as caught:
+            process_plex_event({
+                "series": {"title": "Stat (2022)"},
+                "episodes": [{"season": 2, "episode": 54}],
+            }, config, {"Plex": plex}, self.rules)
+        details = "\n".join(caught.exception.details)
+        # Plex holds 26 episodes of season 2; Sonarr asked for episode 54.
+        self.assertIn("Plex::TV has this show (ratingKey 42) holding", details)
+        self.assertIn("S02 (26 episodes)", details)
+        plex.describe_show.assert_called_once_with("7", "Stat (2022)")
 
     def test_hidden_library_is_reported_as_skipped(self):
         library = LibraryConfig("TV", "physical", [], section_id="7")

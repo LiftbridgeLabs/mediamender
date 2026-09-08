@@ -550,6 +550,7 @@ function markWatchedJobHint(job) {
   if (job.status === 'superseded') {
     return 'A newer import of the same episode replaced this job';
   }
+  if (job.status === 'cancelled') return 'Stopped by request';
   if (job.status === 'waiting') return 'Plex has not scanned this episode yet';
   if (markWatchedJobBadge(job) === 'skipped' && job.status === 'succeeded') {
     return 'Plex had the episode but no watch rule was enabled for it';
@@ -633,7 +634,11 @@ function renderMarkWatchedJobs(data) {
     // Sonarr sends one import per episode, so a season arriving looks like the
     // same show queued over and over unless the record says which episode.
     const episodes = markWatchedJobEpisodes(job);
-    return `<div class="repair-history-item"><span class="badge ${markWatchedJobBadge(job)}" title="${h(markWatchedJobHint(job))}">${h(job.status)}</span><div><div class="repair-history-title">${h(job.event?.series?.title || 'Plex update')}${episodes?` <span class="mw-job-episode">${h(episodes)}</span>`:''}</div><div class="repair-history-meta">${h(source)} · ${h(fmtAgo(job.updated_at || job.created_at))}${attempts?` · attempt ${attempts}`:''}${nextCheck}${counts}<br>${h(job.message || '')}</div>${log}</div></div>`;
+    // A job waiting on an episode Plex will never produce has no natural end
+    // short of the give-up window, which is days away.
+    const stop = (job.status === 'waiting' || job.status === 'queued')
+      ? `<button class="btn btn-secondary btn-sm mw-job-stop" onclick="cancelMarkWatchedJob(${h(JSON.stringify(job.id || ''))},this)">Stop waiting</button>` : '';
+    return `<div class="repair-history-item"><span class="badge ${markWatchedJobBadge(job)}" title="${h(markWatchedJobHint(job))}">${h(job.status)}</span><div><div class="repair-history-title">${h(job.event?.series?.title || 'Plex update')}${episodes?` <span class="mw-job-episode">${h(episodes)}</span>`:''}</div><div class="repair-history-meta">${h(source)} · ${h(fmtAgo(job.updated_at || job.created_at))}${attempts?` · attempt ${attempts}`:''}${nextCheck}${counts}<br>${h(job.message || '')}</div>${log}</div>${stop}</div>`;
   }).join('') : '<div class="empty-msg">No automatic or manual jobs yet.</div>');
   // Polling every few seconds used to replace this markup wholesale, which
   // collapsed any log trail the reader had opened and moved the ground under
@@ -653,6 +658,21 @@ function renderMarkWatchedJobs(data) {
       else _markWatchedOpenLogs.delete(key);
     }, true);
     target.dataset.logListener = '1';
+  }
+}
+
+async function cancelMarkWatchedJob(jobId, button) {
+  if (!confirm('Stop waiting on this import?\n\nThe job is closed and will not be retried. Nothing in Plex changes.')) return;
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/mark-watched/jobs/${encodeURIComponent(jobId)}/cancel`, {method:'POST'});
+    const data = await readJsonResponse(response);
+    if (!response.ok) throw new Error(data.error || 'Job could not be stopped');
+    toast(data.message, 'pass');
+    await loadMarkWatchedJobs();
+  } catch (error) {
+    button.disabled = false;
+    toast(error.message || 'Job could not be stopped', 'fail');
   }
 }
 

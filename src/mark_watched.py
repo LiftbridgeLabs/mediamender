@@ -573,6 +573,30 @@ class MarkWatchedManager:
         result = record.get("result") or {}
         return bool(result.get("matched")) and not result.get("marked")
 
+    def cancel(self, job_id: str) -> dict | None:
+        """Stop waiting on one job, without waiting out the give-up window.
+
+        An episode Plex numbers differently from Sonarr never arrives, so the
+        job retries until the window closes - days of a stuck record at the top
+        of the list with no way to dismiss it.
+        """
+        with self._lock:
+            record = self._records.get(job_id)
+            if record is None:
+                return None
+            if record.get("status") in {"succeeded", "superseded", "cancelled"}:
+                return dict(record)
+            record.update({
+                "status": "cancelled",
+                "next_attempt_at": None,
+                "message": "Stopped by request",
+                "updated_at": _utc_now(),
+            })
+            self._save()
+        self._log(job_id, "Stopped by request")
+        logger.info("Mark-it-Watched job %s cancelled", job_id[:12])
+        return self.get(job_id)
+
     def retry_unfinished(self) -> dict:
         """Re-queue jobs worth another attempt, and say what was re-queued.
 
@@ -593,7 +617,9 @@ class MarkWatchedManager:
             for job_id, record in self._records.items():
                 status = record.get("status")
                 skipped = self._matched_but_marked_nothing(record)
-                if status == "superseded":
+                # Both are finished states someone or something chose
+                # deliberately; this button must not undo that.
+                if status in {"superseded", "cancelled"}:
                     continue
                 if status == "succeeded" and not skipped:
                     continue
@@ -1023,6 +1049,13 @@ def process_plex_event(event: dict, app_config, clients: dict,
             f"S{season:02d}E{episode:02d}" for season, episode in sorted(missing)
         )
         details.append("Searched TV libraries: " + (", ".join(searched) or "none"))
+        # Waiting only makes sense while the episode might still arrive. Say
+        # what each library actually holds, so a season Plex numbers
+        # differently from Sonarr is visible rather than waited out.
+        for library_key, plex, section_id in scannable:
+            coverage = plex.describe_show(section_id, event["series"]["title"])
+            if coverage:
+                details.append(f"{library_key} {coverage}")
         # Sonarr finishes an import the moment the file lands, which for a
         # symlinked debrid library is long before Plex has scanned it. Waiting
         # passively is why these jobs used to expire unmatched, so ask Plex to
