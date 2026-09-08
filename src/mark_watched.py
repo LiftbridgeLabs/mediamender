@@ -683,12 +683,24 @@ class MarkWatchedRuleStore:
 
     def set_all(self, show_keys: list[tuple[str, str, str]],
                 enabled: bool) -> None:
+        """Set a rule for each named show, and clear only their overrides.
+
+        Every season override used to be discarded, including those belonging
+        to libraries this call never touched.
+        """
         with self._lock:
             for instance, library, rating_key in show_keys:
                 self._data["shows"][
                     self._show_key(instance, library, rating_key)
                 ] = bool(enabled)
-            self._data["seasons"] = {}
+            affected = {
+                self._show_key(instance, library, rating_key) + "::"
+                for instance, library, rating_key in show_keys
+            }
+            self._data["seasons"] = {
+                key: value for key, value in self._data["seasons"].items()
+                if not any(key.startswith(prefix) for prefix in affected)
+            }
             self._save()
 
 

@@ -167,6 +167,8 @@ let _markWatchedData = {
 let _markWatchedAbort = null;
 let _markWatchedSearchTimer = null;
 let _markWatchedJobTimer = null;
+// Log trails the reader has opened, so a poll does not close them again.
+const _markWatchedOpenLogs = new Set();
 
 function markWatchedStorageKey(name) {
   return `mediamender-mark-watched-${_identity.username || 'default'}-${name}`;
@@ -392,16 +394,28 @@ async function setSeasonRule(showIndex, seasonIndex, enabled) {
   toast('Season rule saved', 'pass');
 }
 
+// Scoped to the library on screen. It used to reach every library on every
+// configured server, which is not what a button sitting under one library's
+// show list looks like it does.
 async function setAllMarkWatched(enabled) {
   const phrase = enabled ? 'ALL ON' : 'ALL OFF';
-  if (!confirm(`${phrase} for every visible show?\n\nThis changes only future automatic rules. Existing Plex watch history will not be modified.`)) return;
+  const instance = _markWatchedData.instance;
+  const library = _markWatchedData.library;
+  if (!instance || !library) return toast('Select a server and library first', 'fail');
+  const total = Number(_markWatchedData.total || 0);
+  if (!confirm(
+    `${phrase} for all ${total} shows in ${instance} / ${library}?\n\n` +
+    'This covers the whole library, not just the shows on this page, and clears ' +
+    'any season overrides within it. Other libraries and servers are not touched.\n\n' +
+    'Only future automatic rules change. Existing Plex watch history is not modified.'
+  )) return;
   const response = await fetch('/api/mark-watched/all', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({enabled, confirm:phrase}),
+    body:JSON.stringify({enabled, confirm:phrase, instance, library}),
   });
   const data = await readJsonResponse(response);
   if (!response.ok) return toast(data.error || 'Bulk rule update failed', 'fail');
-  toast(`${phrase}: ${data.shows} future show rules updated; Plex history unchanged`, 'pass');
+  toast(`${phrase}: ${data.shows} future show rules updated in ${data.scope || library}; Plex history unchanged`, 'pass');
   await loadMarkWatchedPage(_markWatchedData.page);
 }
 
@@ -519,12 +533,12 @@ function renderMarkWatchedJobs(data) {
     banner = `<div class="repair-warning">No Sonarr request has been recorded yet. This log begins at version 2.7.0, so a webhook test you ran before upgrading will not appear here — run it again to confirm the connection. Automatic rules run only when Sonarr calls after an import finishes.</div>`;
   }
   const hookRows = (hooks.recent || []).length
-    ? `<details class="mw-job-log" style="margin:0 0 14px;"><summary>Sonarr webhook log &mdash; ${hooks.total} recent request${hooks.total===1?'':'s'}</summary><pre>${
+    ? `<details class="mw-job-log" data-log="webhooks"${_markWatchedOpenLogs.has('webhooks')?' open':''} style="margin:0 0 14px;"><summary>Sonarr webhook log &mdash; ${hooks.total} recent request${hooks.total===1?'':'s'}</summary><pre>${
         (hooks.recent || []).map(entry =>
           `${h(fmtStamp(entry.at))}  ${h((entry.outcome||'').padEnd(9))} ${h(entry.event_type||'-')}  ${h(entry.series||'')}  ${h(entry.detail||'')}`
         ).join('\n')}</pre></details>`
     : '';
-  target.innerHTML = health + banner + hookRows + (jobs.length ? jobs.map(job => {
+  const markup = health + banner + hookRows + (jobs.length ? jobs.map(job => {
     const source = job.event?.source === 'manual' ? `Manual ${job.event?.manual?.scope || 'update'}` : 'Sonarr webhook';
     const attempts = Number(job.attempts || 0);
     const result = job.result || {};
@@ -534,11 +548,26 @@ function renderMarkWatchedJobs(data) {
     const counts = result.matched !== undefined ? ` · ${Number(result.marked || 0)} marked · ${Number(result.matched || 0)} matched` : '';
     const trail = job.log || [];
     const log = trail.length
-      ? `<details class="mw-job-log"><summary>${trail.length} log line${trail.length===1?'':'s'}</summary><pre>${trail.map(entry =>
+      ? `<details class="mw-job-log" data-log="${h(job.id || '')}"${_markWatchedOpenLogs.has(job.id)?' open':''}><summary>${trail.length} log line${trail.length===1?'':'s'}</summary><pre>${trail.map(entry =>
           `${h(fmtStamp(entry.at))}  ${h(entry.message || '')}`).join('\n')}</pre></details>`
       : '';
     return `<div class="repair-history-item"><span class="badge ${markWatchedJobBadge(job)}" title="${h(markWatchedJobHint(job))}">${h(job.status)}</span><div><div class="repair-history-title">${h(job.event?.series?.title || 'Plex update')}</div><div class="repair-history-meta">${h(source)} · ${h(fmtAgo(job.updated_at || job.created_at))}${attempts?` · attempt ${attempts}`:''}${nextCheck}${counts}<br>${h(job.message || '')}</div>${log}</div></div>`;
   }).join('') : '<div class="empty-msg">No automatic or manual jobs yet.</div>');
+  // Polling every few seconds used to replace this markup wholesale, which
+  // collapsed any log trail the reader had opened and moved the ground under
+  // them mid-scroll. Redraw only on a real change, and restore what was open.
+  if (markup === target.innerHTML) return;
+  target.innerHTML = markup;
+  if (!target.dataset.logListener) {
+    // "toggle" does not bubble, so it has to be caught on the way down.
+    target.addEventListener('toggle', event => {
+      const key = event.target?.dataset?.log;
+      if (!key) return;
+      if (event.target.open) _markWatchedOpenLogs.add(key);
+      else _markWatchedOpenLogs.delete(key);
+    }, true);
+    target.dataset.logListener = '1';
+  }
 }
 
 async function retryMarkWatchedJobs(button) {

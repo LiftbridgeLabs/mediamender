@@ -1327,6 +1327,73 @@ class MarkWatchedPermissionTests(unittest.TestCase):
         )
         plex.mark_watched.assert_not_called()
 
+    def test_all_off_touches_only_the_library_it_was_asked_about(self):
+        """The buttons sit under one library's show list, so that is what they
+        act on. They used to walk every library on every configured server."""
+        config = AppConfig(instances=[
+            PlexInstanceConfig("Plex", "http://plex", "token", [
+                LibraryConfig("TV", "physical", [], section_id="7"),
+                LibraryConfig("Anime", "physical", [], section_id="8"),
+            ]),
+            PlexInstanceConfig("Other", "http://other", "token", [
+                LibraryConfig("TV", "physical", [], section_id="9"),
+            ]),
+        ], users=[AppUser(
+            "viewer", hash_password("password123"), "user", ["mark_watched"],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.list_tv_shows.return_value = [{"rating_key": "10"}]
+        other = Mock()
+        client = app.app.test_client()
+        with client.session_transaction() as browser_session:
+            browser_session.update({"authenticated": True, "username": "viewer",
+                                    "role": "user", "permissions": ["mark_watched"],
+                                    "_csrf_token": "known-token"})
+        with patch.object(app, "config", config), \
+             patch.object(app, "plex_clients", {"Plex": plex, "Other": other}), \
+             patch.object(app.mark_watched_rules, "set_all") as set_all:
+            response = client.post(
+                "/api/mark-watched/all",
+                json={"enabled": False, "confirm": "ALL OFF",
+                      "instance": "Plex", "library": "TV"},
+                headers={"X-CSRF-Token": "known-token"},
+            )
+        self.assertEqual(response.status_code, 200)
+        set_all.assert_called_once_with([("Plex", "TV", "10")], False)
+        self.assertEqual(response.get_json()["scope"], "Plex / TV")
+        # The other server was never even asked for its shows.
+        other.list_tv_shows.assert_not_called()
+        self.assertEqual(plex.list_tv_shows.call_count, 1)
+
+
+class MarkWatchedRuleScopeTests(unittest.TestCase):
+    def setUp(self):
+        self.runtime = Path("tests/.mark-watched-scope")
+        self.runtime.mkdir(exist_ok=True)
+
+    def tearDown(self):
+        for item in self.runtime.glob("*"):
+            item.unlink()
+        self.runtime.rmdir()
+
+    def test_a_bulk_change_keeps_season_overrides_it_did_not_touch(self):
+        """Every override used to be discarded, including those belonging to
+        libraries the call never looked at."""
+        rules = MarkWatchedRuleStore(str(self.runtime))
+        rules.set_season("Plex", "TV", "10", 2, False)
+        rules.set_season("Plex", "Anime", "77", 1, False)
+        rules.set_all([("Plex", "TV", "10")], True)
+        # The override inside the library that changed is cleared, so the
+        # show's own rule now governs the season...
+        touched = rules.rule("Plex", "TV", "10", 2)
+        self.assertTrue(touched["enabled"])
+        self.assertEqual(touched["source"], "show")
+        # ...and the one in the library that was not named is left alone.
+        untouched = rules.rule("Plex", "Anime", "77", 1)
+        self.assertFalse(untouched["enabled"])
+        self.assertEqual(untouched["source"], "season")
+
 
 class MarkWatchedSettingsTests(unittest.TestCase):
     def setUp(self):

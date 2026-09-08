@@ -106,6 +106,7 @@ const api = new Function(src + `
           firstAvailablePage, pageIsAvailable, goToSettings, PAGES,
           selectDashboardView, showFeatureTab, hasFeatureTabs,
           markWatchedJobBadge, renderMarkWatchedJobs,
+          get openLogs() { return _markWatchedOpenLogs; },
           set loaders(map) { for (const k in map) PAGE_LOADERS[k] = map[k]; },
           set permissions(list) {
             canAccess = p => list.includes('*') || list.includes(p);
@@ -242,6 +243,31 @@ check('refusals point at the log',
       /turned away/.test(bannerFor({total: 2, outcomes: {rejected: 2}, recent: []})), true);
 check('an empty log explains itself',
       /begins at version/.test(bannerFor({total: 0, outcomes: {}, recent: []})), true);
+
+// An open log trail must survive the four-second poll.
+function jobsPayload(message) {
+  return {workers: 4, live_workers: 4, webhooks: {total: 1, outcomes: {queued: 1}, recent: []},
+          jobs: [{id: 'job-1', status: 'waiting', message,
+                  event: {series: {title: 'Stat (2022)'}},
+                  log: [{at: '2026-09-08T10:00:00Z', message: 'Attempt 1'}]}]};
+}
+const jobsNode = nodes.get('mark-watched-jobs');
+api.renderMarkWatchedJobs(jobsPayload('checking again in 60 seconds'));
+check('a log trail starts closed', /<details[^>]* open/.test(jobsNode.innerHTML), false);
+api.openLogs.add('job-1');
+api.renderMarkWatchedJobs(jobsPayload('checking again in 45 seconds'));
+check('an opened trail is still open after a poll',
+      /<details[^>]*data-log="job-1" open/.test(jobsNode.innerHTML), true);
+let writes = 0;
+let stored = jobsNode.innerHTML;
+Object.defineProperty(jobsNode, 'innerHTML', {
+  get: () => stored,
+  set: value => { writes += 1; stored = value; },
+});
+api.renderMarkWatchedJobs(jobsPayload('checking again in 45 seconds'));
+check('an unchanged poll does not touch the DOM at all', writes, 0);
+api.renderMarkWatchedJobs(jobsPayload('checking again in 30 seconds'));
+check('a changed poll does redraw', writes, 1);
 
 // Selecting the page you are already on must refresh it.
 const loaderCalls = [];

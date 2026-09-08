@@ -962,13 +962,22 @@ def api_mark_watched_all():
     expected = "ALL ON" if enabled is True else "ALL OFF" if enabled is False else ""
     if data.get("confirm") != expected:
         return jsonify({"ok": False, "error": f"Confirmation must be {expected or 'valid'}"}), 400
+    # Scoped to one library by default. This used to walk every library on
+    # every configured server whatever the page was showing, so "All Off" next
+    # to one library's show list silently cleared the rules for all of them.
+    only_instance = str(data.get("instance", "")).strip()
+    only_library = str(data.get("library", "")).strip()
     show_keys = []
     shows_library = runtime.config.mark_watched.shows_library
     for instance in runtime.config.instances:
+        if only_instance and instance.name != only_instance:
+            continue
         plex = runtime.plex_clients.get(instance.name)
         if plex is None:
             continue
         for library in instance.libraries:
+            if only_library and library.name != only_library:
+                continue
             if not shows_library(instance.name, library.name):
                 continue
             section_id = library.section_id or plex.find_section_id(library.name)
@@ -976,9 +985,22 @@ def api_mark_watched_all():
                 continue
             for show in plex.list_tv_shows(str(section_id)):
                 show_keys.append((instance.name, library.name, show["rating_key"]))
+    if (only_instance or only_library) and not show_keys:
+        return jsonify({
+            "ok": False,
+            "error": f"No shows found in {only_instance or 'that server'} / "
+                     f"{only_library or 'that library'}",
+        }), 404
     runtime.mark_watched_rules.set_all(show_keys, enabled)
-    return jsonify({"ok": True, "enabled": enabled, "shows": len(show_keys),
-                    "message": "Future automatic rules updated; Plex history was not changed"})
+    scope = (f"{only_instance} / {only_library}"
+             if only_instance and only_library else "every visible library")
+    return jsonify({
+        "ok": True, "enabled": enabled, "shows": len(show_keys), "scope": scope,
+        "message": (
+            f"Future automatic rules updated for {len(show_keys)} shows in "
+            f"{scope}; Plex history was not changed"
+        ),
+    })
 
 
 @bp.route("/api/mark-watched/poster", methods=["GET"])
