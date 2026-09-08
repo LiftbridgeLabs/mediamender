@@ -7,6 +7,7 @@ is reached through ``runtime`` rather than imported, because app.py rebinds
 
 from __future__ import annotations
 
+import re
 import os
 import secrets
 import urllib.parse
@@ -58,6 +59,14 @@ def _mark_watched_library(instance_name: str, library_name: str):
 WEBHOOK_ARRIVAL_TIMEOUT = 8.0
 
 
+_CONTAINER_ID = re.compile(r"^[0-9a-f]{12,64}$")
+
+
+def _is_container_id(host: str) -> bool:
+    """Docker names an unnamed container's host after its own ID."""
+    return bool(_CONTAINER_ID.match(host))
+
+
 def suggested_callback_url() -> str:
     """An address Sonarr can use to reach this container.
 
@@ -70,7 +79,38 @@ def suggested_callback_url() -> str:
     if override:
         return override
     host = os.environ.get("MEDIAMENDER_HOSTNAME", "").strip() or socket.gethostname()
+    # Inside Docker that hostname is usually the container ID, which is both
+    # unreadable and replaced every time the container is recreated. The
+    # container's name is the address that lasts, and ours is conventionally
+    # the product name.
+    if not host or _is_container_id(host):
+        host = PRODUCT_NAME.lower()
     return f"http://{host}:8222/api/webhooks/sonarr"
+
+
+def proven_callback_url() -> str:
+    """A callback already saved for a Sonarr that stayed inside the network.
+
+    Better evidence than any guess: an operator has already told one connection
+    where to find this container.
+    """
+    try:
+        saved = runtime.sonarr_connection.status().get("connections", [])
+    except Exception:  # a status file that cannot be read is not fatal here
+        return ""
+    if not isinstance(saved, list):
+        return ""
+    for record in saved:
+        if not isinstance(record, dict):
+            continue
+        url = str(record.get("callback_url") or "")
+        try:
+            host = urllib.parse.urlparse(url).hostname or ""
+        except ValueError:
+            continue
+        if host and "." not in host and not _is_container_id(host):
+            return url
+    return ""
 
 
 def callback_route_warning(sonarr_url: str, callback_url: str) -> str:
@@ -91,11 +131,10 @@ def callback_route_warning(sonarr_url: str, callback_url: str) -> str:
     external_callback = "." in callback_host and not callback_host.startswith("127.")
     if internal_sonarr and external_callback:
         return (
-            f"Sonarr is at an internal address ({sonarr_host}) but the callback "
-            f"points at {callback_host}. That route leaves the Docker network "
-            f"and comes back through whatever serves that name, which will "
-            f"answer instead of {PRODUCT_NAME}. Use an address Sonarr can "
-            f"resolve directly, such as {suggested_callback_url()}."
+            f"A call from {sonarr_host} to {callback_host} leaves the Docker "
+            f"network, and whatever serves that name answers instead of "
+            f"{PRODUCT_NAME}. Try "
+            f"{proven_callback_url() or suggested_callback_url()}"
         )
     return ""
 
@@ -374,7 +413,7 @@ def _mark_watched_sonarr_status_response():
     # Each Sonarr answers from its own network, so each one carries its own
     # callback. Offer the suggestion only where nothing has been saved yet, and
     # say up front when a saved one cannot travel the way the operator expects.
-    suggested = suggested_callback_url()
+    suggested = proven_callback_url() or suggested_callback_url()
     for connection in connections:
         connection["callback_url"] = connection.get("callback_url") or ""
         connection["suggested_callback_url"] = suggested

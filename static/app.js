@@ -2021,9 +2021,11 @@ async function loadSonarrConnectionStatus() {
       // callback rather than sharing the field above.
       const field = `mw-callback-${index}`;
       const suggestion = connection.suggested_callback_url || data.suggested_callback_url || '';
+      // The shared explanation lives once above the list; a card says only
+      // what is true of that connection.
       const warning = connection.callback_warning
         ? `<div class="form-hint" style="color:var(--warn2);">${h(connection.callback_warning)}</div>` : '';
-      const callbackRow = `<div class="form-group" style="margin-top:10px;"><label class="form-label" for="${field}">Callback URL this Sonarr should call</label><input class="form-input" id="${field}" type="url" value="${h(connection.callback_url || '')}" placeholder="${h(suggestion)}"><div class="form-hint">A hostname or IP reachable from <strong>this</strong> Sonarr's network. Saved when you select ${installed?'Repair / test':action}.</div>${warning}</div>`;
+      const callbackRow = `<div class="form-group" style="margin-top:10px;"><label class="form-label" for="${field}">Callback URL</label><input class="form-input" id="${field}" type="url" value="${h(connection.callback_url || '')}" placeholder="${h(suggestion)}">${warning}</div>`;
       return `<div class="metadata-setting-row" style="display:block;"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:space-between;"><div><strong>${h(connection.sonarr_instance || connection.environment_label || 'Sonarr')}</strong><br><span>${h(connection.sonarr_url || '')}${version}</span>${verified}${missingKey}${connection.error?`<br><span style="color:var(--fail2);">${h(connection.error)}</span>`:''}</div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;"><span class="badge ${installed?'success':connection.status==='failed'?'error':'skipped'}">${installed?'webhook installed':connection.status==='failed'?'needs attention':'not connected'}</span><button class="btn ${installed?'btn-secondary':'btn-primary'} btn-sm" onclick="connectSonarr(${url},this,${h(JSON.stringify(field))})">${action}</button>${remove}</div></div>${callbackRow}</div>`;
     }).join('') || '<div class="empty-msg">No Sonarr environment URLs found. Enter one above to connect it manually.</div>';
   } catch (error) {

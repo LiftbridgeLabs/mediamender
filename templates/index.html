@@ -408,7 +408,8 @@
             <div class="form-group"><label class="form-label">mediaMender callback URL</label><input class="form-input" id="mark-watched-callback-url" type="url" placeholder="http://mediamender:8222/api/webhooks/sonarr"><div class="form-hint">Used for the Sonarr entered above. Each saved connection keeps its own, editable on its card below.</div></div>
           </div>
           <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><button class="btn btn-primary" id="mark-watched-sonarr-connect" onclick="connectSonarr()">Connect entered Sonarr</button><span id="mark-watched-sonarr-status" class="form-hint">Loading configured Sonarr instances&hellip;</span></div>
-          <div class="metadata-settings-list" id="mark-watched-sonarr-connections" style="margin-top:14px;"></div>
+          <div class="form-hint" style="margin-top:16px;">Each connection calls its own address. Give every Sonarr a hostname or IP reachable from the network <em>it</em> runs on, then select <strong>Repair / test</strong> on that card to save it.</div>
+          <div class="metadata-settings-list" id="mark-watched-sonarr-connections" style="margin-top:10px;"></div>
           <div class="form-hint" style="margin-top:10px;">The API key is sent only to this mediaMender request and is not written to config, status files, logs, or API responses.</div>
         </div></div>
         {% endif %}

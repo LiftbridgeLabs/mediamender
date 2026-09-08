@@ -164,6 +164,38 @@ class SonarrClientTests(unittest.TestCase):
         )
         self.assertEqual(tested[2]["json"]["id"], 7)
 
+    def test_a_test_sonarr_refused_is_not_reported_as_a_pass(self):
+        # Sonarr answers a failed connection test with HTTP 200 and the failure
+        # in the body, so the status alone said the callback worked.
+        session = FakeSession([
+            FakeResponse({"version": "4.0.0"}),
+            FakeResponse([webhook_schema()]),
+            FakeResponse([]),
+            FakeResponse([{"propertyName": "", "errorMessage":
+                           "Unable to send test message: Connection refused"}]),
+        ])
+        with self.assertRaises(SonarrError) as caught:
+            SonarrClient(
+                "http://sonarr:8989", "key", session=session,
+            ).provision_webhook("http://mediamender:8222/api/webhooks/sonarr", "secret")
+        self.assertIn("Connection refused", str(caught.exception))
+        # Nothing was saved in Sonarr, so a refused test leaves no half-made
+        # connection behind.
+        self.assertNotIn("POST", [call[0] for call in session.calls[4:]])
+
+    def test_a_warning_from_the_test_does_not_block_provisioning(self):
+        session = FakeSession([
+            FakeResponse({"version": "4.0.0"}),
+            FakeResponse([webhook_schema()]),
+            FakeResponse([]),
+            FakeResponse([{"isWarning": True, "errorMessage": "Untested version"}]),
+            FakeResponse({"id": 3}),
+        ])
+        result = SonarrClient(
+            "http://sonarr:8989", "key", session=session,
+        ).provision_webhook("http://mediamender:8222/api/webhooks/sonarr", "secret")
+        self.assertEqual(result["action"], "created")
+
     def test_provision_adds_connection_identity_header(self):
         session = FakeSession([
             FakeResponse({"version": "5.0.1"}),
@@ -519,6 +551,38 @@ class SonarrProvisioningApiTests(unittest.TestCase):
         self.assertTrue(
             suggested_callback_url().endswith("/api/webhooks/sonarr"),
         )
+
+    def test_the_suggestion_is_never_a_container_id(self):
+        # Docker gives an unnamed container its own ID as its hostname, which
+        # is unreadable and replaced whenever the container is recreated.
+        from src.web.mark_watched import suggested_callback_url
+        with patch.dict("os.environ", {"MEDIAMENDER_CALLBACK_URL": "",
+                                       "MEDIAMENDER_HOSTNAME": "965ba9f94d24"}):
+            self.assertEqual(
+                suggested_callback_url(),
+                "http://mediamender:8222/api/webhooks/sonarr",
+            )
+
+    def test_a_callback_that_already_works_is_preferred_over_a_guess(self):
+        from src.web.mark_watched import proven_callback_url
+        store = Mock()
+        store.status.return_value = {"connections": [
+            {"callback_url": "https://mediamender.example.io/api/webhooks/sonarr"},
+            {"callback_url": "http://mediamender:8222/api/webhooks/sonarr"},
+        ]}
+        with patch.object(app, "sonarr_connection", store):
+            self.assertEqual(proven_callback_url(),
+                             "http://mediamender:8222/api/webhooks/sonarr")
+
+    def test_no_internal_callback_saved_yet_proves_nothing(self):
+        from src.web.mark_watched import proven_callback_url
+        store = Mock()
+        store.status.return_value = {"connections": [
+            {"callback_url": "https://mediamender.example.io/api/webhooks/sonarr"},
+            {"callback_url": "http://965ba9f94d24:8222/api/webhooks/sonarr"},
+        ]}
+        with patch.object(app, "sonarr_connection", store):
+            self.assertEqual(proven_callback_url(), "")
 
     def test_status_offers_a_callback_suggestion(self):
         store = Mock()

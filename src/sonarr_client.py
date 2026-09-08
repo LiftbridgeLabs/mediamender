@@ -227,9 +227,10 @@ class SonarrClient:
 
         # Test before changing Sonarr's saved connections. This invokes the same
         # callback and secret header that the saved connection will use.
-        self._request(
+        result = self._request(
             "POST", "/notification/test", payload, redactions=(secret,),
         )
+        self._raise_for_test_failure(result, secret)
         if "id" in payload:
             saved = self._request(
                 "PUT", f"/notification/{payload['id']}", payload,
@@ -246,6 +247,30 @@ class SonarrClient:
             "sonarr_instance": str(status.get("instanceName", "Sonarr")),
             "callback_url": callback_url,
         }
+
+    @staticmethod
+    def _raise_for_test_failure(result, secret: str = "") -> None:
+        """Read the test's own verdict, not just its HTTP status.
+
+        Sonarr answers a failed connection test with HTTP 200 and the failure
+        in the body. Taking the status alone made mediaMender report a test
+        Sonarr had actually refused.
+        """
+        entries = result if isinstance(result, list) else []
+        if isinstance(result, dict) and result.get("validationFailures"):
+            entries = result["validationFailures"]
+        problems = [
+            str(entry.get("errorMessage") or entry.get("detailedDescription") or "")
+            for entry in entries
+            if isinstance(entry, dict) and not entry.get("isWarning")
+            and (entry.get("errorMessage") or entry.get("detailedDescription"))
+        ]
+        if not problems:
+            return
+        detail = "; ".join(problems)
+        if secret:
+            detail = detail.replace(secret, "[redacted]")
+        raise SonarrError(f"Sonarr could not deliver its test webhook: {detail}")
 
     def remove_webhook(self) -> int:
         """Delete mediaMender-managed webhook connections from this Sonarr."""
