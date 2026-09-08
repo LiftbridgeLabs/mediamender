@@ -131,6 +131,10 @@ class WebhookLog:
         self.limit = int(limit)
         self._lock = threading.RLock()
         self._attempts = self._load()
+        # The log keeps only the newest `limit` entries, so len() stops growing
+        # once it is full and cannot be used to notice an arrival. Count every
+        # receipt separately.
+        self._received = len(self._attempts)
 
     def _load(self) -> list:
         try:
@@ -151,6 +155,7 @@ class WebhookLog:
             "remote": remote,
         }
         with self._lock:
+            self._received += 1
             self._attempts.insert(0, entry)
             del self._attempts[self.limit:]
             try:
@@ -164,6 +169,11 @@ class WebhookLog:
         with self._lock:
             return [dict(entry) for entry in self._attempts[:limit]]
 
+    def received(self) -> int:
+        """Requests seen since this process started, never truncated."""
+        with self._lock:
+            return self._received
+
     def summary(self) -> dict:
         with self._lock:
             attempts = list(self._attempts)
@@ -172,6 +182,7 @@ class WebhookLog:
             counts[entry.get("outcome", "?")] = counts.get(entry.get("outcome", "?"), 0) + 1
         return {
             "total": len(attempts),
+            "received": self._received,
             "outcomes": counts,
             "last_at": attempts[0]["at"] if attempts else "",
         }

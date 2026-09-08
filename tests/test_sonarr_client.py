@@ -584,6 +584,27 @@ class SonarrProvisioningApiTests(unittest.TestCase):
         with patch.object(app, "sonarr_connection", store):
             self.assertEqual(proven_callback_url(), "")
 
+    def test_an_arrival_is_seen_once_the_log_is_full(self):
+        """The log keeps only its newest entries, so its length stops changing
+        once it fills. Counting entries then made every arrival look like a
+        no-show - including ones the log had just recorded a moment earlier."""
+        import tempfile
+        from src.mark_watched import WebhookLog
+        from src.web.mark_watched import _await_webhook
+        with tempfile.TemporaryDirectory() as directory:
+            log = WebhookLog(directory, limit=3)
+            for index in range(3):
+                log.record(outcome="test", detail=f"filling {index}")
+            self.assertEqual(log.summary()["total"], 3)  # full
+            before = log.received()
+            with patch.object(app, "webhook_log", log):
+                log.record(outcome="test", detail="Sonarr test event")
+                self.assertTrue(_await_webhook(before, timeout=0.01))
+                self.assertFalse(_await_webhook(log.received(), timeout=0.01))
+            # The log itself is still capped; only the receipt count grows.
+            self.assertEqual(log.summary()["total"], 3)
+            self.assertEqual(log.received(), 4)
+
     def test_status_offers_a_callback_suggestion(self):
         store = Mock()
         store.status.return_value = {"connections": []}
@@ -629,6 +650,7 @@ class SonarrProvisioningApiTests(unittest.TestCase):
         client = self._provisioning_client()
         log = Mock()
         log.summary.return_value = {"total": 0}
+        log.received.return_value = 0
         config = AppConfig(
             instances=[], mark_watched=MarkWatchedConfig(webhook_secret="webhook-secret"),
         )
@@ -650,7 +672,7 @@ class SonarrProvisioningApiTests(unittest.TestCase):
         client = self._provisioning_client()
         log = Mock()
         # Sonarr's test callback lands while provision_webhook runs.
-        log.summary.side_effect = [{"total": 0}, {"total": 1}]
+        log.received.side_effect = [0, 1]
         response = self._connect(client, log)
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
@@ -663,6 +685,7 @@ class SonarrProvisioningApiTests(unittest.TestCase):
         # Sonarr says the test passed, but nothing reached this container:
         # a proxy or auth layer in front of mediaMender answered instead.
         log.summary.return_value = {"total": 0}
+        log.received.return_value = 0
         response = self._connect(client, log)
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()

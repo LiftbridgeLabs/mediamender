@@ -144,15 +144,19 @@ def _await_webhook(before: int, timeout: float | None = None) -> bool:
 
     Sonarr issues its test synchronously, but the callback arrives on another
     thread, so give it a moment rather than reading the count immediately.
+
+    Counts receipts rather than log entries: the log keeps only its newest 50,
+    so once it filled up its length stopped changing and every arrival looked
+    like a no-show - including the ones the log itself had just recorded.
     """
     deadline = time.monotonic() + (
         WEBHOOK_ARRIVAL_TIMEOUT if timeout is None else timeout
     )
     while time.monotonic() < deadline:
-        if runtime.webhook_log.summary()["total"] > before:
+        if runtime.webhook_log.received() > before:
             return True
         time.sleep(0.2)
-    return runtime.webhook_log.summary()["total"] > before
+    return runtime.webhook_log.received() > before
 
 
 def _ensure_sonarr_webhook_secret() -> str:
@@ -453,7 +457,7 @@ def api_mark_watched_sonarr_connect():
         # does not prove mediaMender answered: a reverse proxy sitting in front
         # of this container will happily return its own 2xx, and Sonarr counts
         # that as a pass. Watch our own webhook log instead.
-        before = runtime.webhook_log.summary()["total"]
+        before = runtime.webhook_log.received()
         result = client.provision_webhook(
             callback_url, webhook_secret, status=sonarr_status,
             connection_id=pending["connection_id"],

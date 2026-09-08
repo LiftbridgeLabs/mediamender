@@ -2055,7 +2055,7 @@ async function connectSonarr(configuredUrl = '', actionButton = null, callbackFi
   button.disabled = true;
   button.dataset.label ||= button.innerHTML;
   button.innerHTML = '<span class="spin"></span> connecting&hellip;';
-  status.textContent = 'Verifying Sonarr, testing the callback, and saving the webhook&hellip;';
+  status.textContent = 'Verifying Sonarr, testing the callback, and saving the webhook…';
   status.style.color = '';
   try {
     const response = await fetch('/api/mark-watched/sonarr/connect', {
