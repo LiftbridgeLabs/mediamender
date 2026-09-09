@@ -229,6 +229,9 @@ class PlexClient:
             "title": str(item.get("title", "")),
             "show_title": str(item.get("grandparentTitle", "")),
             "view_count": int(item.get("viewCount", 0) or 0),
+            # A resume point keeps an episode in Continue Watching no matter
+            # how many times Plex says it has been played.
+            "view_offset": int(item.get("viewOffset", 0) or 0),
         } for item in self._metadata(response)
           if item.get("type") == "episode"
           and item.get("ratingKey")
@@ -436,12 +439,37 @@ class PlexClient:
                     return str(endpoint), identifier or "com.plexapp.plugins.library"
         raise RuntimeError("Plex did not advertise a scrobble endpoint")
 
+    def clear_progress(self, rating_key: str, identifier: str = "") -> bool:
+        """Discard a saved resume point, so the item leaves Continue Watching.
+
+        Scrobbling marks an item played but leaves any viewOffset in place, and
+        Plex keeps anything with a resume point in Continue Watching however
+        many times it has been played. An episode someone started and then had
+        marked watched therefore sat there looking unmarked.
+
+        Best effort: an older server that does not accept this still ends up
+        with the item played, which is what was actually asked for.
+        """
+        try:
+            response = self._get("/:/progress", params={
+                "key": str(rating_key),
+                "identifier": identifier or "com.plexapp.plugins.library",
+                "time": 0,
+                "state": "stopped",
+            })
+            return response.ok
+        except requests.RequestException as exc:
+            logger.debug("Plex would not clear the resume point on %s: %s",
+                         rating_key, exc)
+            return False
+
     def mark_watched(self, rating_key: str) -> None:
         endpoint, identifier = self._scrobble_endpoint()
         response = self._get(endpoint, params={
             "key": str(rating_key), "identifier": identifier,
         })
         response.raise_for_status()
+        self.clear_progress(rating_key, identifier)
 
     def mark_watched_many(self, rating_keys: List[str]) -> None:
         """Mark several items watched while discovering the Plex endpoint once."""
@@ -451,6 +479,7 @@ class PlexClient:
                 "key": str(rating_key), "identifier": identifier,
             })
             response.raise_for_status()
+            self.clear_progress(rating_key, identifier)
 
     def get_artwork(self, artwork_key: str):
         if not artwork_key.startswith("/") or artwork_key.startswith("//"):

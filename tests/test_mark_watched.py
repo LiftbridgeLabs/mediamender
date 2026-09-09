@@ -1575,10 +1575,28 @@ class PlexMarkWatchedClientTests(unittest.TestCase):
             "Feature": [{"type": "timeline", "scrobbleKey": "/:/scrobble"}],
         }]}}
         scrobble = Mock()
-        with patch.object(client, "_get", side_effect=[provider, scrobble]) as get:
+        progress = Mock()
+        with patch.object(client, "_get",
+                          side_effect=[provider, scrobble, progress]) as get:
             client.mark_watched("30")
-        self.assertEqual(get.call_args.args[0], "/:/scrobble")
-        self.assertEqual(get.call_args.kwargs["params"]["key"], "30")
+        calls = [(call.args[0], call.kwargs.get("params", {})) for call in get.call_args_list]
+        self.assertEqual(calls[1][0], "/:/scrobble")
+        self.assertEqual(calls[1][1]["key"], "30")
+        # Scrobbling alone leaves the resume point, and anything with one stays
+        # in Plex's Continue Watching however many times it has been played.
+        self.assertEqual(calls[2][0], "/:/progress")
+        self.assertEqual(calls[2][1]["time"], 0)
+        self.assertEqual(calls[2][1]["state"], "stopped")
+
+    def test_a_server_that_refuses_to_clear_progress_still_marks_watched(self):
+        import requests
+        client = PlexClient("http://plex", "token")
+        scrobble = Mock()
+        with patch.object(client, "_scrobble_endpoint", return_value=(
+                "/:/scrobble", "com.plexapp.plugins.library")),              patch.object(client, "_get", side_effect=[
+                 scrobble, requests.RequestException("nope")]):
+            client.mark_watched("30")
+        scrobble.raise_for_status.assert_called_once_with()
 
     def test_list_show_episodes_returns_watch_state_for_exact_show(self):
         client = PlexClient("http://plex", "token")
@@ -1596,15 +1614,51 @@ class PlexMarkWatchedClientTests(unittest.TestCase):
         self.assertEqual(episodes[0]["view_count"], 1)
         self.assertEqual(get.call_args.args[0], "/library/metadata/10/allLeaves")
 
+    def test_a_catch_up_clears_a_resume_point_on_an_already_watched_episode(self):
+        """An episode Plex counts watched can still hold a resume point, and
+        that alone keeps the show in Continue Watching. Marking it watched
+        again does nothing; the offset is what has to go."""
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.list_show_episodes.return_value = [
+            {"rating_key": "21", "season_index": 1, "episode_index": 1,
+             "title": "One", "show_title": "SNL", "view_count": 1,
+             "view_offset": 0},
+            {"rating_key": "22", "season_index": 1, "episode_index": 2,
+             "title": "Two", "show_title": "SNL", "view_count": 1,
+             "view_offset": 640000},
+            {"rating_key": "23", "season_index": 1, "episode_index": 3,
+             "title": "Three", "show_title": "SNL", "view_count": 0,
+             "view_offset": 0},
+        ]
+        result = process_manual_event({
+            "source": "manual",
+            "series": {"title": "SNL"},
+            "manual": {"instance": "Plex", "library": "TV",
+                       "show_rating_key": "10", "scope": "show"},
+        }, config, {"Plex": plex})
+        self.assertEqual(result["marked"], 1)
+        plex.mark_watched_many.assert_called_once_with(["23"])
+        # Only the watched episode that still had somewhere to resume from.
+        plex.clear_progress.assert_called_once_with("22")
+        self.assertIn("cleared 1 stale resume point", result["message"])
+
     def test_mark_watched_many_discovers_scrobble_endpoint_once(self):
         client = PlexClient("http://plex", "token")
-        responses = [Mock(), Mock()]
+        responses = [Mock(), Mock(), Mock(), Mock()]
         with patch.object(client, "_scrobble_endpoint", return_value=(
             "/:/scrobble", "com.plexapp.plugins.library",
         )) as endpoint, patch.object(client, "_get", side_effect=responses) as get:
             client.mark_watched_many(["21", "22"])
         endpoint.assert_called_once_with()
-        self.assertEqual(get.call_count, 2)
+        # A scrobble and a progress reset for each.
+        self.assertEqual(get.call_count, 4)
+        self.assertEqual([call.args[0] for call in get.call_args_list],
+                         ["/:/scrobble", "/:/progress"] * 2)
 
     def test_list_tv_shows_page_uses_plex_container_pagination(self):
         client = PlexClient("http://plex", "token")

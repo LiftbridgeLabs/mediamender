@@ -526,6 +526,15 @@ show that still has unwatched episodes therefore offers to mark them straight
 away. **Catch up now** does the same across every show whose rule is on. Both
 ask for confirmation first, because they write real Plex watch history.
 
+Marking watched also discards the episode's resume point. Plex keeps anything
+with a saved offset in **Continue Watching** however many times it has been
+played, so an episode someone had started and then had marked watched went on
+sitting there looking untouched. An episode part-watched but never finished is
+counted unwatched by Plex, so a catch-up picks it up and clears it; an episode
+Plex already counts watched that still holds an offset is only reached by
+**Mark show watched now**, since the skip that makes a catch-up cheap is the
+watched count itself.
+
 It only ever deals in the difference. Plex reports a watched count on the show
 and season listings, so a show or season already fully watched is skipped
 without its episodes being read at all - a finished 1,000-episode show costs

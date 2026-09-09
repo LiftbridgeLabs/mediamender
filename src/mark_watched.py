@@ -1177,11 +1177,21 @@ def process_manual_event(event: dict, app_config, clients: dict) -> dict:
     if unwatched:
         plex.mark_watched_many([episode["rating_key"] for episode in unwatched])
     already_watched = len(episodes) - len(unwatched)
+    # An episode Plex already counts watched can still hold a resume point,
+    # which is enough on its own to keep the show in Continue Watching. Marking
+    # it watched again would do nothing; the offset is what has to go.
+    stale = [
+        episode for episode in episodes
+        if episode["view_count"] >= 1 and episode.get("view_offset", 0) > 0
+    ]
+    for episode in stale:
+        plex.clear_progress(episode["rating_key"])
     scope_label = "season" if scope == "season" else "show"
     return {
         "message": (
             f"Manual {scope_label} update marked {len(unwatched)} episode(s) watched; "
             f"{already_watched} were already watched"
+            + (f"; cleared {len(stale)} stale resume point(s)" if stale else "")
         ),
         "matched": len(episodes),
         "marked": len(unwatched),
