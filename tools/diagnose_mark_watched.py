@@ -8,6 +8,11 @@ a live install and changes nothing:
 
 Add --plex to also ask each configured Plex server whether the shows your
 rules name still exist under the same ratingKey.
+
+To settle one episode - what the rule says, what Plex holds, and what the job
+that handled the import decided:
+
+    docker exec -it mediaMender python tools/diagnose_mark_watched.py         --explain "STAT" --season 2 --episode 67
 """
 
 from __future__ import annotations
@@ -223,12 +228,124 @@ def check_plex(raw: dict, enabled_rules: set) -> None:
                 print("       library does routinely. Re-enable them on the page.")
 
 
+def _plex_clients(raw: dict):
+    """Yield (instance name, library dict, client) for every visible TV library."""
+    from src.plex_client import PlexClient
+    mark = raw.get("mark_watched", {}) or {}
+    visible = mark.get("visible_libraries")
+    for instance in raw.get("plex_instances", []) or []:
+        name = instance.get("name", "?")
+        token = instance.get("token") or os.environ.get(
+            f"PLEX_TOKEN_{name.upper().replace(' ', '_').replace('-', '_')}", ""
+        )
+        if not token:
+            continue
+        plex = PlexClient(instance.get("url", ""), token)
+        for library in instance.get("libraries", []) or []:
+            key = f"{name}::{library.get('name')}"
+            if visible is not None and key not in visible:
+                continue
+            yield name, library, plex
+
+
+def explain_episode(raw: dict, rules: dict, jobs: dict, title: str,
+                    season: int, episode: int) -> None:
+    """Answer "why is this one episode not marked watched?" with evidence.
+
+    Every question so far has needed a screenshot and a guess. The install
+    already holds the answer: what the rule says, what Plex has, and what the
+    job that handled the import decided.
+    """
+    heading(f"Rules for {title!r}")
+    shows = rules.get("shows", {}) or {}
+    matches = {
+        key: value for key, value in shows.items()
+        if title.strip().casefold() in key.casefold()
+    }
+    if not matches:
+        print("  No rule key mentions this show by name. Rules are keyed by")
+        print("  TVDB id or ratingKey, not by title, so this is expected -")
+        print("  read the Plex section below for the key, then look for it.")
+    for key, value in sorted(matches.items()):
+        print(f"  {key}: {'ON' if value else 'OFF'}")
+
+    heading(f"Plex: {title} S{season:02d}E{episode:02d}")
+    try:
+        clients = list(_plex_clients(raw))
+    except Exception as exc:
+        print(f"  Could not build Plex clients ({exc})")
+        clients = []
+    for name, library, plex in clients:
+        key = f"{name}::{library.get('name')}"
+        try:
+            section = library.get("section_id") or plex.find_section_id(library.get("name"))
+            if not section or plex.get_section_type(str(section)) != "show":
+                continue
+            described = plex.describe_show(str(section), title)
+            print(f"  {key}: {described or 'no answer'}")
+            if not described or described == "does not have this show":
+                continue
+            found = plex.find_episode(str(section), title, season, episode)
+            if not found:
+                print(f"      no S{season:02d}E{episode:02d} under that numbering")
+                continue
+            rule_key = f"{key}::{found['show_rating_key']}"
+            print(f"      episode ratingKey {found['rating_key']}, "
+                  f"show ratingKey {found['show_rating_key']}")
+            print(f"      a ratingKey-keyed rule would be {rule_key}")
+            for candidate, value in shows.items():
+                if candidate.endswith(f"::{found['show_rating_key']}"):
+                    print(f"      rule found: {candidate} = {'ON' if value else 'OFF'}")
+            episodes = plex.list_show_episodes(found["show_rating_key"])
+            this = next(
+                (item for item in episodes
+                 if item["rating_key"] == found["rating_key"]), None,
+            )
+            if this:
+                print(f"      Plex has it as S{this['season_index']:02d}"
+                      f"E{this['episode_index']:02d} {this['title']!r}")
+                print(f"      viewCount {this['view_count']}, "
+                      f"resume offset {this.get('view_offset', 0)}")
+                if this["view_count"] >= 1 and this.get("view_offset", 0) > 0:
+                    print("      -> Watched, but a resume point keeps it in")
+                    print("         Continue Watching. Mark show watched now")
+                    print("         clears it.")
+                elif this["view_count"] < 1:
+                    print("      -> Plex counts this UNWATCHED.")
+        except Exception as exc:
+            print(f"  {key}: Plex lookup failed ({type(exc).__name__}: {exc})")
+
+    heading(f"Jobs mentioning {title!r}")
+    hits = [
+        job for job in jobs.values()
+        if title.strip().casefold()
+        in str((job.get("event", {}).get("series", {}) or {}).get("title", "")).casefold()
+    ]
+    if not hits:
+        print("  None. No Sonarr import for this show has ever been queued,")
+        print("  so nothing was ever going to mark it automatically.")
+    for job in sorted(hits, key=lambda item: item.get("updated_at", ""), reverse=True)[:8]:
+        coords = ", ".join(
+            f"S{int(item.get('season', 0)):02d}E{int(item.get('episode', 0)):02d}"
+            for item in (job.get("event", {}).get("episodes") or [])
+        )
+        print(f"\n  [{job.get('status')}] {coords or 'no episodes'} - "
+              f"{job.get('updated_at', '')[:19]}")
+        print(f"      {job.get('message', '')}")
+        for entry in (job.get("log") or [])[-4:]:
+            print(f"      | {entry.get('message', '')}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", default=os.environ.get("DATA_DIR", "data"))
     parser.add_argument("--config", default=os.environ.get("CONFIG_PATH", ""))
     parser.add_argument("--plex", action="store_true",
                         help="also verify each rule's ratingKey still exists")
+    parser.add_argument("--explain", metavar="SHOW",
+                        help="explain one episode: why it is or is not marked")
+    parser.add_argument("--season", type=int, default=1)
+    parser.add_argument("--episode", type=int, default=1)
     args = parser.parse_args()
 
     data = Path(args.data)
@@ -240,6 +357,16 @@ def main() -> None:
     raw = load(config_path, {}) or {}
     if not raw:
         print("\nCould not read the config file. Pass --config /app/data/config.yml")
+        return
+
+    if args.explain:
+        explain_episode(
+            raw,
+            load(data / "mark-watched-rules.json", {}) or {},
+            load(data / "mark-watched-jobs.json", {}) or {},
+            args.explain, args.season, args.episode,
+        )
+        print()
         return
 
     report_config(raw)

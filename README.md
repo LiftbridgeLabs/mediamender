@@ -506,7 +506,10 @@ docker exec -it mediaMender python tools/diagnose_mark_watched.py
 It reads only the files mediaMender already writes and reports whether the
 feature is on, whether a webhook has ever arrived, how many rules are enabled,
 and what recent jobs actually did. Add `--plex` to check whether the shows your
-rules name still exist under the same ratingKey.
+rules name still exist under the same ratingKey. `--explain "STAT" --season 2
+--episode 67` settles a single episode: what the rule says, whether Plex has it
+and under which numbering, its play count and resume point, and what every job
+that touched that show decided.
 
 Only Sonarr `Download` events containing an imported `episodeFile` are queued.
 The HTTP request returns immediately; persistent background work retries until
