@@ -634,7 +634,19 @@ alone and compares titles ignoring case, punctuation, a leading article, and a
 trailing `(2018)` or `(US)` style suffix. When Plex's title differs, the job log
 names both.
 
-Every job keeps its own log trail, expandable under the job in the
+A job's full reasoning goes to the log file, under the
+`mediamender.mark_watched` logger: which libraries were searched, what each
+holds, which scans were asked for. Set the log level to DEBUG to include the
+per-library detail lines. The activity panel keeps a short tail instead - a
+season landing is one import per episode, and forty lines of reasoning each,
+repeated per episode, on a page that refreshes every few seconds, is a log
+file pretending to be a dashboard.
+
+The panel rolls consecutive imports of the same show with the same outcome into
+one row, naming the span of episodes and how many there were. A row whose
+outcome differs stays on its own.
+
+Every job keeps a short log trail, expandable under the job in the
 Mark-it-Watched activity panel. The trail records each attempt, each retry wait,
 which TV libraries were searched, which Plex show ratingKey each episode matched,
 and which username's rules were consulted for the decision. A job that matched

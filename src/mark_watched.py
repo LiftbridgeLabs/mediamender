@@ -19,7 +19,7 @@ from src.storage import atomic_write_json
 logger = logging.getLogger("mediamender.mark_watched")
 
 # Enough of a trail to explain a job without letting a record grow unbounded.
-LOG_TRAIL_LIMIT = 60
+LOG_TRAIL_LIMIT = 12
 
 
 class ImportVanished(Exception):
@@ -393,11 +393,19 @@ class MarkWatchedManager:
             self._save()
 
     def _log(self, job_id: str, message: str, details: list[str] | None = None) -> None:
-        """Keep a readable trail on the record so the UI can explain a job."""
+        """Record a job's reasoning, in the log file and briefly on the record.
+
+        The detail belongs in the log: which libraries were searched, what each
+        holds, which scans were asked for. Keeping all of it on the record put
+        forty lines of it on screen per episode, on a page that refreshes every
+        few seconds. The record keeps a short tail so a job can still explain
+        itself at a glance; the log file keeps everything.
+        """
         with self._lock:
             record = self._records.get(job_id)
             if record is None:
                 return
+            title = (record.get("event", {}).get("series", {}) or {}).get("title", "?")
             trail = record.setdefault("log", [])
             stamp = self._stamp()
             trail.append({"at": stamp, "message": message})
@@ -406,6 +414,9 @@ class MarkWatchedManager:
             if len(trail) > LOG_TRAIL_LIMIT:
                 del trail[:-LOG_TRAIL_LIMIT]
             self._save()
+        logger.info("[%s] %s: %s", job_id[:12], title, message)
+        for detail in details or []:
+            logger.debug("[%s] %s:     %s", job_id[:12], title, detail)
 
     def process(self, job_id: str) -> dict:
         """Make one attempt. A job that is still waiting on Plex is rescheduled.
@@ -1149,10 +1160,20 @@ def process_plex_event(event: dict, app_config, clients: dict,
         )
         if not enabled:
             if decision["source"] == "show" and not decision["show_known"]:
+                # Only raise the orphan possibility where it is actually
+                # possible. Rules have been keyed by TVDB id since 2.12, so a
+                # show with no rule has usually never had one - and telling
+                # someone their rule was lost, about a show they only just
+                # started downloading, is worse than saying nothing.
+                orphanable = bool(rules.legacy_rating_keys(
+                    item["instance_name"], item["library_name"],
+                ))
                 reason = (
-                    f"no rule stored for ratingKey {item['show_rating_key']}; "
-                    f"if this show was switched on before, Plex has since "
-                    f"re-added it under a new key - switch it on again"
+                    f"no rule is stored for this show"
+                    + ("; this library still has rules keyed by ratingKey, and "
+                       "Plex issues a new one when an item is re-added, so a "
+                       "rule set earlier may have been left behind"
+                       if orphanable else "")
                 )
             details.append(f"{location}: no watch rule enabled ({reason})")
             unmatched_rules.append((item, decision))
@@ -1169,16 +1190,26 @@ def process_plex_event(event: dict, app_config, clients: dict,
             f" in {item['instance_name']}::{item['library_name']} "
             f"(show ratingKey {item['show_rating_key']})" if item else ""
         )
-        orphaned = bool(item) and decision.get("source") == "show"             and not decision.get("show_known")
+        missing = (bool(item) and decision.get("source") == "show"
+                   and not decision.get("show_known"))
+        orphanable = missing and bool(rules.legacy_rating_keys(
+            item["instance_name"], item["library_name"],
+        ))
+        if not missing:
+            message = (f"Plex matched the import{where}; "
+                       f"the automatic watch rule is switched off")
+        elif orphanable:
+            message = (
+                f"Plex matched the import{where}, but no rule is stored for "
+                f"that show. This library still has rules keyed by ratingKey, "
+                f"and Plex issues a new one when an item is re-added, so a "
+                f"rule set earlier may have been left behind."
+            )
+        else:
+            message = (f"Plex matched the import{where}, but auto-watch has "
+                       f"never been switched on for this show")
         return {
-            "message": (
-                f"Plex matched the import{where}, but no rule is stored for that "
-                f"show. Plex reassigns a ratingKey when an item is removed and "
-                f"re-added, so a rule set earlier may need switching on again."
-                if orphaned else
-                f"Plex matched the import{where}; the automatic watch rule is "
-                f"switched off"
-            ),
+            "message": message,
             "matched": len(matched), "marked": 0, "details": details,
         }
     return {

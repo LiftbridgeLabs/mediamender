@@ -577,6 +577,34 @@ function markWatchedJobEpisodes(job) {
   return coords.join(', ');
 }
 
+// Sonarr announces one import per episode, so a season landing produced a card
+// per episode - each repeating the same message and its own log trail. Roll
+// consecutive jobs that share a show and an outcome into one row; the detail
+// they all carried is in the log file.
+function groupMarkWatchedJobs(jobs) {
+  const groups = [];
+  for (const job of jobs) {
+    const key = [
+      job.event?.series?.title || '', job.status, job.message || '',
+      job.event?.source || '',
+    ].join(' ');
+    const last = groups[groups.length - 1];
+    if (last && last.key === key) {
+      last.jobs.push(job);
+      continue;
+    }
+    groups.push({key, lead: job, jobs: [job]});
+  }
+  for (const group of groups) {
+    const coords = group.jobs.flatMap(job => (job.event?.episodes || []).map(item =>
+      `S${String(item.season ?? 0).padStart(2,'0')}E${String(item.episode ?? 0).padStart(2,'0')}`));
+    group.episodes = coords.length > 3
+      ? `${coords[0]}–${coords[coords.length-1]} (${coords.length})`
+      : coords.join(', ') || markWatchedJobEpisodes(group.lead);
+  }
+  return groups;
+}
+
 function renderMarkWatchedJobs(data) {
   const target = document.getElementById('mark-watched-jobs');
   if (!target) return;
@@ -618,7 +646,8 @@ function renderMarkWatchedJobs(data) {
     const key = pre.parentElement?.dataset?.log;
     if (key && pre.scrollTop) scrolled.set(key, pre.scrollTop);
   });
-  const markup = health + banner + hookRows + (jobs.length ? jobs.map(job => {
+  const markup = health + banner + hookRows + (jobs.length ? groupMarkWatchedJobs(jobs).map(group => {
+    const job = group.lead;
     const source = job.event?.source === 'manual' ? `Manual ${job.event?.manual?.scope || 'update'}` : 'Sonarr webhook';
     const attempts = Number(job.attempts || 0);
     const result = job.result || {};
@@ -633,12 +662,14 @@ function renderMarkWatchedJobs(data) {
       : '';
     // Sonarr sends one import per episode, so a season arriving looks like the
     // same show queued over and over unless the record says which episode.
-    const episodes = markWatchedJobEpisodes(job);
+    const episodes = group.episodes;
     // A job waiting on an episode Plex will never produce has no natural end
     // short of the give-up window, which is days away.
     const stop = (job.status === 'waiting' || job.status === 'queued')
       ? `<button class="btn btn-secondary btn-sm mw-job-stop" onclick="cancelMarkWatchedJob(${h(JSON.stringify(job.id || ''))},this)">Stop waiting</button>` : '';
-    return `<div class="repair-history-item"><span class="badge ${markWatchedJobBadge(job)}" title="${h(markWatchedJobHint(job))}">${h(job.status)}</span><div><div class="repair-history-title">${h(job.event?.series?.title || 'Plex update')}${episodes?` <span class="mw-job-episode">${h(episodes)}</span>`:''}</div><div class="repair-history-meta">${h(source)} · ${h(fmtAgo(job.updated_at || job.created_at))}${attempts?` · attempt ${attempts}`:''}${nextCheck}${counts}<br>${h(job.message || '')}</div>${log}</div>${stop}</div>`;
+    const rolled = group.jobs.length > 1
+      ? ` · ${group.jobs.length} imports` : '';
+    return `<div class="repair-history-item"><span class="badge ${markWatchedJobBadge(job)}" title="${h(markWatchedJobHint(job))}">${h(job.status)}</span><div><div class="repair-history-title">${h(job.event?.series?.title || 'Plex update')}${episodes?` <span class="mw-job-episode">${h(episodes)}</span>`:''}</div><div class="repair-history-meta">${h(source)} · ${h(fmtAgo(job.updated_at || job.created_at))}${rolled}${attempts?` · attempt ${attempts}`:''}${nextCheck}${counts}<br>${h(job.message || '')}</div>${log}</div>${stop}</div>`;
   }).join('') : '<div class="empty-msg">No automatic or manual jobs yet.</div>');
   // Polling every few seconds used to replace this markup wholesale, which
   // collapsed any log trail the reader had opened and moved the ground under

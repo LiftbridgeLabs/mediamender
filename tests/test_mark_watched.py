@@ -1336,7 +1336,7 @@ class MarkWatchedRuleTests(unittest.TestCase):
         self.assertIn("Plex::TV", orphaned["message"])
         self.assertIn("ratingKey 88", orphaned["message"])
         self.assertIn("re-added", orphaned["message"])
-        self.assertIn("no rule stored for ratingKey 88",
+        self.assertIn("no rule is stored for this show",
                       "\n".join(orphaned["details"]))
 
         # A rule that really is switched off says so instead.
@@ -1345,6 +1345,32 @@ class MarkWatchedRuleTests(unittest.TestCase):
         self.assertEqual(disabled["marked"], 0)
         self.assertIn("switched off", disabled["message"])
         self.assertNotIn("re-added", disabled["message"])
+
+    def test_a_show_that_never_had_a_rule_is_not_called_orphaned(self):
+        """Telling someone a rule was lost, about a show they have only just
+        started downloading, is worse than saying nothing. Rules have been
+        keyed by TVDB id since 2.12, so no rule usually means no rule."""
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = {
+            "rating_key": "30", "show_rating_key": "276732",
+            "season_rating_key": "20", "season_index": 1,
+            "episode_index": 1, "title": "Pilot",
+        }
+        # Nothing in this library is keyed by ratingKey, so nothing can have
+        # been orphaned by a re-add.
+        self.rules.set_show("Plex", "TV", "10", True, tvdb_id="73141")
+        result = process_plex_event({
+            "series": {"title": "Earle Meets World", "tvdb_id": 999},
+            "episodes": [{"season": 1, "episode": 1}],
+        }, config, {"Plex": plex}, self.rules)
+        self.assertEqual(result["marked"], 0)
+        self.assertIn("never been switched on", result["message"])
+        self.assertNotIn("re-added", result["message"])
 
     def test_season_override_off_beats_an_enabled_show_default(self):
         library = LibraryConfig("TV", "physical", [], section_id="7")

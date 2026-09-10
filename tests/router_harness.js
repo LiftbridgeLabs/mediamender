@@ -282,6 +282,34 @@ api.renderMarkWatchedJobs(jobsPayload('waiting'));
 check('a job with no episodes says nothing extra',
       /mw-job-episode/.test(jobsNode.innerHTML), false);
 
+// A season landing is one import per episode; the list must not be one card
+// per episode all repeating the same sentence.
+function seasonPack() {
+  const message = 'Plex matched the import, but auto-watch has never been switched on';
+  return {workers: 4, live_workers: 4,
+          webhooks: {total: 1, outcomes: {queued: 1}, recent: []},
+          jobs: [1, 6, 7].map(n => ({
+            id: `job-${n}`, status: 'succeeded', message,
+            event: {series: {title: 'Earle Meets World'}, episodes: [{season: 1, episode: n}]},
+            result: {matched: 1, marked: 0},
+            log: [{at: '2026-09-09T10:00:00Z', message: 'Attempt 1'}],
+          }))};
+}
+api.renderMarkWatchedJobs(seasonPack());
+check('a season pack is one row, not one per episode',
+      (jobsNode.innerHTML.match(/repair-history-item/g) || []).length, 1);
+check('the rolled-up row counts the imports',
+      /3 imports/.test(jobsNode.innerHTML), true);
+check('and names the span of episodes',
+      /S01E01/.test(jobsNode.innerHTML) && /S01E07/.test(jobsNode.innerHTML), true);
+
+// Jobs that differ in outcome must stay apart.
+const mixed = seasonPack();
+mixed.jobs[1] = {...mixed.jobs[1], status: 'waiting', message: 'Plex has not scanned this episode yet'};
+api.renderMarkWatchedJobs(mixed);
+check('a different outcome is not rolled in',
+      (jobsNode.innerHTML.match(/repair-history-item/g) || []).length, 3);
+
 // Selecting the page you are already on must refresh it.
 const loaderCalls = [];
 api.loaders = {
