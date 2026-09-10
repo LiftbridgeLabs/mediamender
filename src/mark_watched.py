@@ -1244,6 +1244,7 @@ def process_manual_event(event: dict, app_config, clients: dict) -> dict:
     if not section_id or plex.get_section_type(str(section_id)) != "show":
         raise ValueError("Manual Mark-it-Watched supports TV libraries only")
 
+    notes: list[str] = []
     if scope == "season":
         # Ask Plex for the one season rather than the whole show. A catch-up
         # queues a season-scoped job precisely because the rest of the show has
@@ -1255,6 +1256,21 @@ def process_manual_event(event: dict, app_config, clients: dict) -> dict:
         ]
     else:
         episodes = plex.list_show_episodes(show_key)
+        # A library can hold the same show twice, and a new season often lands
+        # under the second entry. Working from one item alone then reports
+        # every episode watched while a whole season sits unwatched beside it.
+        for sibling in plex.sibling_show_keys(
+            str(section_id), show_key, str(event.get("series", {}).get("title", "")),
+        ):
+            extra = plex.list_show_episodes(sibling)
+            if extra:
+                details_note = (
+                    f"Plex holds this show under a second entry "
+                    f"(ratingKey {sibling}) with {len(extra)} more episode(s)"
+                )
+                logger.info("%s", details_note)
+                notes.append(details_note)
+            episodes.extend(extra)
     if not episodes:
         raise ValueError("Plex returned no episodes for the selected scope")
 
@@ -1281,6 +1297,7 @@ def process_manual_event(event: dict, app_config, clients: dict) -> dict:
         "matched": len(episodes),
         "marked": len(unwatched),
         "already_watched": already_watched,
+        "details": notes,
         "rating_keys": [episode["rating_key"] for episode in unwatched],
     }
 

@@ -285,6 +285,16 @@ def explain_episode(raw: dict, rules: dict, jobs: dict, title: str,
             print(f"  {key}: {described or 'no answer'}")
             if not described or described == "does not have this show":
                 continue
+            shows = plex.list_tv_shows_page(str(section), 0, 50, query=title)["shows"]
+            same = [item for item in shows
+                    if item.get("tvdb_id") and item["tvdb_id"] == next(
+                        (s.get("tvdb_id") for s in shows if s.get("tvdb_id")), "")]
+            if len(same) > 1:
+                print(f"      NOTE: this library holds {len(same)} entries for "
+                      f"this show: {', '.join(item['rating_key'] for item in same)}")
+                print("      A new season landing under the second entry is why")
+                print("      a job can report every episode watched while one")
+                print("      sits unwatched beside it.")
             found = plex.find_episode(str(section), title, season, episode)
             if not found:
                 print(f"      no S{season:02d}E{episode:02d} under that numbering")

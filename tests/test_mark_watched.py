@@ -1763,6 +1763,67 @@ class PlexMarkWatchedClientTests(unittest.TestCase):
         self.assertEqual(episodes[0]["view_count"], 1)
         self.assertEqual(get.call_args.args[0], "/library/metadata/10/allLeaves")
 
+    def test_a_show_split_across_two_plex_entries_is_marked_as_one(self):
+        """A library can hold the same show twice, and a new season often lands
+        under the second entry. Working from one item alone reported every
+        episode watched while a whole season sat unwatched beside it."""
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.sibling_show_keys.return_value = ["88"]
+        plex.list_show_episodes.side_effect = lambda key: {
+            "10": [{"rating_key": "21", "season_index": 15, "episode_index": 1,
+                    "title": "Old", "show_title": "RHONY", "view_count": 1,
+                    "view_offset": 0}],
+            "88": [{"rating_key": "99", "season_index": 16, "episode_index": 1,
+                    "title": "The Price of Perfection", "show_title": "RHONY",
+                    "view_count": 0, "view_offset": 0}],
+        }[key]
+        result = process_manual_event({
+            "source": "manual",
+            "series": {"title": "The Real Housewives of New York City"},
+            "manual": {"instance": "Plex", "library": "TV",
+                       "show_rating_key": "10", "scope": "show"},
+        }, config, {"Plex": plex})
+        plex.sibling_show_keys.assert_called_once_with(
+            "7", "10", "The Real Housewives of New York City",
+        )
+        plex.mark_watched_many.assert_called_once_with(["99"])
+        self.assertEqual(result["marked"], 1)
+        self.assertEqual(result["matched"], 2)
+        self.assertIn("second entry", "\n".join(result["details"]))
+
+    def test_siblings_are_matched_on_tvdb_id_and_never_on_title(self):
+        """Sweeping in a similarly named but different show would mark a whole
+        library watched by accident."""
+        client = PlexClient("http://plex", "token")
+        with patch.object(client, "get_show_tvdb_id", return_value="73141"), \
+             patch.object(client, "list_tv_shows_page", return_value={"shows": [
+                 {"rating_key": "10", "tvdb_id": "73141"},
+                 {"rating_key": "88", "tvdb_id": "73141"},
+                 {"rating_key": "99", "tvdb_id": "99999"},
+             ]}):
+            self.assertEqual(client.sibling_show_keys("7", "10", "RHONY"), ["88"])
+
+    def test_a_show_plex_cannot_identify_has_no_siblings(self):
+        client = PlexClient("http://plex", "token")
+        with patch.object(client, "get_show_tvdb_id", return_value=""):
+            self.assertEqual(client.sibling_show_keys("7", "10", "RHONY"), [])
+
+    def test_the_episode_listing_asks_for_the_whole_container(self):
+        """A server free to choose its own page size would return a first page,
+        and a truncated list reads exactly like a show with nothing to mark."""
+        client = PlexClient("http://plex", "token")
+        response = Mock()
+        response.json.return_value = {"MediaContainer": {"Metadata": []}}
+        with patch.object(client, "_get", return_value=response) as get:
+            client.list_show_episodes("10")
+        self.assertEqual(get.call_args.kwargs["params"]["X-Plex-Container-Size"],
+                         100000)
+
     def test_a_catch_up_clears_a_resume_point_on_an_already_watched_episode(self):
         """An episode Plex counts watched can still hold a resume point, and
         that alone keeps the show in Continue Watching. Marking it watched
@@ -1773,6 +1834,7 @@ class PlexMarkWatchedClientTests(unittest.TestCase):
         )])
         plex = Mock()
         plex.get_section_type.return_value = "show"
+        plex.sibling_show_keys.return_value = []
         plex.list_show_episodes.return_value = [
             {"rating_key": "21", "season_index": 1, "episode_index": 1,
              "title": "One", "show_title": "SNL", "view_count": 1,

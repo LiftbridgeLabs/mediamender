@@ -544,6 +544,13 @@ show has - "up to 622 episodes" for a show with one unwatched episode described
 the reading, not the writing. A show Plex already counts fully watched says so,
 and continuing then only clears leftover resume points.
 
+A library can hold the same show under two entries - a re-add that did not
+merge, or a season folder Plex matched as its own show. Each has its own
+ratingKey and its own episodes, so a job working from one of them reports every
+episode watched while a whole season sits unwatched beside it. A show-scoped
+update takes in the other entries too, matched on TVDB id and never on title
+alone, and says so in the job trail.
+
 It only ever deals in the difference. Plex reports a watched count on the show
 and season listings, so a show or season already fully watched is skipped
 without its episodes being read at all - a finished 1,000-episode show costs

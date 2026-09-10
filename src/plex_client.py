@@ -237,12 +237,46 @@ class PlexClient:
         return self._episode_rows(response, show_rating_key, season["rating_key"])
 
     def list_show_episodes(self, show_rating_key: str) -> List[Dict]:
-        """Return episodes for one Plex show, including current watch state."""
+        """Return episodes for one Plex show, including current watch state.
+
+        The container size is explicit because a server free to choose its own
+        would silently return a first page, and a truncated list reads exactly
+        like a show with nothing left to mark.
+        """
         response = self._get(
-            f"/library/metadata/{show_rating_key}/allLeaves", timeout=30,
+            f"/library/metadata/{show_rating_key}/allLeaves",
+            params={"X-Plex-Container-Start": 0,
+                    "X-Plex-Container-Size": 100000},
+            timeout=60,
         )
         response.raise_for_status()
         return self._episode_rows(response, show_rating_key)
+
+    def sibling_show_keys(self, section_id: str, show_rating_key: str,
+                          show_title: str) -> List[str]:
+        """Other Plex items in this library that are the same show.
+
+        A library can hold a show twice - a re-add that did not merge, or a
+        season folder Plex matched as its own entry. Each item then has its own
+        ratingKey and its own episodes, and a job working from one of them
+        reports every episode watched while a whole season sits unwatched under
+        the other. Matched on TVDB id, never on title alone, so a similarly
+        named but different show is never swept in.
+        """
+        tvdb = self.get_show_tvdb_id(show_rating_key)
+        if not tvdb:
+            return []
+        try:
+            shows = self.list_tv_shows_page(section_id, 0, 50, query=show_title)["shows"]
+        except (requests.RequestException, ValueError) as exc:
+            logger.debug("Plex could not search %s for siblings of %s: %s",
+                         section_id, show_rating_key, exc)
+            return []
+        return [
+            show["rating_key"] for show in shows
+            if show.get("tvdb_id") == tvdb
+            and str(show["rating_key"]) != str(show_rating_key)
+        ]
 
     @staticmethod
     def _episode_rows(response, show_rating_key: str,
