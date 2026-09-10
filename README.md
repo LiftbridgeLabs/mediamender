@@ -544,12 +544,11 @@ show has - "up to 622 episodes" for a show with one unwatched episode described
 the reading, not the writing. A show Plex already counts fully watched says so,
 and continuing then only clears leftover resume points.
 
-A library can hold the same show under two entries - a re-add that did not
-merge, or a season folder Plex matched as its own show. Each has its own
-ratingKey and its own episodes, so a job working from one of them reports every
-episode watched while a whole season sits unwatched beside it. A show-scoped
-update takes in the other entries too, matched on TVDB id and never on title
-alone, and says so in the job trail.
+A single library can hold the same show under two entries - a re-add that did
+not merge, or a season folder Plex matched as its own show. That is one show
+wearing two ratingKeys, so a show-scoped update takes in both, matched on TVDB
+id and never on title alone, and reports what each contributed. This applies
+within a library only; other libraries keep their own rules.
 
 It only ever deals in the difference. Plex reports a watched count on the show
 and season listings, so a show or season already fully watched is skipped
@@ -666,14 +665,12 @@ and which username's rules were consulted for the decision. A job that matched
 an episode but marked nothing is badged as skipped rather than a plain success,
 because the trail's `no watch rule enabled` line is the reason it did nothing.
 
-A rule follows the show, not the copy. The same series routinely sits in
-several libraries at once - a physical copy, a debrid copy, a usenet copy - and
-switching auto-watch on in one of them plainly means the show, so an import is
-marked in every library that holds it. A rule set in a library always wins,
-including one set to off, the same way a season override beats its show; the
-job trail names the library a decision was inherited from. Only a show Plex can
-identify by TVDB id can be recognised as the same show, so a library where it
-is unmatched keeps its own rule.
+A rule belongs to one library. The same series can sit in several at once - a
+physical copy, a debrid copy, a copy on another server - and each keeps its own
+rule, because marking one watched while leaving the others alone is a normal
+thing to want. A show set to auto-watch in one library and appearing unwatched
+in Plex is usually a second copy in a library where no rule was set; the job
+trail lists every library it checked and what each decided.
 
 Rules are stored against the show's TVDB id, the same id Sonarr names in its
 webhook. Plex issues a new ratingKey whenever an item is removed and re-added -

@@ -844,51 +844,29 @@ class MarkWatchedRuleStore:
                 self._data["seasons"][key] = bool(enabled)
             self._save()
 
-    def _enabled_elsewhere(self, instance: str, library: str,
-                           tvdb_id: str) -> str:
-        """Where else this same show is switched on, if anywhere.
-
-        The same series routinely sits in several libraries at once - a
-        physical copy, a debrid copy, a usenet copy. They are one show, and
-        "auto-watch this show" plainly means the show, not the copy that
-        happened to be on screen when the switch was flipped.
-        """
-        if not tvdb_id:
-            return ""
-        suffix = f"::tvdb-{tvdb_id}"
-        here = f"{instance}::{library}::"
-        for key, value in self._data["shows"].items():
-            if value and key.endswith(suffix) and not key.startswith(here):
-                return key.rsplit("::", 1)[0]
-        return ""
-
     def rule(self, instance: str, library: str, show_rating_key: str,
              season_index: int, tvdb_id: str = "") -> dict:
+        """The rule for this show in this library, and only this library.
+
+        A library is a deliberate boundary. The same series can sit in several
+        of them - a physical copy, a debrid copy, a copy on another server -
+        and marking one watched while leaving the others alone is a normal
+        thing to want, not an oversight to correct.
+        """
         with self._lock:
             show_key = self._resolve(instance, library, show_rating_key, tvdb_id)
             season_key = f"{show_key}::{int(season_index)}"
             shows = self._data["shows"]
             seasons = self._data["seasons"]
-            known = show_key in shows
             show_enabled = bool(shows.get(show_key, False))
-            inherited_from = ""
-            if not known:
-                # No rule of its own. Before concluding the show is not wanted,
-                # ask whether this same show is switched on in another library.
-                inherited_from = self._enabled_elsewhere(instance, library, tvdb_id)
-                if inherited_from:
-                    show_enabled = True
             explicit = season_key in seasons
             return {
                 "enabled": bool(seasons[season_key]) if explicit else show_enabled,
-                "source": ("season" if explicit
-                           else "library" if inherited_from else "show"),
+                "source": "season" if explicit else "show",
                 "show_enabled": show_enabled,
-                # A rule set here always wins, including one set to off: an
-                # explicit choice in this library beats one inherited from
-                # another, the same way a season override beats its show.
-                "show_known": known or bool(inherited_from),
-                "inherited_from": inherited_from,
+                # "switched off" and "never stored" are different problems, and
+                # only one of them has a fix the operator can act on.
+                "show_known": show_key in shows,
                 "season_override": seasons.get(season_key) if explicit else None,
             }
 
@@ -1185,8 +1163,6 @@ def process_plex_event(event: dict, app_config, clients: dict,
         reason = (
             f"season override {decision['season_override']}"
             if decision["source"] == "season"
-            else f"inherited from {decision['inherited_from']}"
-            if decision["source"] == "library"
             else f"show default {decision['show_enabled']}"
         )
         if not enabled:
@@ -1276,61 +1252,89 @@ def process_manual_event(event: dict, app_config, clients: dict) -> dict:
         raise ValueError("Manual Mark-it-Watched supports TV libraries only")
 
     notes: list[str] = []
-    if scope == "season":
-        # Ask Plex for the one season rather than the whole show. A catch-up
-        # queues a season-scoped job precisely because the rest of the show has
-        # nothing outstanding, so reading it was pure cost.
-        season_index = int(manual["season_index"])
-        episodes = [
-            episode for episode in plex.list_season_episodes(show_key, season_index)
-            if episode["season_index"] == season_index
+    title = str(event.get("series", {}).get("title", ""))
+    season_index = int(manual["season_index"]) if scope == "season" else None
+    targets = _manual_targets(
+        app_config, clients, instance_name, library_name,
+        str(section_id), show_key, title, plex,
+    )
+    marked_total = 0
+    already_watched = 0
+    matched = 0
+    stale_total = 0
+    rating_keys: list[str] = []
+    for label, client, key in targets:
+        try:
+            if season_index is None:
+                episodes = client.list_show_episodes(key)
+            else:
+                episodes = [
+                    episode
+                    for episode in client.list_season_episodes(key, season_index)
+                    if episode["season_index"] == season_index
+                ]
+        except Exception as exc:
+            notes.append(f"{label}: could not be read ({type(exc).__name__})")
+            continue
+        if not episodes:
+            continue
+        matched += len(episodes)
+        unwatched = [episode for episode in episodes if episode["view_count"] < 1]
+        if unwatched:
+            client.mark_watched_many([episode["rating_key"] for episode in unwatched])
+            rating_keys.extend(episode["rating_key"] for episode in unwatched)
+        already_watched += len(episodes) - len(unwatched)
+        # An episode Plex already counts watched can still hold a resume point,
+        # which is enough on its own to keep the show in Continue Watching.
+        # Marking it watched again would do nothing; the offset has to go.
+        stale = [
+            episode for episode in episodes
+            if episode["view_count"] >= 1 and episode.get("view_offset", 0) > 0
         ]
-    else:
-        episodes = plex.list_show_episodes(show_key)
-        # A library can hold the same show twice, and a new season often lands
-        # under the second entry. Working from one item alone then reports
-        # every episode watched while a whole season sits unwatched beside it.
-        for sibling in plex.sibling_show_keys(
-            str(section_id), show_key, str(event.get("series", {}).get("title", "")),
-        ):
-            extra = plex.list_show_episodes(sibling)
-            if extra:
-                details_note = (
-                    f"Plex holds this show under a second entry "
-                    f"(ratingKey {sibling}) with {len(extra)} more episode(s)"
-                )
-                logger.info("%s", details_note)
-                notes.append(details_note)
-            episodes.extend(extra)
-    if not episodes:
+        for episode in stale:
+            client.clear_progress(episode["rating_key"])
+        marked_total += len(unwatched)
+        stale_total += len(stale)
+        notes.append(
+            f"{label}: {len(unwatched)} marked, {len(episodes) - len(unwatched)} "
+            f"already watched"
+            + (f", {len(stale)} resume point(s) cleared" if stale else "")
+        )
+    if not matched:
         raise ValueError("Plex returned no episodes for the selected scope")
 
-    unwatched = [episode for episode in episodes if episode["view_count"] < 1]
-    if unwatched:
-        plex.mark_watched_many([episode["rating_key"] for episode in unwatched])
-    already_watched = len(episodes) - len(unwatched)
-    # An episode Plex already counts watched can still hold a resume point,
-    # which is enough on its own to keep the show in Continue Watching. Marking
-    # it watched again would do nothing; the offset is what has to go.
-    stale = [
-        episode for episode in episodes
-        if episode["view_count"] >= 1 and episode.get("view_offset", 0) > 0
-    ]
-    for episode in stale:
-        plex.clear_progress(episode["rating_key"])
     scope_label = "season" if scope == "season" else "show"
+    copies = (f" across {len(targets)} Plex entries" if len(targets) > 1 else "")
     return {
         "message": (
-            f"Manual {scope_label} update marked {len(unwatched)} episode(s) watched; "
-            f"{already_watched} were already watched"
-            + (f"; cleared {len(stale)} stale resume point(s)" if stale else "")
+            f"Manual {scope_label} update marked {marked_total} episode(s) "
+            f"watched{copies}; {already_watched} were already watched"
+            + (f"; cleared {stale_total} stale resume point(s)" if stale_total else "")
         ),
-        "matched": len(episodes),
-        "marked": len(unwatched),
+        "matched": matched,
+        "marked": marked_total,
         "already_watched": already_watched,
         "details": notes,
-        "rating_keys": [episode["rating_key"] for episode in unwatched],
+        "rating_keys": rating_keys,
     }
+
+
+def _manual_targets(app_config, clients: dict, instance_name: str,
+                    library_name: str, section_id: str, show_key: str,
+                    title: str, plex) -> list[tuple]:
+    """The Plex entries in this library that make up this show.
+
+    This library and no other. A library is a deliberate boundary: the same
+    series can sit in several of them and marking one watched while leaving the
+    others alone is a normal thing to want. What does belong together is a show
+    Plex has split into two entries inside one library, which is one show
+    wearing two ratingKeys.
+    """
+    label = f"{instance_name}::{library_name}"
+    targets = [(label, plex, show_key)]
+    for sibling in plex.sibling_show_keys(section_id, show_key, title):
+        targets.append((label, plex, sibling))
+    return targets
 
 
 def process_mark_watched_event(event: dict, app_config, clients: dict,

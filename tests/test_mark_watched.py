@@ -1121,7 +1121,7 @@ class MarkWatchedRuleTests(unittest.TestCase):
         inherited = self.rules.rule("Plex", "TV", "10", 2)
         self.assertEqual(inherited, {
             "enabled": True, "source": "show", "show_enabled": True,
-            "show_known": True, "inherited_from": "", "season_override": None,
+            "show_known": True, "season_override": None,
         })
         self.rules.set_season("Plex", "TV", "10", 2, False)
         explicit = self.rules.rule("Plex", "TV", "10", 2)
@@ -1197,34 +1197,18 @@ class MarkWatchedRuleTests(unittest.TestCase):
         self.assertTrue(self.rules.rule("Plex", "TV", "10", 0)["enabled"])
         self.assertIn("Plex::TV::10", self.rules.all_rules()["shows"])
 
-    def test_a_rule_follows_the_show_into_other_libraries(self):
-        """The same series routinely sits in several libraries at once - a
-        physical copy, a debrid copy, a usenet copy. They are one show, and
-        switching auto-watch on plainly means the show, not the copy that
-        happened to be on screen at the time."""
-        self.rules.set_show("Plex", "TV", "10", True, tvdb_id="73141")
-        elsewhere = self.rules.rule("Other", "TV Shows", "99999", 0, tvdb_id="73141")
-        self.assertTrue(elsewhere["enabled"])
-        self.assertEqual(elsewhere["source"], "library")
-        self.assertEqual(elsewhere["inherited_from"], "Plex::TV")
-
-    def test_a_rule_set_in_this_library_beats_one_inherited(self):
-        """An explicit choice here wins, including a choice of off - the same
-        way a season override beats its show."""
-        self.rules.set_show("Plex", "TV", "10", True, tvdb_id="73141")
-        self.rules.set_show("Other", "TV Shows", "99999", False, tvdb_id="73141")
-        decision = self.rules.rule("Other", "TV Shows", "99999", 0, tvdb_id="73141")
-        self.assertFalse(decision["enabled"])
-        self.assertEqual(decision["source"], "show")
-        self.assertEqual(decision["inherited_from"], "")
-
-    def test_a_different_show_is_never_inherited_from(self):
+    def test_each_library_keeps_its_own_rule_for_the_same_show(self):
+        """A library is a deliberate boundary. The same series can sit in a
+        physical library, a debrid library and one on another server, and
+        marking one watched while leaving the others alone is a normal thing
+        to want - not an oversight to correct."""
         self.rules.set_show("Plex", "TV", "10", True, tvdb_id="73141")
         self.assertFalse(
-            self.rules.rule("Other", "TV", "10", 0, tvdb_id="99999")["enabled"],
+            self.rules.rule("Other", "TV Shows", "99999", 0, tvdb_id="73141")["enabled"],
         )
-        # And a show Plex cannot identify cannot inherit at all.
-        self.assertFalse(self.rules.rule("Other", "TV", "10", 0)["enabled"])
+        self.assertFalse(
+            self.rules.rule("Plex", "Anime", "10", 0, tvdb_id="73141")["enabled"],
+        )
 
     def test_clearing_season_override_restores_inheritance(self):
         self.rules.set_show("Plex", "TV", "10", False)
@@ -1368,69 +1352,6 @@ class MarkWatchedRuleTests(unittest.TestCase):
         self.assertEqual(disabled["marked"], 0)
         self.assertIn("switched off", disabled["message"])
         self.assertNotIn("re-added", disabled["message"])
-
-    def test_an_import_is_marked_in_every_library_the_show_lives_in(self):
-        """The same series sits in a physical library, a debrid library and a
-        usenet library at once. Switching auto-watch on in one of them left the
-        other copies unwatched, and it was the unwatched copy that kept turning
-        up in Plex's Continue Watching."""
-        config = AppConfig(instances=[
-            PlexInstanceConfig("Streamstead", "http://a", "token", [
-                LibraryConfig("TV Shows", "physical", [], section_id="1")]),
-            PlexInstanceConfig("Streamstead-Unlimited", "http://b", "token", [
-                LibraryConfig("TV Shows", "debrid", [], section_id="2")]),
-        ])
-        first, second = Mock(), Mock()
-        for client, key in ((first, "470881"), (second, "123951")):
-            client.get_section_type.return_value = "show"
-            client.find_episode.return_value = {
-                "rating_key": f"e{key}", "show_rating_key": key,
-                "season_rating_key": "", "season_index": 16,
-                "episode_index": 1, "title": "The Price of Perfection",
-            }
-        # Switched on only in the debrid library.
-        self.rules.set_show("Streamstead-Unlimited", "TV Shows", "123951",
-                            True, tvdb_id="73141")
-        result = process_plex_event({
-            "series": {"title": "The Real Housewives of New York City",
-                       "tvdb_id": 73141},
-            "episodes": [{"season": 16, "episode": 1}],
-        }, config, {"Streamstead": first, "Streamstead-Unlimited": second},
-            self.rules)
-        self.assertEqual(result["marked"], 2)
-        first.mark_watched.assert_called_once_with("e470881")
-        second.mark_watched.assert_called_once_with("e123951")
-        self.assertIn("inherited from Streamstead-Unlimited::TV Shows",
-                      "\n".join(result["details"]))
-
-    def test_a_library_switched_off_is_not_swept_along(self):
-        config = AppConfig(instances=[
-            PlexInstanceConfig("Streamstead", "http://a", "token", [
-                LibraryConfig("TV Shows", "physical", [], section_id="1")]),
-            PlexInstanceConfig("Streamstead-Unlimited", "http://b", "token", [
-                LibraryConfig("TV Shows", "debrid", [], section_id="2")]),
-        ])
-        first, second = Mock(), Mock()
-        for client, key in ((first, "470881"), (second, "123951")):
-            client.get_section_type.return_value = "show"
-            client.find_episode.return_value = {
-                "rating_key": f"e{key}", "show_rating_key": key,
-                "season_rating_key": "", "season_index": 16,
-                "episode_index": 1, "title": "The Price of Perfection",
-            }
-        self.rules.set_show("Streamstead-Unlimited", "TV Shows", "123951",
-                            True, tvdb_id="73141")
-        # An explicit no here beats the yes next door.
-        self.rules.set_show("Streamstead", "TV Shows", "470881",
-                            False, tvdb_id="73141")
-        result = process_plex_event({
-            "series": {"title": "The Real Housewives of New York City",
-                       "tvdb_id": 73141},
-            "episodes": [{"season": 16, "episode": 1}],
-        }, config, {"Streamstead": first, "Streamstead-Unlimited": second},
-            self.rules)
-        self.assertEqual(result["marked"], 1)
-        first.mark_watched.assert_not_called()
 
     def test_a_show_that_never_had_a_rule_is_not_called_orphaned(self):
         """Telling someone a rule was lost, about a show they have only just
@@ -1719,6 +1640,8 @@ class MarkWatchedRuleTests(unittest.TestCase):
         )])
         plex = Mock()
         plex.get_section_type.return_value = "show"
+        plex.sibling_show_keys.return_value = []
+        plex.get_show_tvdb_id.return_value = ""
         # A season-scoped job reads that season, not the whole show: for a
         # long-running series the difference is thousands of records.
         plex.list_season_episodes.return_value = [
@@ -1860,6 +1783,7 @@ class PlexMarkWatchedClientTests(unittest.TestCase):
         plex = Mock()
         plex.get_section_type.return_value = "show"
         plex.sibling_show_keys.return_value = ["88"]
+        plex.get_show_tvdb_id.return_value = ""
         plex.list_show_episodes.side_effect = lambda key: {
             "10": [{"rating_key": "21", "season_index": 15, "episode_index": 1,
                     "title": "Old", "show_title": "RHONY", "view_count": 1,
@@ -1880,7 +1804,9 @@ class PlexMarkWatchedClientTests(unittest.TestCase):
         plex.mark_watched_many.assert_called_once_with(["99"])
         self.assertEqual(result["marked"], 1)
         self.assertEqual(result["matched"], 2)
-        self.assertIn("second entry", "\n".join(result["details"]))
+        # Both entries are reported, each with what it contributed.
+        self.assertEqual(len(result["details"]), 2)
+        self.assertIn("1 marked", "\n".join(result["details"]))
 
     def test_siblings_are_matched_on_tvdb_id_and_never_on_title(self):
         """Sweeping in a similarly named but different show would mark a whole
@@ -1921,6 +1847,7 @@ class PlexMarkWatchedClientTests(unittest.TestCase):
         plex = Mock()
         plex.get_section_type.return_value = "show"
         plex.sibling_show_keys.return_value = []
+        plex.get_show_tvdb_id.return_value = ""
         plex.list_show_episodes.return_value = [
             {"rating_key": "21", "season_index": 1, "episode_index": 1,
              "title": "One", "show_title": "SNL", "view_count": 1,
