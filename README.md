@@ -509,7 +509,11 @@ and what recent jobs actually did. Add `--plex` to check whether the shows your
 rules name still exist under the same ratingKey. `--explain "STAT" --season 2
 --episode 67` settles a single episode: what the rule says, whether Plex has it
 and under which numbering, its play count and resume point, and what every job
-that touched that show decided.
+that touched that show decided. `--audit` does a whole library at once: how
+many shows have a rule on, how many of those still hold unwatched episodes, the
+spread of how many each is missing, and for a sample whether any import job
+ever covered them - an episode with no job was never announced to this install,
+and nothing automatic will ever mark it.
 
 Only Sonarr `Download` events containing an imported `episodeFile` are queued.
 The HTTP request returns immediately; persistent background work retries until

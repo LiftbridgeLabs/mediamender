@@ -13,6 +13,11 @@ To settle one episode - what the rule says, what Plex holds, and what the job
 that handled the import decided:
 
     docker exec -it mediaMender python tools/diagnose_mark_watched.py         --explain "STAT" --season 2 --episode 67
+
+To explain a whole library at once - every show whose rule is on that still
+holds unwatched episodes, and whether an import job ever covered them:
+
+    docker exec -it mediaMender python tools/diagnose_mark_watched.py --audit
 """
 
 from __future__ import annotations
@@ -346,6 +351,107 @@ def explain_episode(raw: dict, rules: dict, jobs: dict, title: str,
             print(f"      | {entry.get('message', '')}")
 
 
+def _job_index(jobs: dict) -> dict:
+    """Every (show title, season, episode) an import job has ever covered."""
+    index: dict = {}
+    for job in jobs.values():
+        event = job.get("event", {}) or {}
+        if event.get("source") == "manual":
+            continue
+        title = str((event.get("series") or {}).get("title", "")).strip().casefold()
+        for episode in event.get("episodes") or []:
+            try:
+                key = (title, int(episode["season"]), int(episode["episode"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+            index.setdefault(key, []).append(job)
+    return index
+
+
+def audit_library(raw: dict, rules: dict, jobs: dict, limit: int) -> None:
+    """Explain a library's worth of unwatched episodes in one pass.
+
+    Asking about one episode at a time cannot show a pattern, and a pattern is
+    what "a hundred shows each with exactly one unwatched episode" is. This
+    reads every show whose rule is on, finds what Plex still counts unwatched,
+    and looks for the import job that should have marked it.
+    """
+    shows_rules = rules.get("shows", {}) or {}
+    index = _job_index(jobs)
+    for name, library, plex in _plex_clients(raw):
+        key = f"{name}::{library.get('name')}"
+        heading(f"Audit: {key}")
+        try:
+            section = library.get("section_id") or plex.find_section_id(library.get("name"))
+            if not section or plex.get_section_type(str(section)) != "show":
+                print("  Not a TV library; skipped.")
+                continue
+            shows = plex.list_tv_shows(str(section))
+        except Exception as exc:
+            print(f"  Could not read Plex ({type(exc).__name__}: {exc})")
+            continue
+
+        enabled, outstanding = [], []
+        for show in shows:
+            tvdb = show.get("tvdb_id", "")
+            rule_key = (f"{key}::tvdb-{tvdb}" if tvdb
+                        else f"{key}::{show['rating_key']}")
+            legacy_key = f"{key}::{show['rating_key']}"
+            on = bool(shows_rules.get(rule_key, shows_rules.get(legacy_key, False)))
+            if not on:
+                continue
+            enabled.append(show)
+            missing = int(show.get("leaf_count", 0)) - int(show.get("viewed_leaf_count", 0))
+            if missing > 0:
+                outstanding.append((missing, show))
+        print(f"  Shows in library         : {len(shows)}")
+        print(f"  With auto-watch on       : {len(enabled)}")
+        print(f"  ...still holding unwatched: {len(outstanding)}")
+        if not outstanding:
+            print("  -> Nothing outstanding. Anything Plex still shows as")
+            print("     unwatched belongs to a library or a show without a rule.")
+            continue
+        spread = collections.Counter(count for count, _ in outstanding)
+        print("  Unwatched per show       : " + ", ".join(
+            f"{count} unwatched x{shows}" for count, shows in sorted(spread.items())
+        ))
+
+        print(f"\n  Checking the first {min(limit, len(outstanding))} of them "
+              f"against the job history:")
+        verdicts = collections.Counter()
+        outstanding.sort(key=lambda item: item[1]["title"].casefold())
+        for _missing, show in outstanding[:limit]:
+            try:
+                episodes = plex.list_show_episodes(show["rating_key"])
+            except Exception as exc:
+                print(f"    {show['title']}: could not read episodes ({exc})")
+                continue
+            unwatched = [item for item in episodes if item["view_count"] < 1]
+            for item in unwatched[:3]:
+                coord = f"S{item['season_index']:02d}E{item['episode_index']:02d}"
+                found = index.get(
+                    (show["title"].strip().casefold(),
+                     item["season_index"], item["episode_index"]), [],
+                )
+                if not found:
+                    verdicts["no import job ever covered it"] += 1
+                    print(f"    {show['title']} {coord}: no import job")
+                else:
+                    last = found[-1]
+                    verdict = f"{last.get('status')}: {last.get('message', '')[:70]}"
+                    verdicts[verdict] += 1
+                    print(f"    {show['title']} {coord}: {verdict}")
+        print("\n  Summary of what was found:")
+        for verdict, count in verdicts.most_common():
+            print(f"    {count:4d}  {verdict}")
+        if verdicts.get("no import job ever covered it"):
+            print("\n  -> An episode with no import job was never announced by")
+            print("     Sonarr to this install: imported before mediaMender, or")
+            print("     imported while the webhook was not reaching it. Nothing")
+            print("     automatic will ever mark those; Catch up now is the")
+            print("     control that works from the rules rather than the log.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", default=os.environ.get("DATA_DIR", "data"))
@@ -354,6 +460,10 @@ def main() -> None:
                         help="also verify each rule's ratingKey still exists")
     parser.add_argument("--explain", metavar="SHOW",
                         help="explain one episode: why it is or is not marked")
+    parser.add_argument("--audit", action="store_true",
+                        help="explain a whole library's unwatched episodes at once")
+    parser.add_argument("--limit", type=int, default=25,
+                        help="how many shows --audit reads episodes for (default 25)")
     parser.add_argument("--season", type=int, default=1)
     parser.add_argument("--episode", type=int, default=1)
     args = parser.parse_args()
@@ -367,6 +477,16 @@ def main() -> None:
     raw = load(config_path, {}) or {}
     if not raw:
         print("\nCould not read the config file. Pass --config /app/data/config.yml")
+        return
+
+    if args.audit:
+        audit_library(
+            raw,
+            load(data / "mark-watched-rules.json", {}) or {},
+            load(data / "mark-watched-jobs.json", {}) or {},
+            max(1, args.limit),
+        )
+        print()
         return
 
     if args.explain:

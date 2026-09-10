@@ -1,3 +1,3 @@
 """Application version exposed to the UI and API."""
 
-__version__ = "2.21.2"
+__version__ = "2.22.0"
