@@ -1353,6 +1353,85 @@ class MarkWatchedRuleTests(unittest.TestCase):
         self.assertIn("switched off", disabled["message"])
         self.assertNotIn("re-added", disabled["message"])
 
+    def test_a_season_switched_off_survives_marking_the_whole_show(self):
+        """Setting a show to auto-watch and then turning one season off is a
+        statement about that season. Marking the show should not undo it."""
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.sibling_show_keys.return_value = []
+        plex.get_show_tvdb_id.return_value = "75897"
+        plex.list_show_episodes.return_value = [
+            {"rating_key": "s1e1", "season_index": 1, "episode_index": 1,
+             "title": "Cartman", "show_title": "South Park",
+             "view_count": 0, "view_offset": 0},
+            {"rating_key": "s2e1", "season_index": 2, "episode_index": 1,
+             "title": "Terrance", "show_title": "South Park",
+             "view_count": 0, "view_offset": 0},
+        ]
+        self.rules.set_show("Plex", "TV", "10", True, tvdb_id="75897")
+        self.rules.set_season("Plex", "TV", "10", 1, False, tvdb_id="75897")
+        result = process_manual_event({
+            "source": "manual", "series": {"title": "South Park"},
+            "manual": {"instance": "Plex", "library": "TV",
+                       "show_rating_key": "10", "scope": "show"},
+        }, config, {"Plex": plex}, self.rules)
+        plex.mark_watched_many.assert_called_once_with(["s2e1"])
+        self.assertEqual(result["marked"], 1)
+        self.assertIn("left season(s) 1 alone", result["message"])
+
+    def test_asking_for_that_season_by_name_still_marks_it(self):
+        """The request names the season, so it is not being overridden."""
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.sibling_show_keys.return_value = []
+        plex.get_show_tvdb_id.return_value = "75897"
+        plex.list_season_episodes.return_value = [
+            {"rating_key": "s1e1", "season_index": 1, "episode_index": 1,
+             "title": "Cartman", "show_title": "South Park",
+             "view_count": 0, "view_offset": 0},
+        ]
+        self.rules.set_show("Plex", "TV", "10", True, tvdb_id="75897")
+        self.rules.set_season("Plex", "TV", "10", 1, False, tvdb_id="75897")
+        result = process_manual_event({
+            "source": "manual", "series": {"title": "South Park"},
+            "manual": {"instance": "Plex", "library": "TV",
+                       "show_rating_key": "10", "scope": "season",
+                       "season_index": 1},
+        }, config, {"Plex": plex}, self.rules)
+        plex.mark_watched_many.assert_called_once_with(["s1e1"])
+        self.assertEqual(result["marked"], 1)
+
+    def test_an_import_into_a_season_switched_off_is_not_marked(self):
+        """The automatic path has always honoured this; pin it so it stays."""
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = {
+            "rating_key": "30", "show_rating_key": "10",
+            "season_rating_key": "", "season_index": 1, "episode_index": 4,
+            "title": "Big Gay Al", "show_title": "South Park",
+        }
+        self.rules.set_show("Plex", "TV", "10", True, tvdb_id="75897")
+        self.rules.set_season("Plex", "TV", "10", 1, False, tvdb_id="75897")
+        result = process_plex_event({
+            "series": {"title": "South Park", "tvdb_id": 75897},
+            "episodes": [{"season": 1, "episode": 4}],
+        }, config, {"Plex": plex}, self.rules)
+        self.assertEqual(result["marked"], 0)
+        plex.mark_watched.assert_not_called()
+        self.assertIn("season override False", "\n".join(result["details"]))
+
     def _two_library_config(self):
         return AppConfig(instances=[
             PlexInstanceConfig("Unlimited", "http://a", "token", [

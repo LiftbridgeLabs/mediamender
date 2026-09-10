@@ -1268,8 +1268,15 @@ def process_plex_event(event: dict, app_config, clients: dict,
     }
 
 
-def process_manual_event(event: dict, app_config, clients: dict) -> dict:
-    """Apply a confirmed manual show or season update to existing Plex history."""
+def process_manual_event(event: dict, app_config, clients: dict,
+                         rules: "MarkWatchedRuleStore | None" = None) -> dict:
+    """Apply a confirmed manual show or season update to existing Plex history.
+
+    A season switched explicitly off is left alone. Someone who has set a show
+    to auto-watch and then turned one season off has said what they want; an
+    update over the whole show should not quietly undo it. Asking for that one
+    season by name still marks it - that request names the season.
+    """
     manual = event.get("manual", {})
     instance_name = str(manual.get("instance", ""))
     library_name = str(manual.get("library", ""))
@@ -1301,6 +1308,7 @@ def process_manual_event(event: dict, app_config, clients: dict) -> dict:
         str(section_id), show_key, title, plex,
     )
     marked_total = 0
+    skipped_seasons: set = set()
     already_watched = 0
     matched = 0
     stale_total = 0
@@ -1318,6 +1326,25 @@ def process_manual_event(event: dict, app_config, clients: dict) -> dict:
         except Exception as exc:
             notes.append(f"{label}: could not be read ({type(exc).__name__})")
             continue
+        if not episodes:
+            continue
+        if rules is not None and season_index is None:
+            instance_key, _, library_key = label.partition("::")
+            tvdb = client.get_show_tvdb_id(key)
+            blocked = set()
+            for season in {episode["season_index"] for episode in episodes}:
+                decision = rules.rule(
+                    instance_key, library_key, key, season, tvdb_id=tvdb,
+                )
+                if (decision["source"] == "season"
+                        and decision["season_override"] is False):
+                    blocked.add(season)
+            if blocked:
+                episodes = [
+                    episode for episode in episodes
+                    if episode["season_index"] not in blocked
+                ]
+                skipped_seasons.update(blocked)
         if not episodes:
             continue
         matched += len(episodes)
@@ -1352,6 +1379,9 @@ def process_manual_event(event: dict, app_config, clients: dict) -> dict:
             f"Manual {scope_label} update marked {marked_total} episode(s) "
             f"watched{copies}; {already_watched} were already watched"
             + (f"; cleared {stale_total} stale resume point(s)" if stale_total else "")
+            + (f"; left season(s) "
+               f"{', '.join(str(index) for index in sorted(skipped_seasons))} "
+               f"alone, switched off by an override" if skipped_seasons else "")
         ),
         "matched": matched,
         "marked": marked_total,
@@ -1383,5 +1413,5 @@ def process_mark_watched_event(event: dict, app_config, clients: dict,
                                rules: MarkWatchedRuleStore) -> dict:
     """Dispatch durable automatic and manual Mark-it-Watched jobs."""
     if event.get("source") == "manual":
-        return process_manual_event(event, app_config, clients)
+        return process_manual_event(event, app_config, clients, rules)
     return process_plex_event(event, app_config, clients, rules)

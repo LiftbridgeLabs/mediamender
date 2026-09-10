@@ -542,6 +542,13 @@ Plex already counts watched that still holds an offset is only reached by
 **Mark show watched now**, since the skip that makes a catch-up cheap is the
 watched count itself.
 
+A season override beats the show's own rule, in every path: an import into a
+season switched off is not marked, a catch-up skips it, and marking the whole
+show leaves it alone and says so. Asking for that season by name still marks
+it - the request names the season, so nothing is being overridden. **All On**
+and **All Off** do clear the overrides in the library they cover, which their
+confirmation says.
+
 **Mark show watched now** carries the number of episodes still outstanding, and
 its confirmation counts what will be written rather than how many episodes the
 show has - "up to 622 episodes" for a show with one unwatched episode described
@@ -700,6 +707,10 @@ already on it, both start from a clean slate: search cleared, filter and sort
 back to their defaults, first page. A browser reload restores what was typed in
 the search box but nothing restores the results it produced, so without this the
 box read as a live filter over a list that ignored it.
+
+Season panels redraw in place when a rule changes rather than collapsing and
+refetching, so working down a long season list does not move the page under
+you.
 
 The show list can be filtered to auto-watch on, auto-watch off, or shows with a
 season override, and sorted by title, by how many episodes are still unwatched,

@@ -111,6 +111,7 @@ const api = new Function(src + `
           markWatchedJobBadge, renderMarkWatchedJobs,
           get openLogs() { return _markWatchedOpenLogs; },
           resetMarkWatchedFilters, get markWatchedState() { return _markWatchedData; },
+          renderMarkWatchedSeasons, get markWatchedSeasons() { return _markWatchedSeasons; },
           set loaders(map) { for (const k in map) PAGE_LOADERS[k] = map[k]; },
           set permissions(list) {
             canAccess = p => list.includes('*') || list.includes(p);
@@ -330,6 +331,27 @@ check('a refresh returns to the first page', api.markWatchedState.page, 1);
 check('and the controls are put back to match',
       [nodes.get('mark-watched-search').value, nodes.get('mark-watched-filter').value],
       ['', 'all']);
+
+// Working down a long season list must not move the page.
+nodes.set('mw-seasons-0', el('mw-seasons-0'));
+api.markWatchedSeasons.set(0, [
+  {index: 1, title: 'Season 1', leaf_count: 13, viewed_leaf_count: 0,
+   rule: {source: 'show', enabled: false, show_enabled: false, season_override: null}},
+  {index: 2, title: 'Season 2', leaf_count: 18, viewed_leaf_count: 0,
+   rule: {source: 'show', enabled: false, show_enabled: false, season_override: null}},
+]);
+api.renderMarkWatchedSeasons(0);
+const before = nodes.get('mw-seasons-0').innerHTML;
+check('a season panel renders from what was fetched',
+      (before.match(/mw-season-actions/g) || []).length, 2);
+api.markWatchedSeasons.get(0)[1].rule = {
+  source: 'season', enabled: true, show_enabled: false, season_override: true};
+api.renderMarkWatchedSeasons(0);
+const after = nodes.get('mw-seasons-0').innerHTML;
+check('changing one season still renders every season',
+      (after.match(/mw-season-actions/g) || []).length, 2);
+check('and the changed one now reads as an override',
+      (after.match(/Explicit season override/g) || []).length, 1);
 
 // Selecting the page you are already on must refresh it.
 const loaderCalls = [];

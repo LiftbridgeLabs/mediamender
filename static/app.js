@@ -170,6 +170,8 @@ let _markWatchedSearchTimer = null;
 let _markWatchedJobTimer = null;
 // Log trails the reader has opened, so a poll does not close them again.
 const _markWatchedOpenLogs = new Set();
+// Seasons as last fetched, so a rule change redraws without a round trip.
+const _markWatchedSeasons = new Map();
 
 function markWatchedStorageKey(name) {
   return `mediamender-mark-watched-${_identity.username || 'default'}-${name}`;
@@ -329,6 +331,9 @@ async function loadMarkWatchedPage(page = 1, scrollToControls = false) {
     const response = await fetch(`/api/mark-watched/shows?${query}`, {signal:_markWatchedAbort.signal});
     const data = await readJsonResponse(response);
     if (!response.ok) throw new Error(data.error || 'Plex shows could not be loaded');
+    // Seasons are cached against the row index, and a new page of shows puts
+    // different shows at those indices.
+    _markWatchedSeasons.clear();
     Object.assign(_markWatchedData, data, {loaded:true});
     renderMarkWatchedLibraries();
     renderMarkWatchedPagination();
@@ -430,7 +435,20 @@ async function toggleMarkWatchedSeasons(showIndex) {
     const response = await fetch(`/api/mark-watched/seasons?${query}`);
     const data = await readJsonResponse(response);
     if (!response.ok) throw new Error(data.error || 'Seasons could not be loaded');
-    target.innerHTML = `<div class="mw-season-grid">${data.seasons.map(season => `
+    _markWatchedSeasons.set(showIndex, data.seasons || []);
+    renderMarkWatchedSeasons(showIndex);
+  } catch (error) { target.innerHTML = `<div class="empty-msg">${h(error.message)}</div>`; }
+}
+
+// Rendered from what was already fetched, so a rule change redraws the panel
+// at exactly the same height. Collapsing and refetching it removed a tall
+// block from the page mid-edit, and everything below jumped up into view -
+// worse the more seasons a show has, and South Park has twenty-seven.
+function renderMarkWatchedSeasons(showIndex) {
+  const target = document.getElementById(`mw-seasons-${showIndex}`);
+  if (!target) return;
+  const seasons = _markWatchedSeasons.get(showIndex) || [];
+  target.innerHTML = `<div class="mw-season-grid">${seasons.map(season => `
       <article class="mw-season">
         ${season.poster_url ? `<img loading="lazy" src="${h(season.poster_url)}" alt="Poster for ${h(season.title)}">` : ''}
         <div class="mw-season-info"><div class="mw-title">${h(season.title)}</div>
@@ -443,7 +461,6 @@ async function toggleMarkWatchedSeasons(showIndex) {
         </div>
         <button class="btn btn-warn btn-sm mw-apply-now" onclick="applyMarkWatchedNow(${showIndex},${season.index},${Math.max(0,(season.leaf_count||0)-(season.viewed_leaf_count||0))},this)">Mark season watched now</button>
       </article>`).join('') || '<div class="empty-msg">No seasons found.</div>'}</div>`;
-  } catch (error) { target.innerHTML = `<div class="empty-msg">${h(error.message)}</div>`; }
 }
 
 async function setSeasonRule(showIndex, seasonIndex, enabled) {
@@ -455,9 +472,22 @@ async function setSeasonRule(showIndex, seasonIndex, enabled) {
   });
   const data = await readJsonResponse(response);
   if (!response.ok) return toast(data.error || 'Season rule could not be saved', 'fail');
-  const target = document.getElementById(`mw-seasons-${showIndex}`);
-  target.classList.remove('open');
-  await toggleMarkWatchedSeasons(showIndex);
+  // Update this one season where it stands. The panel keeps its height and
+  // the page does not move under whoever is working down a season list.
+  const seasons = _markWatchedSeasons.get(showIndex) || [];
+  const season = seasons.find(item => item.index === seasonIndex);
+  if (season) {
+    season.rule = enabled === null
+      ? {...season.rule, source: 'show', season_override: null,
+         enabled: !!season.rule.show_enabled}
+      : {...season.rule, source: 'season', season_override: enabled,
+         enabled: !!enabled};
+    renderMarkWatchedSeasons(showIndex);
+  } else {
+    const target = document.getElementById(`mw-seasons-${showIndex}`);
+    target.classList.remove('open');
+    await toggleMarkWatchedSeasons(showIndex);
+  }
   toast('Season rule saved', 'pass');
 }
 
