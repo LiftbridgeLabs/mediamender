@@ -1353,6 +1353,84 @@ class MarkWatchedRuleTests(unittest.TestCase):
         self.assertIn("switched off", disabled["message"])
         self.assertNotIn("re-added", disabled["message"])
 
+    def _two_library_config(self):
+        return AppConfig(instances=[
+            PlexInstanceConfig("Unlimited", "http://a", "token", [
+                LibraryConfig("TV Shows", "debrid", [], section_id="1")]),
+            PlexInstanceConfig("altmount", "http://b", "token", [
+                LibraryConfig("TV Shows", "usenet", [], section_id="2")]),
+        ])
+
+    def test_a_match_elsewhere_does_not_finish_a_job_the_rule_is_waiting_on(self):
+        """The same episode lands in several libraries, and they do not scan at
+        the same speed. A fast usenet library used to satisfy the job while the
+        slow debrid library carrying the rule had not been scanned yet - so the
+        episode was never marked there, and nothing ever came back for it."""
+        slow, fast = Mock(), Mock()
+        slow.get_section_type.return_value = "show"
+        fast.get_section_type.return_value = "show"
+        slow.find_episode.return_value = None          # not scanned yet
+        slow.describe_show.return_value = "has this show (ratingKey 9) holding S06 (5 episodes)"
+        fast.find_episode.return_value = {
+            "rating_key": "77", "show_rating_key": "46809",
+            "season_rating_key": "", "season_index": 6, "episode_index": 5,
+            "title": "Basket Blunders", "show_title": "Chopped",
+        }
+        # The rule is on in the slow library only.
+        self.rules.set_show("Unlimited", "TV Shows", "109241", True, tvdb_id="1234")
+        with self.assertRaises(PlexEpisodePending) as caught:
+            process_plex_event({
+                "series": {"title": "Chopped", "tvdb_id": 1234},
+                "episodes": [{"season": 6, "episode": 5}],
+            }, self._two_library_config(),
+                {"Unlimited": slow, "altmount": fast}, self.rules)
+        self.assertIn("Still waiting on libraries whose rule covers this show: "
+                      "Unlimited::TV Shows", "\n".join(caught.exception.details))
+
+    def test_what_can_be_marked_now_is_marked_before_waiting(self):
+        """Waiting for one library must not hold back the marking another has
+        already earned - if the slow one never arrives, the job gives up, and
+        anything it was holding would have been lost with it."""
+        slow, fast = Mock(), Mock()
+        slow.get_section_type.return_value = "show"
+        fast.get_section_type.return_value = "show"
+        slow.find_episode.return_value = None
+        slow.describe_show.return_value = "has this show (ratingKey 9) holding S06 (5 episodes)"
+        fast.find_episode.return_value = {
+            "rating_key": "77", "show_rating_key": "46809",
+            "season_rating_key": "", "season_index": 6, "episode_index": 5,
+            "title": "Basket Blunders", "show_title": "Chopped",
+        }
+        # On in both, so the fast one is markable right now.
+        self.rules.set_show("Unlimited", "TV Shows", "109241", True, tvdb_id="1234")
+        self.rules.set_show("altmount", "TV Shows", "46809", True, tvdb_id="1234")
+        with self.assertRaises(PlexEpisodePending):
+            process_plex_event({
+                "series": {"title": "Chopped", "tvdb_id": 1234},
+                "episodes": [{"season": 6, "episode": 5}],
+            }, self._two_library_config(),
+                {"Unlimited": slow, "altmount": fast}, self.rules)
+        fast.mark_watched.assert_called_once_with("77")
+
+    def test_a_library_without_a_rule_is_not_waited_for(self):
+        """Only a library whose rule covers the show holds the job open."""
+        slow, fast = Mock(), Mock()
+        slow.get_section_type.return_value = "show"
+        fast.get_section_type.return_value = "show"
+        slow.find_episode.return_value = None
+        fast.find_episode.return_value = {
+            "rating_key": "77", "show_rating_key": "46809",
+            "season_rating_key": "", "season_index": 6, "episode_index": 5,
+            "title": "Basket Blunders", "show_title": "Chopped",
+        }
+        self.rules.set_show("altmount", "TV Shows", "46809", True, tvdb_id="1234")
+        result = process_plex_event({
+            "series": {"title": "Chopped", "tvdb_id": 1234},
+            "episodes": [{"season": 6, "episode": 5}],
+        }, self._two_library_config(),
+            {"Unlimited": slow, "altmount": fast}, self.rules)
+        self.assertEqual(result["marked"], 1)
+
     def test_marking_a_different_coordinate_is_stated_in_the_summary(self):
         """A title or absolute-number match can land on a coordinate Sonarr did
         not name. That is what those fallbacks are for, and it is also the one

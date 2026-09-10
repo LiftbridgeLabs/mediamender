@@ -625,6 +625,14 @@ Rule files written by earlier versions were keyed by mediaMender username and
 are migrated on first load: every show or season left On under any account name
 stays On, and the flattened file is written back on the next rule change.
 
+The same episode often lands in several libraries, and they do not scan at the
+same speed. A job is finished only once every library whose rule covers the
+show has produced the episode - a match in a library without a rule no longer
+closes it, which used to let a fast usenet library finish a job while the slow
+debrid library carrying the rule had not been scanned yet. Whatever can be
+marked is marked on each attempt rather than held back, so a library that never
+produces the episode costs the wait but not the marking.
+
 While a job waits, mediaMender asks Plex to scan the folder the import landed
 in - only in the libraries that already hold that show, since the others cannot
 gain the episode, and only in every library when no library has the show at all.

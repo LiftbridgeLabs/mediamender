@@ -1061,6 +1061,11 @@ def process_plex_event(event: dict, app_config, clients: dict,
         (episode["season"], episode["episode"]) for episode in event["episodes"]
     }
     matched_coordinates = set()
+    # Per library as well as overall: a match anywhere used to satisfy the job,
+    # so a fast usenet library could finish it while the slow debrid library
+    # that actually carries the rule had not been scanned yet. The episode was
+    # then never marked there, and nothing ever came back for it.
+    matched_per_library: dict[str, set] = {}
     searched = []
     scannable: list[tuple] = []
     for instance in app_config.instances:
@@ -1093,6 +1098,9 @@ def process_plex_event(event: dict, app_config, clients: dict,
                 item["library_name"] = library.name
                 item["plex"] = plex
                 matched_coordinates.add((episode["season"], episode["episode"]))
+                matched_per_library.setdefault(library_key, set()).add(
+                    (episode["season"], episode["episode"])
+                )
                 plex_title = str(item.get("show_title", ""))
                 renamed = (
                     f", Plex calls this show '{plex_title}'"
@@ -1109,42 +1117,6 @@ def process_plex_event(event: dict, app_config, clients: dict,
                     f"{item['show_rating_key']}, episode {item['rating_key']}"
                     f"{via}{renamed})"
                 )
-    missing = expected_coordinates - matched_coordinates
-    if missing:
-        # An import that will never appear is usually one that was replaced or
-        # removed behind the symlink. When the path is visible from here, that
-        # is knowable now rather than after the give-up window.
-        vanished = imported_file_missing(event)
-        if vanished:
-            raise ImportVanished(vanished)
-        coordinates = ", ".join(
-            f"S{season:02d}E{episode:02d}" for season, episode in sorted(missing)
-        )
-        details.append("Searched TV libraries: " + (", ".join(searched) or "none"))
-        # Waiting only makes sense while the episode might still arrive. Say
-        # what each library actually holds, so a season Plex numbers
-        # differently from Sonarr is visible rather than waited out.
-        holding = []
-        for library_key, plex, section_id in scannable:
-            coverage = plex.describe_show(section_id, event["series"]["title"])
-            if coverage:
-                details.append(f"{library_key} {coverage}")
-            if coverage and coverage != "does not have this show":
-                holding.append((library_key, plex, section_id))
-        # Sonarr finishes an import the moment the file lands, which for a
-        # symlinked debrid library is long before Plex has scanned it. Waiting
-        # passively is why these jobs used to expire unmatched, so ask Plex to
-        # look at the imported folder instead.
-        #
-        # Only the libraries that hold the show: asking all of them meant one
-        # waiting job kept every library on the server scanning, including ones
-        # that could not possibly gain this episode. A show no library has yet
-        # is the one case where there is nothing better to go on.
-        if app_config.mark_watched.scan_on_import:
-            details.extend(request_plex_scan(holding or scannable, event))
-        raise PlexEpisodePending(
-            f"{event['series']['title']} {coordinates}", details,
-        )
     unmatched_rules = []
     for item in matched:
         library_key = f"{item['instance_name']}::{item['library_name']}"
@@ -1188,6 +1160,62 @@ def process_plex_event(event: dict, app_config, clients: dict,
         item["plex"].mark_watched(item["rating_key"])
         marked.append(item)
         details.append(f"{location}: marked watched ({reason})")
+    # A library whose rule is on for this show has to produce the episode
+    # before the job is done, however many other libraries already have.
+    tvdb = str(event["series"].get("tvdb_id") or "")
+    awaiting = []
+    for library_key in searched:
+        instance_name, _, library_name = library_key.partition("::")
+        if expected_coordinates <= matched_per_library.get(library_key, set()):
+            continue
+        if not tvdb:
+            continue
+        decision = rules.rule(instance_name, library_name, "", 0, tvdb_id=tvdb)
+        if decision["enabled"]:
+            awaiting.append(library_key)
+
+    missing = expected_coordinates - matched_coordinates
+    if missing or awaiting:
+        # An import that will never appear is usually one that was replaced or
+        # removed behind the symlink. When the path is visible from here, that
+        # is knowable now rather than after the give-up window.
+        vanished = imported_file_missing(event)
+        if vanished:
+            raise ImportVanished(vanished)
+        coordinates = ", ".join(
+            f"S{season:02d}E{episode:02d}"
+            for season, episode in sorted(missing or expected_coordinates)
+        )
+        if awaiting:
+            details.append(
+                "Still waiting on libraries whose rule covers this show: "
+                + ", ".join(awaiting)
+            )
+        details.append("Searched TV libraries: " + (", ".join(searched) or "none"))
+        # Waiting only makes sense while the episode might still arrive. Say
+        # what each library actually holds, so a season Plex numbers
+        # differently from Sonarr is visible rather than waited out.
+        holding = []
+        for library_key, plex, section_id in scannable:
+            coverage = plex.describe_show(section_id, event["series"]["title"])
+            if coverage:
+                details.append(f"{library_key} {coverage}")
+            if coverage and coverage != "does not have this show":
+                holding.append((library_key, plex, section_id))
+        # Sonarr finishes an import the moment the file lands, which for a
+        # symlinked debrid library is long before Plex has scanned it. Waiting
+        # passively is why these jobs used to expire unmatched, so ask Plex to
+        # look at the imported folder instead.
+        #
+        # Only the libraries that hold the show: asking all of them meant one
+        # waiting job kept every library on the server scanning, including ones
+        # that could not possibly gain this episode. A show no library has yet
+        # is the one case where there is nothing better to go on.
+        if app_config.mark_watched.scan_on_import:
+            details.extend(request_plex_scan(holding or scannable, event))
+        raise PlexEpisodePending(
+            f"{event['series']['title']} {coordinates}", details,
+        )
     if not marked:
         # Name the library and key that were checked. "No rule was enabled" on
         # its own sent operators looking at a rule page that showed the show
