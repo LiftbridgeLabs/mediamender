@@ -604,6 +604,14 @@ Rule files written by earlier versions were keyed by mediaMender username and
 are migrated on first load: every show or season left On under any account name
 stays On, and the flattened file is written back on the next rule change.
 
+While a job waits, mediaMender asks Plex to scan the folder the import landed
+in - only in the libraries that already hold that show, since the others cannot
+gain the episode, and only in every library when no library has the show at all.
+Each library is asked at most once every fifteen minutes. When Plex will not
+take the folder, because Sonarr and Plex map the same media at different paths,
+the fallback is a walk of the entire library; that is expensive enough to get
+its own throttle of once every six hours per library, and it is logged.
+
 Sonarr and Plex do not always number an episode the same way either, and anime
 is where they disagree most: Sonarr reports the season/episode pair from its
 metadata source while the library was very often scanned by absolute number, so

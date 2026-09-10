@@ -957,6 +957,11 @@ class ScanThrottle:
 
 
 scan_throttle = ScanThrottle()
+# A path scan asks Plex to look at one folder. A section refresh asks it to walk
+# the entire library, which on a symlinked debrid library of a thousand shows is
+# minutes of work - far too much to repeat on the path-scan cadence, which is
+# what kept a server scanning without pause while any job was waiting.
+refresh_throttle = ScanThrottle(interval_seconds=6 * 3600)
 
 
 def request_plex_scan(scannable: list[tuple], event: dict) -> list[str]:
@@ -981,6 +986,19 @@ def request_plex_scan(scannable: list[tuple], event: dict) -> list[str]:
         if result.get("ok"):
             notes.append(f"{library_key}: asked Plex to scan {folder}")
             continue
+        # Plex would not take the folder, so the only remaining lever is a full
+        # library walk. It is expensive enough that it gets its own, much
+        # longer, throttle rather than the path-scan cadence.
+        if not refresh_throttle.allow(library_key):
+            notes.append(
+                f"{library_key}: Plex would not scan {folder or 'the imported folder'}, "
+                f"and a full library refresh was already requested recently"
+            )
+            continue
+        logger.info(
+            "Asking Plex to refresh all of %s; it would not scan %s",
+            library_key, folder or "the imported folder",
+        )
         result = plex.refresh_section(section_id)
         notes.append(
             f"{library_key}: asked Plex to refresh the whole library"
@@ -1064,16 +1082,24 @@ def process_plex_event(event: dict, app_config, clients: dict,
         # Waiting only makes sense while the episode might still arrive. Say
         # what each library actually holds, so a season Plex numbers
         # differently from Sonarr is visible rather than waited out.
+        holding = []
         for library_key, plex, section_id in scannable:
             coverage = plex.describe_show(section_id, event["series"]["title"])
             if coverage:
                 details.append(f"{library_key} {coverage}")
+            if coverage and coverage != "does not have this show":
+                holding.append((library_key, plex, section_id))
         # Sonarr finishes an import the moment the file lands, which for a
         # symlinked debrid library is long before Plex has scanned it. Waiting
         # passively is why these jobs used to expire unmatched, so ask Plex to
         # look at the imported folder instead.
+        #
+        # Only the libraries that hold the show: asking all of them meant one
+        # waiting job kept every library on the server scanning, including ones
+        # that could not possibly gain this episode. A show no library has yet
+        # is the one case where there is nothing better to go on.
         if app_config.mark_watched.scan_on_import:
-            details.extend(request_plex_scan(scannable, event))
+            details.extend(request_plex_scan(holding or scannable, event))
         raise PlexEpisodePending(
             f"{event['series']['title']} {coordinates}", details,
         )

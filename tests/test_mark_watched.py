@@ -19,7 +19,7 @@ from src.mark_watched import (
     PlexEpisodePending,
     normalize_sonarr_download,
     process_manual_event, process_plex_event,
-    scan_throttle,
+    refresh_throttle, scan_throttle,
 )
 from src.plex_client import PlexClient, normalize_show_title
 
@@ -1063,6 +1063,7 @@ class MarkWatchedQueueTests(unittest.TestCase):
 class MarkWatchedRuleTests(unittest.TestCase):
     def setUp(self):
         scan_throttle.reset()
+        refresh_throttle.reset()
         self.runtime = Path("tests/.mark-watched-rule-runtime")
         self.runtime.mkdir(exist_ok=True)
         (self.runtime / "mark-watched-rules.json").unlink(missing_ok=True)
@@ -1347,6 +1348,83 @@ class MarkWatchedRuleTests(unittest.TestCase):
         self.assertIn(
             "asked Plex to scan /tv/Example Show/Season 02",
             "\n".join(caught.exception.details),
+        )
+
+    def test_a_full_library_refresh_is_not_repeated_on_the_scan_cadence(self):
+        """A path scan looks at one folder; a section refresh walks the whole
+        library. Repeating the second every fifteen minutes, for as long as any
+        job was waiting, kept the server scanning without pause."""
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = None
+        plex.describe_show.return_value = "has this show (ratingKey 9) holding S02 (3 episodes)"
+        plex.scan_path.return_value = {"ok": False, "http": 400}
+        plex.refresh_section.return_value = {"ok": True}
+        event = {
+            "series": {"title": "Example Show"},
+            "episodes": [{"season": 2, "episode": 3}],
+            "episode_file": {"path": "/data/tv/Example Show/S02E03.mkv"},
+        }
+        for _ in range(3):
+            scan_throttle.reset()   # as though 15 minutes passed each time
+            with self.assertRaises(PlexEpisodePending):
+                process_plex_event(event, config, {"Plex": plex}, self.rules)
+        # Three attempts, three path scans, but only one library walk.
+        self.assertEqual(plex.scan_path.call_count, 3)
+        plex.refresh_section.assert_called_once_with("7")
+
+    def test_only_libraries_holding_the_show_are_asked_to_scan(self):
+        """One waiting job used to keep every library on the server scanning,
+        including ones that could not possibly gain this episode."""
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [
+                LibraryConfig("TV", "physical", [], section_id="7"),
+                LibraryConfig("Anime", "physical", [], section_id="8"),
+            ],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = None
+        plex.describe_show.side_effect = lambda section, title: (
+            "has this show (ratingKey 9) holding S02 (3 episodes)"
+            if section == "7" else "does not have this show"
+        )
+        plex.scan_path.return_value = {"ok": True}
+        with self.assertRaises(PlexEpisodePending):
+            process_plex_event({
+                "series": {"title": "Example Show"},
+                "episodes": [{"season": 2, "episode": 3}],
+                "episode_file": {"path": "/data/tv/Example Show/S02E03.mkv"},
+            }, config, {"Plex": plex}, self.rules)
+        self.assertEqual(
+            [call.args[0] for call in plex.scan_path.call_args_list], ["7"],
+        )
+
+    def test_a_show_no_library_has_yet_still_scans_everywhere(self):
+        """A brand new show is the one case with nothing better to go on."""
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [
+                LibraryConfig("TV", "physical", [], section_id="7"),
+                LibraryConfig("Anime", "physical", [], section_id="8"),
+            ],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = None
+        plex.describe_show.return_value = "does not have this show"
+        plex.scan_path.return_value = {"ok": True}
+        with self.assertRaises(PlexEpisodePending):
+            process_plex_event({
+                "series": {"title": "Brand New Show"},
+                "episodes": [{"season": 1, "episode": 1}],
+                "episode_file": {"path": "/data/tv/Brand New Show/S01E01.mkv"},
+            }, config, {"Plex": plex}, self.rules)
+        self.assertEqual(
+            sorted(call.args[0] for call in plex.scan_path.call_args_list), ["7", "8"],
         )
 
     def test_a_rejected_path_scan_falls_back_to_the_whole_library(self):
