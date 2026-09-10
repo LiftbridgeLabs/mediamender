@@ -683,6 +683,12 @@ be re-entered, and a rule naming a show Plex no longer has is left untouched
 rather than discarded. `tools/diagnose_mark_watched.py` reports how many rules
 are keyed each way.
 
+Opening the page, and selecting **Mark-it-Watched** in the navigation while
+already on it, both start from a clean slate: search cleared, filter and sort
+back to their defaults, first page. A browser reload restores what was typed in
+the search box but nothing restores the results it produced, so without this the
+box read as a live filter over a list that ignored it.
+
 The show list can be filtered to auto-watch on, auto-watch off, or shows with a
 season override, and sorted by title, by how many episodes are still unwatched,
 or by which show gained an episode most recently. A rule lives in mediaMender

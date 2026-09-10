@@ -175,6 +175,22 @@ function markWatchedStorageKey(name) {
   return `mediamender-mark-watched-${_identity.username || 'default'}-${name}`;
 }
 
+// Put the search, filter and sort controls back in step with the state they
+// are meant to describe.
+function resetMarkWatchedFilters() {
+  clearTimeout(_markWatchedSearchTimer);
+  _markWatchedData.search = '';
+  _markWatchedData.filter = 'all';
+  _markWatchedData.sort = 'title';
+  _markWatchedData.page = 1;
+  const search = document.getElementById('mark-watched-search');
+  if (search) search.value = '';
+  const filter = document.getElementById('mark-watched-filter');
+  if (filter) filter.value = 'all';
+  const sort = document.getElementById('mark-watched-sort');
+  if (sort) sort.value = 'title';
+}
+
 async function loadMarkWatched(force = false) {
   const container = document.getElementById('mark-watched-libraries');
   if (!container) return;
@@ -185,6 +201,11 @@ async function loadMarkWatched(force = false) {
     }, 4000);
   }
   if (_markWatchedData.loaded && !force) return;
+  // The browser restores what was typed into the search box across a reload,
+  // but nothing restores the results it produced - so the box read as a live
+  // filter over a list that ignored it. A first load, and a deliberate refresh
+  // from the navigation, both start clean with the controls put back to match.
+  resetMarkWatchedFilters();
   if (force) _markWatchedData.loaded = false;
   container.innerHTML = '<div class="empty-msg"><span class="spin"></span> Loading configured Plex servers&hellip;</div>';
   try {

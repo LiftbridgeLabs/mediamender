@@ -38,6 +38,9 @@ nodes.set('dashboard-panel-overview', el('dashboard-panel-overview'));
 nodes.set('dashboard-panel-server-0', el('dashboard-panel-server-0'));
 nodes.set('toast', el('toast'));
 nodes.set('mark-watched-jobs', el('mark-watched-jobs'));
+for (const id of ['mark-watched-search','mark-watched-filter','mark-watched-sort']) {
+  nodes.set(id, el(id));
+}
 
 const tabbedPages = ['mediamender','library-refresh','mark-watched',
                      'metadata-audit','timestamp-repair'];
@@ -107,6 +110,7 @@ const api = new Function(src + `
           selectDashboardView, showFeatureTab, hasFeatureTabs,
           markWatchedJobBadge, renderMarkWatchedJobs,
           get openLogs() { return _markWatchedOpenLogs; },
+          resetMarkWatchedFilters, get markWatchedState() { return _markWatchedData; },
           set loaders(map) { for (const k in map) PAGE_LOADERS[k] = map[k]; },
           set permissions(list) {
             canAccess = p => list.includes('*') || list.includes(p);
@@ -309,6 +313,23 @@ mixed.jobs[1] = {...mixed.jobs[1], status: 'waiting', message: 'Plex has not sca
 api.renderMarkWatchedJobs(mixed);
 check('a different outcome is not rolled in',
       (jobsNode.innerHTML.match(/repair-history-item/g) || []).length, 3);
+
+// A reload restores what was typed in the search box but not the results it
+// produced, so the two have to be put back in step.
+api.markWatchedState.search = 'housewives';
+api.markWatchedState.filter = 'on';
+api.markWatchedState.sort = 'unwatched';
+api.markWatchedState.page = 4;
+nodes.get('mark-watched-search').value = 'housewives';
+nodes.get('mark-watched-filter').value = 'on';
+api.resetMarkWatchedFilters();
+check('a refresh clears the search state', api.markWatchedState.search, '');
+check('a refresh clears the filter', api.markWatchedState.filter, 'all');
+check('a refresh restores the default sort', api.markWatchedState.sort, 'title');
+check('a refresh returns to the first page', api.markWatchedState.page, 1);
+check('and the controls are put back to match',
+      [nodes.get('mark-watched-search').value, nodes.get('mark-watched-filter').value],
+      ['', 'all']);
 
 // Selecting the page you are already on must refresh it.
 const loaderCalls = [];
