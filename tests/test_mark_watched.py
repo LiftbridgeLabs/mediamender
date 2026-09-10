@@ -2090,6 +2090,12 @@ class MarkWatchedSettingsTests(unittest.TestCase):
         # Switching a rule on is forward-only, so the page has to offer the
         # catch-up rather than leave the show sitting unwatched in Plex.
         self.assertIn("which covers imports from now on", html)
+        # The confirmation counts what will actually be written, not how many
+        # episodes the show has: "up to 622" for one unwatched episode made a
+        # one-episode job look like a library-wide rewrite.
+        self.assertIn("Episodes Plex already counts watched are left alone", html)
+        self.assertIn("Plex already counts every episode in", html)
+        self.assertNotIn("This queues up to ${episodeCount} episodes", html)
         self.assertIn("still unwatched. Mark", html)
         self.assertIn("Repair / test", html)
         self.assertIn("readJsonResponse", html)

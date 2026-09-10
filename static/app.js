@@ -350,7 +350,7 @@ function renderMarkWatchedLibraries() {
               <div class="mw-meta">${show.year || 'Year unknown'} &middot; ${show.viewed_leaf_count}/${show.leaf_count} watched</div>
               <button class="btn btn-secondary btn-sm mw-rule ${show.rule_enabled?'on':''}" onclick="setShowRule(${showIndex},${show.rule_enabled?'false':'true'})">Auto-watch ${show.rule_enabled?'On':'Off'}</button>
               <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:7px;" onclick="toggleMarkWatchedSeasons(${showIndex})">Season overrides${show.has_overrides?' <span class="mw-override-dot" title="Some seasons depart from this show’s rule">●</span>':''}</button>
-              <button class="btn btn-warn btn-sm" style="width:100%;margin-top:7px;" onclick="applyMarkWatchedNow(${showIndex},null,${show.leaf_count || 0},this)">Mark show watched now</button>
+              <button class="btn btn-warn btn-sm" style="width:100%;margin-top:7px;" onclick="applyMarkWatchedNow(${showIndex},null,${Math.max(0,(show.leaf_count||0)-(show.viewed_leaf_count||0))},this)">Mark show watched now${(show.leaf_count||0)-(show.viewed_leaf_count||0) > 0 ? ` (${(show.leaf_count||0)-(show.viewed_leaf_count||0)})` : ''}</button>
             </div>
           </article>
           <div class="mw-seasons" id="mw-seasons-${showIndex}"></div>
@@ -420,7 +420,7 @@ async function toggleMarkWatchedSeasons(showIndex) {
           <button class="btn ${season.rule.source==='season'&&season.rule.enabled?'btn-primary':'btn-secondary'}" onclick="setSeasonRule(${showIndex},${season.index},true)">On</button>
           <button class="btn ${season.rule.source==='season'&&!season.rule.enabled?'btn-primary':'btn-secondary'}" onclick="setSeasonRule(${showIndex},${season.index},false)">Off</button>
         </div>
-        <button class="btn btn-warn btn-sm mw-apply-now" onclick="applyMarkWatchedNow(${showIndex},${season.index},${season.leaf_count || 0},this)">Mark season watched now</button>
+        <button class="btn btn-warn btn-sm mw-apply-now" onclick="applyMarkWatchedNow(${showIndex},${season.index},${Math.max(0,(season.leaf_count||0)-(season.viewed_leaf_count||0))},this)">Mark season watched now</button>
       </article>`).join('') || '<div class="empty-msg">No seasons found.</div>'}</div>`;
   } catch (error) { target.innerHTML = `<div class="empty-msg">${h(error.message)}</div>`; }
 }
@@ -498,12 +498,24 @@ async function applyEnabledRulesNow(button) {
 
 // `confirmed` is set by callers that have already asked; button may be absent
 // when the action was not started from one.
+// `episodeCount` is what is actually outstanding, not the size of the show.
+// Asking to confirm "up to 622 episodes" for a show with one unwatched episode
+// described the reading, not the writing, and made a one-episode job look like
+// a library-wide rewrite.
 async function applyMarkWatchedNow(showIndex, seasonIndex, episodeCount,
                                    button, confirmed = false) {
   const show = _markWatchedData.shows[showIndex];
   const scope = seasonIndex === null ? 'show' : 'season';
   const label = scope === 'show' ? show.title : `${show.title} season ${seasonIndex}`;
-  if (!confirmed && !confirm(`Mark every currently unwatched episode in ${label} as watched now?\n\nThis queues up to ${episodeCount} episodes and modifies existing Plex watch history. mediaMender cannot undo this action.`)) return;
+  const outstanding = Math.max(0, Number(episodeCount) || 0);
+  const question = outstanding
+    ? `Mark ${outstanding} unwatched episode${outstanding===1?'':'s'} in ${label} as watched now?\n\n` +
+      'Episodes Plex already counts watched are left alone. This modifies existing ' +
+      'Plex watch history and mediaMender cannot undo it.'
+    : `Plex already counts every episode in ${label} watched.\n\n` +
+      'Continuing only clears leftover resume points, which are what keep a ' +
+      'watched show sitting in Continue Watching. Nothing is marked again.';
+  if (!confirmed && !confirm(question)) return;
   if (button) {
     button.disabled = true;
     button.dataset.label ||= button.innerHTML;
