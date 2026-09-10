@@ -216,12 +216,37 @@ class PlexClient:
         } for item in self._metadata(response)
           if item.get("type") == "season" and item.get("ratingKey")]
 
+    def list_season_episodes(self, show_rating_key: str,
+                             season_index: int) -> List[Dict]:
+        """Episodes of one season, without reading the rest of the show.
+
+        A catch-up scoped to a single season was still pulling every episode
+        the show has - for a long-running series that is thousands of records
+        fetched to look at a dozen.
+        """
+        season = next(
+            (item for item in self.list_show_seasons(show_rating_key)
+             if item["index"] == int(season_index)), None,
+        )
+        if season is None:
+            return []
+        response = self._get(
+            f"/library/metadata/{season['rating_key']}/children", timeout=30,
+        )
+        response.raise_for_status()
+        return self._episode_rows(response, show_rating_key, season["rating_key"])
+
     def list_show_episodes(self, show_rating_key: str) -> List[Dict]:
         """Return episodes for one Plex show, including current watch state."""
         response = self._get(
             f"/library/metadata/{show_rating_key}/allLeaves", timeout=30,
         )
         response.raise_for_status()
+        return self._episode_rows(response, show_rating_key)
+
+    @staticmethod
+    def _episode_rows(response, show_rating_key: str,
+                      season_rating_key: str = "") -> List[Dict]:
         return [{
             "rating_key": str(item.get("ratingKey", "")),
             "season_index": int(item.get("parentIndex", 0) or 0),
@@ -232,10 +257,13 @@ class PlexClient:
             # A resume point keeps an episode in Continue Watching no matter
             # how many times Plex says it has been played.
             "view_offset": int(item.get("viewOffset", 0) or 0),
-        } for item in self._metadata(response)
+        } for item in PlexClient._metadata(response)
           if item.get("type") == "episode"
           and item.get("ratingKey")
-          and str(item.get("grandparentRatingKey", "")) == str(show_rating_key)]
+          # A season listing names the season as the parent, not the show.
+          and (str(item.get("grandparentRatingKey", "")) == str(show_rating_key)
+               or (season_rating_key
+                   and str(item.get("parentRatingKey", "")) == str(season_rating_key)))]
 
     @staticmethod
     def _episode_match(item: Dict, season: int, episode: int) -> Optional[Dict]:

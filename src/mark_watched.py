@@ -456,7 +456,8 @@ class MarkWatchedManager:
                         job_id[:12], attempt)
             result = self.processor(event) or {}
             message = result.get("message", "Marked matched Plex episode watched")
-            self._update(job_id, status="succeeded", result=result, message=message)
+            self._update(job_id, status="succeeded", result=result,
+                         message=message, settled=False)
             self._log(job_id, f"Attempt {attempt}: {message}", result.get("details"))
             logger.info("Mark-it-Watched job %s succeeded: %s", job_id[:12], message)
         except ImportVanished as exc:
@@ -469,6 +470,24 @@ class MarkWatchedManager:
         except PlexEpisodePending as exc:
             self._log(job_id, f"Attempt {attempt}: Plex has not matched {exc}",
                       getattr(exc, "details", None))
+            with self._lock:
+                settled = bool(self._records[job_id].get("settled"))
+            if settled:
+                # This job had already finished; it was only re-checked in case
+                # a rule had changed. Plex no longer having the episode is not
+                # news, and is certainly not a reason to start waiting on an
+                # import that completed long ago.
+                self._update(
+                    job_id, status="succeeded", settled=False,
+                    next_attempt_at=None,
+                    message=(
+                        "Re-checked after the earlier result: Plex no longer "
+                        "has this episode, so the original outcome stands"
+                    ),
+                )
+                logger.info("Mark-it-Watched job %s re-checked and left as it was",
+                            job_id[:12])
+                return self.get(job_id)
             self._retry_or_give_up(
                 job_id, attempt,
                 waiting="Plex has not scanned this episode yet",
@@ -643,6 +662,11 @@ class MarkWatchedManager:
                     "next_attempt_at": None,
                     "message": "Re-queued by a manual Mark-it-Watched retry",
                     "updated_at": _utc_now(),
+                    # Re-checking a job that had already finished must not be
+                    # able to leave it worse off. Without this, an old import
+                    # whose episode Plex no longer holds turned into a job
+                    # waiting for days and asking for scans the whole time.
+                    "settled": skipped,
                 })
                 requeued.append(job_id)
             if requeued:
@@ -1189,13 +1213,17 @@ def process_manual_event(event: dict, app_config, clients: dict) -> dict:
     if not section_id or plex.get_section_type(str(section_id)) != "show":
         raise ValueError("Manual Mark-it-Watched supports TV libraries only")
 
-    episodes = plex.list_show_episodes(show_key)
     if scope == "season":
+        # Ask Plex for the one season rather than the whole show. A catch-up
+        # queues a season-scoped job precisely because the rest of the show has
+        # nothing outstanding, so reading it was pure cost.
         season_index = int(manual["season_index"])
         episodes = [
-            episode for episode in episodes
+            episode for episode in plex.list_season_episodes(show_key, season_index)
             if episode["season_index"] == season_index
         ]
+    else:
+        episodes = plex.list_show_episodes(show_key)
     if not episodes:
         raise ValueError("Plex returned no episodes for the selected scope")
 

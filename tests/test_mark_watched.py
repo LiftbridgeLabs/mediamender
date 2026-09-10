@@ -788,6 +788,49 @@ class MarkWatchedQueueTests(unittest.TestCase):
         self.assertEqual(summary["reconsidered"], 1)
         self.assertEqual(manager.get(record["id"])["status"], "queued")
 
+    def test_re_checking_a_finished_job_cannot_leave_it_waiting(self):
+        """Re-running a job that had already finished must not be able to make
+        things worse. An old import whose episode Plex no longer holds turned
+        into a job waiting for days and asking for library scans throughout."""
+        outcomes = [{"message": "no rule", "matched": 1, "marked": 0}]
+
+        def process(_event):
+            if outcomes:
+                return outcomes.pop()
+            raise PlexEpisodePending("Example Show S02E03")
+
+        manager = MarkWatchedManager(
+            str(self.runtime), processor=process, retry_delays=(300,),
+            autostart=False, sleep=lambda _delay: None,
+        )
+        record, _ = manager.enqueue(sonarr_download())
+        manager._queue.get_nowait()
+        manager.process(record["id"])
+        self.assertEqual(manager.get(record["id"])["status"], "succeeded")
+
+        manager.retry_unfinished()
+        manager._queue.get_nowait()
+        manager.process(record["id"])
+        after = manager.get(record["id"])
+        self.assertEqual(after["status"], "succeeded")
+        self.assertIsNone(after["next_attempt_at"])
+        self.assertIn("original outcome stands", after["message"])
+        self.assertEqual(manager.due_jobs(), [])
+
+    def test_a_genuine_import_still_waits_for_plex(self):
+        """The guard above must not stop a real import from waiting."""
+        def process(_event):
+            raise PlexEpisodePending("Example Show S02E03")
+
+        manager = MarkWatchedManager(
+            str(self.runtime), processor=process, retry_delays=(300,),
+            autostart=False, sleep=lambda _delay: None,
+        )
+        record, _ = manager.enqueue(sonarr_download())
+        manager._queue.get_nowait()
+        manager.process(record["id"])
+        self.assertEqual(manager.get(record["id"])["status"], "waiting")
+
     def test_retry_leaves_an_import_that_marked_something_alone(self):
         manager = MarkWatchedManager(
             str(self.runtime),
@@ -1564,18 +1607,20 @@ class MarkWatchedRuleTests(unittest.TestCase):
         )])
         plex = Mock()
         plex.get_section_type.return_value = "show"
-        plex.list_show_episodes.return_value = [
+        # A season-scoped job reads that season, not the whole show: for a
+        # long-running series the difference is thousands of records.
+        plex.list_season_episodes.return_value = [
             {"rating_key": "21", "season_index": 2, "episode_index": 1,
-             "view_count": 0},
+             "view_count": 0, "view_offset": 0},
             {"rating_key": "22", "season_index": 2, "episode_index": 2,
-             "view_count": 1},
-            {"rating_key": "31", "season_index": 3, "episode_index": 1,
-             "view_count": 0},
+             "view_count": 1, "view_offset": 0},
         ]
         result = process_manual_event({"manual": {
             "scope": "season", "instance": "Plex", "library": "TV",
             "show_rating_key": "10", "season_index": 2,
         }}, config, {"Plex": plex})
+        plex.list_season_episodes.assert_called_once_with("10", 2)
+        plex.list_show_episodes.assert_not_called()
         plex.mark_watched_many.assert_called_once_with(["21"])
         self.assertEqual(result["matched"], 2)
         self.assertEqual(result["marked"], 1)

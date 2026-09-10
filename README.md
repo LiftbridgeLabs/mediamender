@@ -585,6 +585,11 @@ catch-ups that found nothing to do and jobs currently running, so the button is
 safe to press repeatedly. It also brings the worker pool back to strength,
 which makes it the recovery control for a queue that has stopped draining.
 
+Re-checking a job that had already finished can only improve on it: if Plex no
+longer holds that episode, the earlier result stands rather than the job
+starting to wait. An old import cannot be turned back into days of retries and
+library scans by pressing a button.
+
 It works on the job history, so it can only revisit imports mediaMender has
 actually seen. Episodes that arrived before mediaMender was installed, or that
 Sonarr never announced, have no job to re-run: **Catch up now** is the control
