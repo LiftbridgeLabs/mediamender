@@ -844,6 +844,24 @@ class MarkWatchedRuleStore:
                 self._data["seasons"][key] = bool(enabled)
             self._save()
 
+    def _enabled_elsewhere(self, instance: str, library: str,
+                           tvdb_id: str) -> str:
+        """Where else this same show is switched on, if anywhere.
+
+        The same series routinely sits in several libraries at once - a
+        physical copy, a debrid copy, a usenet copy. They are one show, and
+        "auto-watch this show" plainly means the show, not the copy that
+        happened to be on screen when the switch was flipped.
+        """
+        if not tvdb_id:
+            return ""
+        suffix = f"::tvdb-{tvdb_id}"
+        here = f"{instance}::{library}::"
+        for key, value in self._data["shows"].items():
+            if value and key.endswith(suffix) and not key.startswith(here):
+                return key.rsplit("::", 1)[0]
+        return ""
+
     def rule(self, instance: str, library: str, show_rating_key: str,
              season_index: int, tvdb_id: str = "") -> dict:
         with self._lock:
@@ -851,15 +869,26 @@ class MarkWatchedRuleStore:
             season_key = f"{show_key}::{int(season_index)}"
             shows = self._data["shows"]
             seasons = self._data["seasons"]
+            known = show_key in shows
             show_enabled = bool(shows.get(show_key, False))
+            inherited_from = ""
+            if not known:
+                # No rule of its own. Before concluding the show is not wanted,
+                # ask whether this same show is switched on in another library.
+                inherited_from = self._enabled_elsewhere(instance, library, tvdb_id)
+                if inherited_from:
+                    show_enabled = True
             explicit = season_key in seasons
             return {
                 "enabled": bool(seasons[season_key]) if explicit else show_enabled,
-                "source": "season" if explicit else "show",
+                "source": ("season" if explicit
+                           else "library" if inherited_from else "show"),
                 "show_enabled": show_enabled,
-                # "switched off" and "never stored" are different problems, and
-                # only one of them has a fix the operator can act on.
-                "show_known": show_key in shows,
+                # A rule set here always wins, including one set to off: an
+                # explicit choice in this library beats one inherited from
+                # another, the same way a season override beats its show.
+                "show_known": known or bool(inherited_from),
+                "inherited_from": inherited_from,
                 "season_override": seasons.get(season_key) if explicit else None,
             }
 
@@ -1156,6 +1185,8 @@ def process_plex_event(event: dict, app_config, clients: dict,
         reason = (
             f"season override {decision['season_override']}"
             if decision["source"] == "season"
+            else f"inherited from {decision['inherited_from']}"
+            if decision["source"] == "library"
             else f"show default {decision['show_enabled']}"
         )
         if not enabled:
