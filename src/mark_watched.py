@@ -1219,8 +1219,22 @@ def process_plex_event(event: dict, app_config, clients: dict,
             "message": message,
             "matched": len(matched), "marked": 0, "details": details,
         }
+    # A match found by title or absolute number can land on a different
+    # coordinate than Sonarr reported. That is the whole point of those
+    # fallbacks, but it is also the one outcome worth checking by hand, so it
+    # belongs in the summary rather than buried in the trail.
+    moved = sorted({
+        f"S{item['season_index']:02d}E{item['episode_index']:02d}"
+        for item in marked
+        if item.get("matched_by")
+        and item["matched_by"] != "season and episode"
+    })
     return {
-        "message": f"Marked {len(marked)} matched Plex episode(s) watched",
+        "message": (
+            f"Marked {len(marked)} matched Plex episode(s) watched"
+            + (f"; Plex numbers {'it' if len(moved) == 1 else 'them'} "
+               f"{', '.join(moved)}" if moved else "")
+        ),
         "matched": len(matched), "marked": len(marked), "details": details,
         "rating_keys": [item["rating_key"] for item in marked],
     }

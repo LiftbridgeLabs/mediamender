@@ -290,10 +290,17 @@ def explain_episode(raw: dict, rules: dict, jobs: dict, title: str,
             print(f"  {key}: {described or 'no answer'}")
             if not described or described == "does not have this show":
                 continue
-            shows = plex.list_tv_shows_page(str(section), 0, 50, query=title)["shows"]
-            same = [item for item in shows
-                    if item.get("tvdb_id") and item["tvdb_id"] == next(
-                        (s.get("tvdb_id") for s in shows if s.get("tvdb_id")), "")]
+            # Not `shows`: that name holds the rule table this function reads
+            # further down, and rebinding it here made the next library raise
+            # AttributeError on a list.
+            entries = plex.list_tv_shows_page(
+                str(section), 0, 50, query=title,
+            )["shows"]
+            first_tvdb = next(
+                (item.get("tvdb_id") for item in entries if item.get("tvdb_id")), "",
+            )
+            same = [item for item in entries
+                    if item.get("tvdb_id") and item["tvdb_id"] == first_tvdb]
             if len(same) > 1:
                 print(f"      NOTE: this library holds {len(same)} entries for "
                       f"this show: {', '.join(item['rating_key'] for item in same)}")

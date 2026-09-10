@@ -1353,6 +1353,51 @@ class MarkWatchedRuleTests(unittest.TestCase):
         self.assertIn("switched off", disabled["message"])
         self.assertNotIn("re-added", disabled["message"])
 
+    def test_marking_a_different_coordinate_is_stated_in_the_summary(self):
+        """A title or absolute-number match can land on a coordinate Sonarr did
+        not name. That is what those fallbacks are for, and it is also the one
+        outcome worth checking by hand, so it cannot sit in the trail alone."""
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = {
+            "rating_key": "30", "show_rating_key": "10",
+            "season_rating_key": "", "season_index": 6, "episode_index": 11,
+            "title": "Basket Blunders", "show_title": "Chopped",
+            "matched_by": "episode title, as S06E11",
+        }
+        self.rules.set_show("Plex", "TV", "10", True)
+        result = process_plex_event({
+            "series": {"title": "Chopped"},
+            "episodes": [{"season": 6, "episode": 5, "title": "Basket Blunders"}],
+        }, config, {"Plex": plex}, self.rules)
+        self.assertEqual(result["marked"], 1)
+        self.assertIn("Plex numbers it S06E11", result["message"])
+
+    def test_an_ordinary_match_says_nothing_extra(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = {
+            "rating_key": "30", "show_rating_key": "10",
+            "season_rating_key": "", "season_index": 6, "episode_index": 5,
+            "title": "Basket Blunders", "show_title": "Chopped",
+            "matched_by": "season and episode",
+        }
+        self.rules.set_show("Plex", "TV", "10", True)
+        result = process_plex_event({
+            "series": {"title": "Chopped"},
+            "episodes": [{"season": 6, "episode": 5}],
+        }, config, {"Plex": plex}, self.rules)
+        self.assertEqual(result["message"],
+                         "Marked 1 matched Plex episode(s) watched")
+
     def test_a_show_that_never_had_a_rule_is_not_called_orphaned(self):
         """Telling someone a rule was lost, about a show they have only just
         started downloading, is worse than saying nothing. Rules have been
