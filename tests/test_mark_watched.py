@@ -1474,6 +1474,7 @@ class MarkWatchedRuleTests(unittest.TestCase):
         slow.get_section_type.return_value = "show"
         fast.get_section_type.return_value = "show"
         slow.find_episode.return_value = None          # not scanned yet
+        slow.find_show.return_value = {"rating_key": "109241", "tvdb_id": "1234"}
         slow.describe_show.return_value = "has this show (ratingKey 9) holding S06 (5 episodes)"
         fast.find_episode.return_value = {
             "rating_key": "77", "show_rating_key": "46809",
@@ -1491,6 +1492,52 @@ class MarkWatchedRuleTests(unittest.TestCase):
         self.assertIn("Still waiting on libraries whose rule covers this show: "
                       "Unlimited::TV Shows", "\n".join(caught.exception.details))
 
+    def test_a_rule_still_keyed_by_rating_key_also_holds_the_job_open(self):
+        """The show has to be found without the episode, because the episode is
+        what is missing - and a rule written before rules were keyed by TVDB id
+        is still keyed by the ratingKey it was set from. A check that only knew
+        the TVDB id found nothing and waited for nobody."""
+        slow, fast = Mock(), Mock()
+        slow.get_section_type.return_value = "show"
+        fast.get_section_type.return_value = "show"
+        slow.find_episode.return_value = None
+        slow.find_show.return_value = {"rating_key": "109241", "tvdb_id": ""}
+        slow.describe_show.return_value = "has this show (ratingKey 109241)"
+        fast.find_episode.return_value = {
+            "rating_key": "77", "show_rating_key": "46809",
+            "season_rating_key": "", "season_index": 6, "episode_index": 5,
+            "title": "Basket Blunders", "show_title": "Chopped",
+        }
+        # Keyed by ratingKey, with no TVDB id anywhere.
+        self.rules.set_show("Unlimited", "TV Shows", "109241", True)
+        with self.assertRaises(PlexEpisodePending) as caught:
+            process_plex_event({
+                "series": {"title": "Chopped"},
+                "episodes": [{"season": 6, "episode": 5}],
+            }, self._two_library_config(),
+                {"Unlimited": slow, "altmount": fast}, self.rules)
+        self.assertIn("Unlimited::TV Shows", "\n".join(caught.exception.details))
+
+    def test_a_library_without_the_show_is_not_waited_for(self):
+        """Nothing can be owed an episode of a series it does not carry."""
+        slow, fast = Mock(), Mock()
+        slow.get_section_type.return_value = "show"
+        fast.get_section_type.return_value = "show"
+        slow.find_episode.return_value = None
+        slow.find_show.return_value = None
+        fast.find_episode.return_value = {
+            "rating_key": "77", "show_rating_key": "46809",
+            "season_rating_key": "", "season_index": 6, "episode_index": 5,
+            "title": "Basket Blunders", "show_title": "Chopped",
+        }
+        self.rules.set_show("altmount", "TV Shows", "46809", True, tvdb_id="1234")
+        result = process_plex_event({
+            "series": {"title": "Chopped", "tvdb_id": 1234},
+            "episodes": [{"season": 6, "episode": 5}],
+        }, self._two_library_config(),
+            {"Unlimited": slow, "altmount": fast}, self.rules)
+        self.assertEqual(result["marked"], 1)
+
     def test_what_can_be_marked_now_is_marked_before_waiting(self):
         """Waiting for one library must not hold back the marking another has
         already earned - if the slow one never arrives, the job gives up, and
@@ -1499,6 +1546,7 @@ class MarkWatchedRuleTests(unittest.TestCase):
         slow.get_section_type.return_value = "show"
         fast.get_section_type.return_value = "show"
         slow.find_episode.return_value = None
+        slow.find_show.return_value = {"rating_key": "109241", "tvdb_id": "1234"}
         slow.describe_show.return_value = "has this show (ratingKey 9) holding S06 (5 episodes)"
         fast.find_episode.return_value = {
             "rating_key": "77", "show_rating_key": "46809",

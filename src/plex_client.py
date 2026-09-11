@@ -455,6 +455,32 @@ class PlexClient:
             return None
         return None
 
+    def find_show(self, section_id: str, show_title: str,
+                  tvdb_id: str = "") -> Optional[Dict]:
+        """Locate a show in one library without needing one of its episodes.
+
+        A rule is stored against the show, so deciding whether a library is
+        still owed an episode needs the show's identity there - which cannot
+        come from the episode, because the episode is what is missing.
+        """
+        try:
+            found = self.list_tv_shows_page(
+                section_id, 0, 50, query=show_title,
+            )["shows"]
+        except (requests.RequestException, ValueError) as exc:
+            logger.debug("Plex could not search %s for %r: %s",
+                         section_id, show_title, exc)
+            return None
+        if tvdb_id:
+            for show in found:
+                if show.get("tvdb_id") == tvdb_id:
+                    return show
+        normalized = normalize_show_title(show_title)
+        for show in found:
+            if normalized and normalize_show_title(show["title"]) == normalized:
+                return show
+        return None
+
     def describe_show(self, section_id: str, show_title: str) -> str:
         """What this library actually holds for a show, for a job that is stuck.
 

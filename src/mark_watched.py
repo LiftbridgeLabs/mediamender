@@ -1164,13 +1164,24 @@ def process_plex_event(event: dict, app_config, clients: dict,
     # before the job is done, however many other libraries already have.
     tvdb = str(event["series"].get("tvdb_id") or "")
     awaiting = []
-    for library_key in searched:
+    for library_key, plex, section_id in scannable:
         instance_name, _, library_name = library_key.partition("::")
         if expected_coordinates <= matched_per_library.get(library_key, set()):
             continue
-        if not tvdb:
+        # The rule is stored against the show, and the show has to be found
+        # without the episode - the episode is what is missing. Asking by
+        # ratingKey as well as TVDB id matters: a rule written before rules
+        # were keyed by TVDB is still keyed by the ratingKey it was set from,
+        # and a check that only knew the TVDB id would quietly find nothing.
+        show = plex.find_show(section_id, event["series"]["title"], tvdb)
+        if not isinstance(show, dict) or not show.get("rating_key"):
+            # No show here means nothing to wait for: this library cannot be
+            # owed an episode of a series it does not carry.
             continue
-        decision = rules.rule(instance_name, library_name, "", 0, tvdb_id=tvdb)
+        decision = rules.rule(
+            instance_name, library_name, show["rating_key"], 0,
+            tvdb_id=show.get("tvdb_id", "") or tvdb,
+        )
         if decision["enabled"]:
             awaiting.append(library_key)
 
