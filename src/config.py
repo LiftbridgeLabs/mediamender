@@ -95,6 +95,11 @@ class MarkWatchedConfig:
     # rather than comparing against None directly.
     visible_libraries: Optional[List[str]] = None
     workers: int = 4
+    # A rule fires on import, so an episode that arrived before the rule - or
+    # that Sonarr never announced - stays unwatched however plainly the page
+    # shows a rule covering it. Empty means the catch-up only ever runs when
+    # someone presses the button, which is the behaviour this started with.
+    catch_up_cron: str = ""
 
     def shows_library(self, instance: str, library: str) -> bool:
         """Whether this Plex library is visible to Mark-it-Watched."""

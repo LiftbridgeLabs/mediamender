@@ -430,6 +430,11 @@
             </div>
           </div>
           <div class="metadata-setting-row"><div><strong>Ask Plex to scan</strong><br><span>Request a scan of the imported folder instead of only polling for it.</span></div><button type="button" class="metadata-setting-toggle" id="s-mw-scan" onclick="toggleScanOnImport()"></button></div>
+          <div class="form-group" style="margin-top:14px;">
+            <label class="form-label" for="s-mw-catch-up">Scheduled catch-up</label>
+            <input class="form-input" id="s-mw-catch-up" type="text" placeholder="Leave blank to run it only by hand">
+            <div class="form-hint">A cron expression, for example <code>0 4 * * *</code> for 4am daily. A rule only fires on import, so an episode that arrived before the rule was set, or that Sonarr never announced, is never reached automatically &mdash; this applies the rules you already have to what Plex already holds. It writes Plex watch history, deals only in what is still unwatched, and skips seasons switched off by an override.</div>
+          </div>
         </div></div>
         <div class="repair-section-heading"><h3 class="repair-section-title">Library visibility</h3><div class="repair-section-line"></div><button class="btn btn-secondary btn-sm" onclick="useAllMarkWatchedLibraries()">Use all configured</button></div>
         <div id="mark-watched-settings"></div>

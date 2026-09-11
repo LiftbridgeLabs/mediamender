@@ -453,6 +453,20 @@ def _setup_scheduler(new_config: AppConfig = None):
                     name=f"{inst.name} / {lib.name}",
                     replace_existing=True,
                 )
+    if target.features.mark_watched and target.mark_watched.catch_up_cron.strip():
+        # A rule fires on import, so anything already in the library when the
+        # rule was set - or that Sonarr never announced - is never reached by
+        # the automatic path. Off unless asked for: it writes Plex history.
+        from src.web.mark_watched import start_catch_up
+        scheduler.add_job(
+            lambda: start_catch_up("schedule"),
+            CronTrigger.from_crontab(target.mark_watched.catch_up_cron.strip()),
+            id="mark-watched-catch-up",
+            name="Mark-it-Watched catch-up",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+        )
     if target.features.library_refresh:
         for inst in target.instances:
             for lib in inst.libraries:
@@ -1961,6 +1975,9 @@ def api_config_load():
         mark_settings.setdefault("workers", config.mark_watched.workers)
         mark_settings.setdefault(
             "scan_on_import", config.mark_watched.scan_on_import,
+        )
+        mark_settings.setdefault(
+            "catch_up_cron", config.mark_watched.catch_up_cron,
         )
         for instance in raw.get("plex_instances", []):
             if isinstance(instance, dict):

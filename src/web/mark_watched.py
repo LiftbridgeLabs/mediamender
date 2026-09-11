@@ -1017,6 +1017,59 @@ def _enumerate_enabled_rules():
                     yield instance, library, show, seasons, enabled, outstanding
 
 
+def enqueue_catch_up(owner: str = "") -> dict:
+    """Queue an update for every show whose rule is on and is short of episodes.
+
+    Deals only in the difference: Plex reports a watched count on the show and
+    season listings, so anything already complete is skipped without its
+    episodes being read at all.
+    """
+    shows = seasons_queued = 0
+    for (instance, library, show, seasons, enabled,
+         outstanding) in _enumerate_enabled_rules():
+        shows += 1
+        # Only queue the whole show when every season is both enabled and has
+        # something left to mark.
+        whole_show = len(enabled) == len(seasons) == len(outstanding)
+        targets = ([None] if whole_show
+                   else [season["index"] for season in outstanding])
+        for season_index in targets:
+            manual = {
+                "scope": "show" if season_index is None else "season",
+                "instance": instance.name,
+                "library": library.name,
+                "show_rating_key": show["rating_key"],
+            }
+            if season_index is not None:
+                manual["season_index"] = season_index
+            runtime.mark_watched.enqueue_manual({
+                "series": {"title": show.get("title", "Plex show")},
+                "manual": manual,
+                "rule_user": owner,
+            })
+            seasons_queued += 1
+    runtime.logger.info(
+        "Queued a catch-up for %s show(s) with unwatched episodes (%s job(s)); "
+        "fully watched shows were skipped without reading their episodes",
+        shows, seasons_queued,
+    )
+    return {"shows": shows, "jobs": seasons_queued}
+
+
+def start_catch_up(owner: str = "") -> None:
+    """Run the catch-up in the background, whoever asked for it."""
+    def run():
+        try:
+            enqueue_catch_up(owner)
+        except Exception:
+            runtime.logger.exception("Could not queue the Mark-it-Watched catch-up")
+
+    runtime.mark_watched.start()
+    threading.Thread(
+        target=run, daemon=True, name="mark-watched-catch-up",
+    ).start()
+
+
 @bp.route("/api/mark-watched/apply-rules", methods=["POST"])
 @require_auth
 @requires_feature("mark_watched")
@@ -1033,49 +1086,8 @@ def api_mark_watched_apply_rules():
             "error": "Confirmation must be MARK WATCHED NOW",
         }), 400
 
-    def enqueue_all():
-        shows = seasons_queued = 0
-        try:
-            for (instance, library, show, seasons, enabled,
-                 outstanding) in _enumerate_enabled_rules():
-                shows += 1
-                # Only queue the whole show when every season is both enabled
-                # and has something left to mark.
-                whole_show = (
-                    len(enabled) == len(seasons) == len(outstanding)
-                )
-                targets = (
-                    [None] if whole_show
-                    else [season["index"] for season in outstanding]
-                )
-                for season_index in targets:
-                    manual = {
-                        "scope": "show" if season_index is None else "season",
-                        "instance": instance.name,
-                        "library": library.name,
-                        "show_rating_key": show["rating_key"],
-                    }
-                    if season_index is not None:
-                        manual["season_index"] = season_index
-                    runtime.mark_watched.enqueue_manual({
-                        "series": {"title": show.get("title", "Plex show")},
-                        "manual": manual,
-                        "rule_user": owner,
-                    })
-                    seasons_queued += 1
-            runtime.logger.info(
-                "Queued a catch-up for %s show(s) with unwatched episodes "
-                "(%s job(s)); fully watched shows were skipped without reading "
-                "their episodes", shows, seasons_queued,
-            )
-        except Exception:
-            runtime.logger.exception("Could not queue the Mark-it-Watched catch-up")
-
     owner = runtime._current_username()
-    runtime.mark_watched.start()
-    threading.Thread(
-        target=enqueue_all, daemon=True, name="mark-watched-catch-up",
-    ).start()
+    start_catch_up(owner)
     return jsonify({
         "queued": True,
         "message": (

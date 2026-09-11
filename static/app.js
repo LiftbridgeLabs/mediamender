@@ -2198,6 +2198,8 @@ function renderMarkWatchedSettings() {
         return `<div class="metadata-setting-row"><div><strong>${h(library.name)}</strong><br><span>${visible?'Shown on Mark-it-Watched':'Hidden from Mark-it-Watched'}</span></div><button type="button" class="metadata-setting-toggle ${visible?'':'ignored'}" onclick="setMarkWatchedLibraryVisibility(${instanceIndex},${libraryIndex},${!visible})"><span>${visible?'Visible':'Hidden'}</span><span>${visible?'Users can set rules':'Excluded from rules page'}</span></button></div>`;
       }).join('') || '<div class="empty-msg">No libraries configured.</div>'}
     </div></div></section>`).join('') || '<div class="empty-msg">No Plex instances configured.</div>';
+  const catchUp = document.getElementById('s-mw-catch-up');
+  if (catchUp) catchUp.value = _settingsData.mark_watched.catch_up_cron || '';
   const giveUp = document.getElementById('s-mw-give-up');
   if (giveUp) giveUp.value = _settingsData.mark_watched.give_up_after_hours ?? 120;
   const workers = document.getElementById('s-mw-workers');
@@ -2926,6 +2928,7 @@ const SETTINGS_SECTION_PAYLOAD = {
       webhook_secret: document.getElementById('mark-watched-webhook-secret')?.value || '',
       give_up_after_hours: Math.max(0, parseFloat(document.getElementById('s-mw-give-up')?.value ?? '120') || 0),
       workers: Math.min(16, Math.max(1, parseInt(document.getElementById('s-mw-workers')?.value ?? '4') || 4)),
+      catch_up_cron: document.getElementById('s-mw-catch-up')?.value.trim() || '',
     },
   }),
   'features': () => ({ features: _settingsData.features }),

@@ -1353,6 +1353,31 @@ class MarkWatchedRuleTests(unittest.TestCase):
         self.assertIn("switched off", disabled["message"])
         self.assertNotIn("re-added", disabled["message"])
 
+    def test_the_catch_up_schedule_is_off_unless_asked_for(self):
+        """It writes Plex watch history on a timer, so it is never a default."""
+        self.assertEqual(MarkWatchedConfig().catch_up_cron, "")
+
+    def test_a_catch_up_schedule_is_registered_when_set(self):
+        config = AppConfig(
+            instances=[],
+            mark_watched=MarkWatchedConfig(catch_up_cron="0 4 * * *"),
+        )
+        with patch.object(app, "scheduler") as scheduler:
+            app._setup_scheduler(config)
+        registered = [
+            call.kwargs.get("id") for call in scheduler.add_job.call_args_list
+        ]
+        self.assertIn("mark-watched-catch-up", registered)
+
+    def test_no_schedule_is_registered_without_one(self):
+        config = AppConfig(instances=[], mark_watched=MarkWatchedConfig())
+        with patch.object(app, "scheduler") as scheduler:
+            app._setup_scheduler(config)
+        registered = [
+            call.kwargs.get("id") for call in scheduler.add_job.call_args_list
+        ]
+        self.assertNotIn("mark-watched-catch-up", registered)
+
     def test_a_season_switched_off_survives_marking_the_whole_show(self):
         """Setting a show to auto-watch and then turning one season off is a
         statement about that season. Marking the show should not undo it."""
