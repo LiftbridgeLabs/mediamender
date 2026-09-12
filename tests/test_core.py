@@ -937,6 +937,58 @@ class MetadataAuditTests(unittest.TestCase):
         self.assertEqual(app._status_refresh_progress["total"], 1)
 
 
+class FileCoverageTests(unittest.TestCase):
+    """A ratio well under the threshold has two very different causes: the
+    library has lost files, or the count only covered part of it."""
+
+    def test_a_short_ratio_names_the_folders_it_never_counted(self):
+        from src.checks import check_file_threshold
+        with patch("src.checks.count_files", return_value=1975):
+            result = check_file_threshold(
+                "/mnt/symlink_media/tv-anime", 0.9, 3398,
+                plex_locations=["/mnt/symlink_media/tv-anime",
+                                "/mnt/user/media/tv-anime-archive"],
+            )
+        self.assertFalse(result["pass"])
+        self.assertIn("Ratio 58.1%", result["detail"])
+        self.assertIn("/mnt/user/media/tv-anime-archive", result["detail"])
+        self.assertIn("add that path", result["detail"])
+        # The folder that is covered is not reported as missing.
+        self.assertNotIn("Plex also scans /mnt/symlink_media/tv-anime,",
+                         result["detail"])
+
+    def test_full_coverage_adds_nothing_to_the_message(self):
+        from src.checks import check_file_threshold
+        with patch("src.checks.count_files", return_value=1975):
+            result = check_file_threshold(
+                "/mnt/symlink_media/tv-anime", 0.9, 3398,
+                plex_locations=["/mnt/symlink_media/tv-anime"],
+            )
+        self.assertNotIn("Plex also scans", result["detail"])
+
+    def test_a_server_that_does_not_say_gets_the_plain_message(self):
+        from src.checks import check_file_threshold
+        with patch("src.checks.count_files", return_value=1975):
+            result = check_file_threshold("/mnt/tv", 0.9, 3398)
+        self.assertNotIn("Plex also scans", result["detail"])
+
+    def test_section_locations_come_from_plex(self):
+        client = PlexClient("http://plex:32400", "token")
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"MediaContainer": {"Directory": [
+            {"key": "9", "title": "TV Anime", "type": "show", "Location": [
+                {"path": "/mnt/symlink_media/tv-anime"},
+                {"path": "/mnt/user/media/anime"},
+            ]},
+        ]}}
+        with patch.object(client, "_get", return_value=response):
+            self.assertEqual(
+                client.get_section_locations("9"),
+                ["/mnt/symlink_media/tv-anime", "/mnt/user/media/anime"],
+            )
+
+
 class SafetyTests(unittest.TestCase):
     @staticmethod
     def _run_objects(max_items=1000, max_percent=25):

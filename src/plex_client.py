@@ -595,12 +595,32 @@ class PlexClient:
         r = self._get("/library/sections")
         r.raise_for_status()
         sections = [
-            {"id": str(s["key"]), "title": s["title"], "type": s["type"]}
+            {
+                "id": str(s["key"]), "title": s["title"], "type": s["type"],
+                # Plex names the folders it scans. Without them a file count
+                # that disagrees with Plex has no way to say whether the
+                # library is short of files or the count is short of folders.
+                "locations": [
+                    str(entry.get("path", ""))
+                    for entry in (s.get("Location") or [])
+                    if entry.get("path")
+                ],
+            }
             for s in r.json().get("MediaContainer", {}).get("Directory", [])
         ]
         self._sections_cache = sections
         self._sections_cached_at = time.monotonic()
         return [dict(section) for section in sections]
+
+    def get_section_locations(self, section_id: str) -> List[str]:
+        """The folders Plex itself scans for one section."""
+        try:
+            for section in self.get_sections():
+                if str(section["id"]) == str(section_id):
+                    return list(section.get("locations") or [])
+        except Exception as exc:
+            logger.debug("Plex would not list section locations: %s", exc)
+        return []
 
     def get_machine_identifier(self) -> Optional[str]:
         try:

@@ -166,6 +166,13 @@ and a reload returns you where you were.
 
 For mixed libraries the file threshold check combines all paths before comparing to your Plex count, so individual paths don't need to hold the full library.
 
+A ratio well under the threshold has two very different causes: the library has
+genuinely lost files, or the count only covered part of it. Plex names the
+folders it scans, so a failing check compares them against the paths configured
+here and names any it never counted - a library Plex scans from two folders and
+mediaMender knows one of will sit short of the threshold forever, however
+healthy it is.
+
 ### Threshold
 
 `min_threshold` is the percentage of your Plex library count that must exist on disk. Default is 90. If you have 1000 movies in Plex and only 850 files on disk, that's 85% — below 90%, so the empty gets skipped.

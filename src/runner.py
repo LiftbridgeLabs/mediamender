@@ -134,7 +134,8 @@ def _record(instance_name: str, library_name: str, status: str,
 # ── Per-path checks ───────────────────────────────────────────────────────────
 
 def _run_path_checks(path_cfg: PathConfig, plex_count: Optional[int],
-                     config: AppConfig, skip_threshold: bool = False) -> Dict:
+                     config: AppConfig, skip_threshold: bool = False,
+                     plex_locations: Optional[List[str]] = None) -> Dict:
     """
     Run all checks appropriate for a single path based on its type.
     skip_threshold=True skips the individual file count check (used for mixed
@@ -153,7 +154,8 @@ def _run_path_checks(path_cfg: PathConfig, plex_count: Optional[int],
     # 3. File threshold — skipped for mixed (handled at library level)
     if not skip_threshold:
         results[f"Files ({label})"] = check_file_threshold(
-            path_cfg.path, path_cfg.min_threshold, plex_count
+            path_cfg.path, path_cfg.min_threshold, plex_count,
+            plex_locations=plex_locations,
         )
 
     # 4. Provider API checks — optional
@@ -416,9 +418,14 @@ def _collect_library_checks(instance: PlexInstanceConfig,
                             plex_checks: Optional[Dict] = None,
                             section_id: Optional[str] = None) -> tuple[Dict, Optional[int]]:
     all_checks = dict(plex_checks or run_instance_checks(instance, plex))
-    plex_count = plex.get_library_item_count(
-        section_id or library.section_id or plex.find_section_id(library.name)
-    )
+    section = section_id or library.section_id or plex.find_section_id(library.name)
+    plex_count = plex.get_library_item_count(section)
+    # What Plex itself scans, so a count that disagrees can say whether the
+    # library is short of files or the configuration is short of folders.
+    try:
+        plex_locations = plex.get_section_locations(section) if section else []
+    except Exception:
+        plex_locations = []
     if not library.paths:
         all_checks["Files (paths)"] = {
             "pass": False,
@@ -427,7 +434,8 @@ def _collect_library_checks(instance: PlexInstanceConfig,
     is_mixed = library.type == "mixed"
     for path_cfg in library.paths:
         all_checks.update(_run_path_checks(
-            path_cfg, plex_count, config, skip_threshold=is_mixed
+            path_cfg, plex_count, config, skip_threshold=is_mixed,
+            plex_locations=plex_locations,
         ))
     if is_mixed and library.paths:
         all_checks["Files (combined)"] = _run_mixed_threshold(library, plex_count)

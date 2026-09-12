@@ -203,8 +203,33 @@ def count_files(path: str) -> int:
     return total
 
 
+def coverage_note(path: str, plex_locations: Optional[List[str]]) -> str:
+    """Say when Plex scans folders this count never looked at.
+
+    A ratio well under the threshold has two very different causes: the library
+    really has lost files, or the count only covered part of it. Plex names the
+    folders it scans, so the difference is knowable rather than guessed at.
+    """
+    if not plex_locations:
+        return ""
+    counted = os.path.normpath(path).rstrip(os.sep).casefold()
+    uncovered = [
+        location for location in plex_locations
+        if not os.path.normpath(location).rstrip(os.sep).casefold().startswith(counted)
+    ]
+    if not uncovered:
+        return ""
+    return (
+        f" Plex also scans {', '.join(uncovered)}, which this count does not "
+        f"cover - add {'those paths' if len(uncovered) > 1 else 'that path'} "
+        f"to this library in Settings, or the ratio will stay short however "
+        f"healthy the library is."
+    )
+
+
 def check_file_threshold(path: str, min_threshold: float,
-                         plex_count: Optional[int]) -> Dict:
+                         plex_count: Optional[int],
+                         plex_locations: Optional[List[str]] = None) -> Dict:
     """
     Validate file count on disk using ratio check only.
     disk_count / plex_count must be >= min_threshold.
@@ -229,7 +254,8 @@ def check_file_threshold(path: str, min_threshold: float,
                 "plex_count": plex_count,
                 "detail":     (f"Ratio {ratio*100:.1f}% below threshold "
                                f"{min_threshold*100:.0f}% "
-                               f"({disk_count} on disk / {plex_count} in Plex)")
+                               f"({disk_count} on disk / {plex_count} in Plex)."
+                               + coverage_note(path, plex_locations))
             }
         return {
             "pass":       True,
