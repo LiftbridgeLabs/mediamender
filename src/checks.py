@@ -237,13 +237,14 @@ def coverage_note(path: str, plex_locations: Optional[List[str]]) -> str:
         return (
             f" This path is not one of the folders Plex scans for this "
             f"library, so the two counts are of different things. Plex scans "
-            f"{', '.join(uncovered)} - point this library there in Settings."
+            f"{', '.join(uncovered)} - point this library there under "
+            f"Empty Trash > Configure."
         )
     return (
         f" Plex also scans {', '.join(uncovered)}, which this count does not "
         f"cover - add {'those paths' if len(uncovered) > 1 else 'that path'} "
-        f"to this library in Settings, or the ratio will stay short however "
-        f"healthy the library is."
+        f"to this library under Empty Trash > Configure, or the ratio will "
+        f"stay short however healthy the library is."
     )
 
 

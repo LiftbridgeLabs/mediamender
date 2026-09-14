@@ -952,7 +952,10 @@ class FileCoverageTests(unittest.TestCase):
         self.assertFalse(result["pass"])
         self.assertIn("Ratio 58.1%", result["detail"])
         self.assertIn("/mnt/user/media/tv-anime-archive", result["detail"])
+        # Naming the screen matters: Settings > Plex Instances looks like the
+        # place and is not, so "in Settings" sends people the wrong way.
         self.assertIn("add that path", result["detail"])
+        self.assertIn("Empty Trash > Configure", result["detail"])
         # The folder that is covered is not reported as missing.
         self.assertNotIn("Plex also scans /mnt/symlink_media/tv-anime,",
                          result["detail"])
@@ -970,6 +973,7 @@ class FileCoverageTests(unittest.TestCase):
         self.assertFalse(result["pass"])
         self.assertIn("not one of the folders Plex scans", result["detail"])
         self.assertIn("point this library there", result["detail"])
+        self.assertIn("Empty Trash > Configure", result["detail"])
         self.assertNotIn("Plex also scans", result["detail"])
 
     def test_a_parent_of_a_plex_folder_is_treated_as_partial_cover(self):
