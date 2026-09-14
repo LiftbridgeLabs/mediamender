@@ -1091,9 +1091,12 @@ def _queue_on_deck_leftovers(owner: str = "") -> int:
                 if show_key in seen:
                     continue
                 seen.add(show_key)
-                # Only a show already fully watched: anything else was queued
-                # by the rule walk and does not need queueing twice.
-                if item["view_count"] < 1:
+                # Only a watched episode that still holds a resume point.
+                # Anything unwatched was queued by the rule walk, and a watched
+                # episode with no offset is Plex's hub lagging behind its own
+                # state - there is nothing there to clear, and queueing it
+                # every run would be work for a screen that will catch up.
+                if item["view_count"] < 1 or item["view_offset"] < 1:
                     continue
                 if not runtime.mark_watched_rules.rule(
                     instance.name, library.name, show_key, 0,

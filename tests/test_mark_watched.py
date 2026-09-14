@@ -1375,6 +1375,11 @@ class MarkWatchedRuleTests(unittest.TestCase):
             {"rating_key": "e2", "show_rating_key": "11", "show_title": "Other",
              "season_index": 1, "episode_index": 1,
              "view_count": 0, "view_offset": 0},
+            # Watched with nothing to resume from: Plex's hub is simply behind
+            # its own state, and will catch up on its own.
+            {"rating_key": "e3", "show_rating_key": "12", "show_title": "Stale",
+             "season_index": 1, "episode_index": 1,
+             "view_count": 1, "view_offset": 0},
         ]
         queued = []
         manager = Mock()

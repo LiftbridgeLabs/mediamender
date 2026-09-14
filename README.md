@@ -593,7 +593,11 @@ A show Plex counts fully watched is skipped by the rule walk, which is what
 keeps a catch-up cheap - but a watched episode holding a resume point sits on
 the home screen regardless of any count, so that skip would leave it there for
 good. Plex lists those in one request per library, and any belonging to a show
-whose rule is on is queued like the rest.
+whose rule is on is queued like the rest. Only an episode that is watched *and*
+still holds a resume point counts: Plex's hub caches, so a watched episode with
+nothing to resume from is the screen lagging its own state rather than anything
+to fix, and queueing it every run would be work for a display that catches up
+by itself.
 
 It only ever deals in the difference. Plex reports a watched count on the show
 and season listings, so a show or season already fully watched is skipped
