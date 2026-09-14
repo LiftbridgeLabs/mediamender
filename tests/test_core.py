@@ -957,6 +957,33 @@ class FileCoverageTests(unittest.TestCase):
         self.assertNotIn("Plex also scans /mnt/symlink_media/tv-anime,",
                          result["detail"])
 
+    def test_a_path_plex_does_not_scan_is_called_what_it_is(self):
+        """Counting 1,975 files somewhere Plex never looks is not an
+        incomplete count, it is the wrong folder - and "Plex also scans"
+        invites adding a second path when the first should be replaced."""
+        from src.checks import check_file_threshold
+        with patch("src.checks.count_files", return_value=1975):
+            result = check_file_threshold(
+                "/mnt/symlink_media/tv-anime-old", 0.9, 3401,
+                plex_locations=["/mnt/symlink_media/symlinks/nzbdav/tv-anime"],
+            )
+        self.assertFalse(result["pass"])
+        self.assertIn("not one of the folders Plex scans", result["detail"])
+        self.assertIn("point this library there", result["detail"])
+        self.assertNotIn("Plex also scans", result["detail"])
+
+    def test_a_parent_of_a_plex_folder_is_treated_as_partial_cover(self):
+        """Configuring the parent is an incomplete count, not a wrong one."""
+        from src.checks import check_file_threshold
+        with patch("src.checks.count_files", return_value=1975):
+            result = check_file_threshold(
+                "/mnt/symlink_media/symlinks", 0.9, 3401,
+                plex_locations=["/mnt/symlink_media/symlinks/nzbdav/tv-anime",
+                                "/mnt/other/anime"],
+            )
+        self.assertIn("Plex also scans /mnt/other/anime", result["detail"])
+        self.assertNotIn("not one of the folders", result["detail"])
+
     def test_full_coverage_adds_nothing_to_the_message(self):
         from src.checks import check_file_threshold
         with patch("src.checks.count_files", return_value=1975):

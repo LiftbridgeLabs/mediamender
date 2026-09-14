@@ -213,12 +213,32 @@ def coverage_note(path: str, plex_locations: Optional[List[str]]) -> str:
     if not plex_locations:
         return ""
     counted = os.path.normpath(path).rstrip(os.sep).casefold()
+    normalized = [
+        (location, os.path.normpath(location).rstrip(os.sep).casefold())
+        for location in plex_locations
+    ]
     uncovered = [
-        location for location in plex_locations
-        if not os.path.normpath(location).rstrip(os.sep).casefold().startswith(counted)
+        location for location, candidate in normalized
+        if not candidate.startswith(counted)
     ]
     if not uncovered:
         return ""
+    # A path that is not inside any folder Plex scans is not an incomplete
+    # count, it is the wrong folder - and saying "Plex also scans" invites
+    # adding a second path when the first one should be replaced.
+    # Unrelated only when nothing lines up in either direction: no Plex folder
+    # sits inside this path, and this path sits inside no Plex folder.
+    covers_something = len(uncovered) < len(normalized)
+    inside_a_plex_folder = any(
+        counted.startswith(candidate) for _location, candidate in normalized
+    )
+    unrelated = not covers_something and not inside_a_plex_folder
+    if unrelated:
+        return (
+            f" This path is not one of the folders Plex scans for this "
+            f"library, so the two counts are of different things. Plex scans "
+            f"{', '.join(uncovered)} - point this library there in Settings."
+        )
     return (
         f" Plex also scans {', '.join(uncovered)}, which this count does not "
         f"cover - add {'those paths' if len(uncovered) > 1 else 'that path'} "
