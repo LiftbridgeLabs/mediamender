@@ -1583,6 +1583,31 @@ class MarkWatchedRuleTests(unittest.TestCase):
             {"Unlimited": slow, "altmount": fast}, self.rules)
         self.assertEqual(result["marked"], 1)
 
+    def test_a_play_plex_does_not_keep_is_not_reported_as_marked(self):
+        """Reporting an episode marked while Plex still counts it unwatched is
+        the one failure that cannot be told from success by looking here."""
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_episode.return_value = {
+            "rating_key": "30", "show_rating_key": "10",
+            "season_rating_key": "", "season_index": 2, "episode_index": 3,
+            "title": "Done", "show_title": "Example Show",
+        }
+        plex.mark_watched.return_value = False   # Plex did not keep it
+        self.rules.set_show("Plex", "TV", "10", True)
+        result = process_plex_event({
+            "series": {"title": "Example Show"},
+            "episodes": [{"season": 2, "episode": 3}],
+        }, config, {"Plex": plex}, self.rules)
+        self.assertEqual(result["marked"], 0)
+        self.assertIn("still reports them unwatched", result["message"])
+        self.assertIn("still reports this episode unwatched",
+                      "\n".join(result["details"]))
+
     def test_marking_a_different_coordinate_is_stated_in_the_summary(self):
         """A title or absolute-number match can land on a coordinate Sonarr did
         not name. That is what those fallbacks are for, and it is also the one
@@ -2009,9 +2034,13 @@ class PlexMarkWatchedClientTests(unittest.TestCase):
         }]}}
         scrobble = Mock()
         progress = Mock()
+        confirm = Mock()
+        confirm.json.return_value = {"MediaContainer": {"Metadata": [
+            {"ratingKey": "30", "viewCount": 1},
+        ]}}
         with patch.object(client, "_get",
-                          side_effect=[provider, scrobble, progress]) as get:
-            client.mark_watched("30")
+                          side_effect=[provider, scrobble, progress, confirm]) as get:
+            self.assertTrue(client.mark_watched("30"))
         calls = [(call.args[0], call.kwargs.get("params", {})) for call in get.call_args_list]
         self.assertEqual(calls[1][0], "/:/scrobble")
         self.assertEqual(calls[1][1]["key"], "30")
@@ -2027,9 +2056,25 @@ class PlexMarkWatchedClientTests(unittest.TestCase):
         scrobble = Mock()
         with patch.object(client, "_scrobble_endpoint", return_value=(
                 "/:/scrobble", "com.plexapp.plugins.library")),              patch.object(client, "_get", side_effect=[
-                 scrobble, requests.RequestException("nope")]):
-            client.mark_watched("30")
+                 scrobble, requests.RequestException("nope"),
+                 requests.RequestException("nor this")]):
+            # Unknowable is not failure: a server that will not answer the
+            # read-back is reported as having kept the play.
+            self.assertTrue(client.mark_watched("30"))
         scrobble.raise_for_status.assert_called_once_with()
+
+    def test_a_play_plex_did_not_keep_is_reported(self):
+        """A scrobble answers 200 whether or not the play was stored, so the
+        status proves the request arrived and nothing more."""
+        client = PlexClient("http://plex", "token")
+        scrobble, progress, confirm = Mock(), Mock(), Mock()
+        confirm.json.return_value = {"MediaContainer": {"Metadata": [
+            {"ratingKey": "30", "viewCount": 0},
+        ]}}
+        with patch.object(client, "_scrobble_endpoint", return_value=(
+                "/:/scrobble", "com.plexapp.plugins.library")),              patch.object(client, "_get",
+                          side_effect=[scrobble, progress, confirm]):
+            self.assertFalse(client.mark_watched("30"))
 
     def test_list_show_episodes_returns_watch_state_for_exact_show(self):
         client = PlexClient("http://plex", "token")
@@ -2148,16 +2193,25 @@ class PlexMarkWatchedClientTests(unittest.TestCase):
 
     def test_mark_watched_many_discovers_scrobble_endpoint_once(self):
         client = PlexClient("http://plex", "token")
-        responses = [Mock(), Mock(), Mock(), Mock()]
+        def confirmed(key):
+            response = Mock()
+            response.json.return_value = {"MediaContainer": {"Metadata": [
+                {"ratingKey": key, "viewCount": 1},
+            ]}}
+            return response
+
+        responses = [Mock(), Mock(), confirmed("21"),
+                     Mock(), Mock(), confirmed("22")]
         with patch.object(client, "_scrobble_endpoint", return_value=(
             "/:/scrobble", "com.plexapp.plugins.library",
         )) as endpoint, patch.object(client, "_get", side_effect=responses) as get:
-            client.mark_watched_many(["21", "22"])
+            self.assertEqual(client.mark_watched_many(["21", "22"]), [])
         endpoint.assert_called_once_with()
-        # A scrobble and a progress reset for each.
-        self.assertEqual(get.call_count, 4)
+        # A scrobble, a progress reset and a read-back for each.
+        self.assertEqual(get.call_count, 6)
         self.assertEqual([call.args[0] for call in get.call_args_list],
-                         ["/:/scrobble", "/:/progress"] * 2)
+                         ["/:/scrobble", "/:/progress", "/library/metadata/21",
+                          "/:/scrobble", "/:/progress", "/library/metadata/22"])
 
     def test_list_tv_shows_page_uses_plex_container_pagination(self):
         client = PlexClient("http://plex", "token")

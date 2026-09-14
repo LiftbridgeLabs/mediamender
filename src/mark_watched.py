@@ -1118,6 +1118,7 @@ def process_plex_event(event: dict, app_config, clients: dict,
                     f"{via}{renamed})"
                 )
     unmatched_rules = []
+    unconfirmed: list = []
     for item in matched:
         library_key = f"{item['instance_name']}::{item['library_name']}"
         location = (
@@ -1157,7 +1158,16 @@ def process_plex_event(event: dict, app_config, clients: dict,
             details.append(f"{location}: no watch rule enabled ({reason})")
             unmatched_rules.append((item, decision))
             continue
-        item["plex"].mark_watched(item["rating_key"])
+        if not item["plex"].mark_watched(item["rating_key"]):
+            # Plex took the request and did not keep it. Reporting this as a
+            # success is how an episode stays unwatched while the job that
+            # handled it reads as having done its work.
+            unconfirmed.append(item)
+            details.append(
+                f"{location}: Plex accepted the request but still reports "
+                f"this episode unwatched ({reason})"
+            )
+            continue
         marked.append(item)
         details.append(f"{location}: marked watched ({reason})")
     # A library whose rule is on for this show has to produce the episode
@@ -1241,7 +1251,12 @@ def process_plex_event(event: dict, app_config, clients: dict,
         orphanable = missing and bool(rules.legacy_rating_keys(
             item["instance_name"], item["library_name"],
         ))
-        if not missing:
+        if unconfirmed:
+            message = (
+                f"Plex accepted the request for {len(unconfirmed)} episode(s) "
+                f"and still reports them unwatched"
+            )
+        elif not missing:
             message = (f"Plex matched the import{where}; "
                        f"the automatic watch rule is switched off")
         elif orphanable:
@@ -1361,7 +1376,20 @@ def process_manual_event(event: dict, app_config, clients: dict,
         matched += len(episodes)
         unwatched = [episode for episode in episodes if episode["view_count"] < 1]
         if unwatched:
-            client.mark_watched_many([episode["rating_key"] for episode in unwatched])
+            answer = client.mark_watched_many(
+                [episode["rating_key"] for episode in unwatched]
+            )
+            # Older clients returned nothing; take a list or take none.
+            refused = list(answer) if isinstance(answer, (list, tuple, set)) else []
+            if refused:
+                notes.append(
+                    f"{label}: Plex accepted {len(refused)} request(s) and still "
+                    f"reports those episodes unwatched"
+                )
+                unwatched = [
+                    episode for episode in unwatched
+                    if episode["rating_key"] not in set(refused)
+                ]
             rating_keys.extend(episode["rating_key"] for episode in unwatched)
         already_watched += len(episodes) - len(unwatched)
         # An episode Plex already counts watched can still hold a resume point,

@@ -551,23 +551,51 @@ class PlexClient:
                          rating_key, exc)
             return False
 
-    def mark_watched(self, rating_key: str) -> None:
+    def confirm_watched(self, rating_key: str) -> bool:
+        """Read back what Plex actually recorded.
+
+        A scrobble answers 200 whether or not the play was stored, so the HTTP
+        status proves the request arrived and nothing more. Reporting an
+        episode marked while Plex still counts it unwatched is the one failure
+        that cannot be told from success by looking at mediaMender.
+
+        Unknowable is not failure: if the read itself fails, say it worked
+        rather than invent a problem.
+        """
+        try:
+            response = self._get(f"/library/metadata/{rating_key}", timeout=15)
+            response.raise_for_status()
+            items = self._metadata(response)
+        except (requests.RequestException, ValueError) as exc:
+            logger.debug("Could not confirm the play on %s: %s", rating_key, exc)
+            return True
+        if not items:
+            return True
+        return int(items[0].get("viewCount", 0) or 0) >= 1
+
+    def mark_watched(self, rating_key: str) -> bool:
+        """Mark one item played, and say whether Plex kept it."""
         endpoint, identifier = self._scrobble_endpoint()
         response = self._get(endpoint, params={
             "key": str(rating_key), "identifier": identifier,
         })
         response.raise_for_status()
         self.clear_progress(rating_key, identifier)
+        return self.confirm_watched(rating_key)
 
-    def mark_watched_many(self, rating_keys: List[str]) -> None:
-        """Mark several items watched while discovering the Plex endpoint once."""
+    def mark_watched_many(self, rating_keys: List[str]) -> List[str]:
+        """Mark several items played, returning any Plex did not keep."""
         endpoint, identifier = self._scrobble_endpoint()
+        unconfirmed = []
         for rating_key in rating_keys:
             response = self._get(endpoint, params={
                 "key": str(rating_key), "identifier": identifier,
             })
             response.raise_for_status()
             self.clear_progress(rating_key, identifier)
+            if not self.confirm_watched(rating_key):
+                unconfirmed.append(str(rating_key))
+        return unconfirmed
 
     def get_artwork(self, artwork_key: str):
         if not artwork_key.startswith("/") or artwork_key.startswith("//"):

@@ -553,6 +553,13 @@ show that still has unwatched episodes therefore offers to mark them straight
 away. **Catch up now** does the same across every show whose rule is on. Both
 ask for confirmation first, because they write real Plex watch history.
 
+Every mark is read back. A scrobble answers 200 whether or not Plex stored the
+play, so the status proves the request arrived and nothing more - and an
+episode reported marked while Plex still counts it unwatched is the one failure
+that cannot be told from success by looking at mediaMender. The job says so
+instead of claiming the work was done. A read-back that itself fails is treated
+as success rather than inventing a problem.
+
 Marking watched also discards the episode's resume point. Plex keeps anything
 with a saved offset in **Continue Watching** however many times it has been
 played, so an episode someone had started and then had marked watched went on
