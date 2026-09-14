@@ -1353,6 +1353,67 @@ class MarkWatchedRuleTests(unittest.TestCase):
         self.assertIn("switched off", disabled["message"])
         self.assertNotIn("re-added", disabled["message"])
 
+    def test_a_catch_up_reaches_a_show_plex_still_offers_to_continue(self):
+        """A fully watched show is skipped, which is what keeps a catch-up
+        cheap - but a watched episode holding a resume point sits in Continue
+        Watching regardless of any count, and would never be reached. Plex
+        lists exactly those, in one request per library."""
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.get_show_tvdb_id.return_value = "73141"
+        plex.list_on_deck.return_value = [
+            # Watched, but Plex is still offering it: a resume point.
+            {"rating_key": "e1", "show_rating_key": "10",
+             "show_title": "The Real Housewives of London",
+             "season_index": 2, "episode_index": 2,
+             "view_count": 1, "view_offset": 640000},
+            # Genuinely unwatched: the rule walk already covers this one.
+            {"rating_key": "e2", "show_rating_key": "11", "show_title": "Other",
+             "season_index": 1, "episode_index": 1,
+             "view_count": 0, "view_offset": 0},
+        ]
+        queued = []
+        manager = Mock()
+        manager.enqueue_manual.side_effect = lambda event: queued.append(event)
+        with patch.object(app, "config", config), \
+             patch.object(app, "plex_clients", {"Plex": plex}), \
+             patch.object(app, "mark_watched", manager), \
+             patch.object(app.mark_watched_rules, "rule",
+                          return_value={"show_enabled": True}):
+            stranded = mark_watched_routes._queue_on_deck_leftovers("admin")
+        self.assertEqual(stranded, 1)
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["manual"]["show_rating_key"], "10")
+        self.assertEqual(queued[0]["manual"]["scope"], "show")
+
+    def test_a_show_without_a_rule_is_left_on_deck(self):
+        library = LibraryConfig("TV", "physical", [], section_id="7")
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Plex", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.get_show_tvdb_id.return_value = ""
+        plex.list_on_deck.return_value = [
+            {"rating_key": "e1", "show_rating_key": "10", "show_title": "Other",
+             "season_index": 2, "episode_index": 2,
+             "view_count": 1, "view_offset": 640000},
+        ]
+        manager = Mock()
+        with patch.object(app, "config", config), \
+             patch.object(app, "plex_clients", {"Plex": plex}), \
+             patch.object(app, "mark_watched", manager), \
+             patch.object(app.mark_watched_rules, "rule",
+                          return_value={"show_enabled": False}):
+            self.assertEqual(
+                mark_watched_routes._queue_on_deck_leftovers("admin"), 0,
+            )
+        manager.enqueue_manual.assert_not_called()
+
     def test_the_catch_up_schedule_is_off_unless_asked_for(self):
         """It writes Plex watch history on a timer, so it is never a default."""
         self.assertEqual(MarkWatchedConfig().catch_up_cron, "")

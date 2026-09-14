@@ -588,6 +588,13 @@ wearing two ratingKeys, so a show-scoped update takes in both, matched on TVDB
 id and never on title alone, and reports what each contributed. This applies
 within a library only; other libraries keep their own rules.
 
+A catch-up also sweeps what Plex is actually offering as **Continue Watching**.
+A show Plex counts fully watched is skipped by the rule walk, which is what
+keeps a catch-up cheap - but a watched episode holding a resume point sits on
+the home screen regardless of any count, so that skip would leave it there for
+good. Plex lists those in one request per library, and any belonging to a show
+whose rule is on is queued like the rest.
+
 It only ever deals in the difference. Plex reports a watched count on the show
 and season listings, so a show or season already fully watched is skipped
 without its episodes being read at all - a finished 1,000-episode show costs

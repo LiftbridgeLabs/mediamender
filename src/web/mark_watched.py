@@ -1048,12 +1048,70 @@ def enqueue_catch_up(owner: str = "") -> dict:
                 "rule_user": owner,
             })
             seasons_queued += 1
+    # A show Plex counts fully watched is skipped above, and that is what keeps
+    # a catch-up cheap - but a watched episode holding a resume point sits in
+    # Continue Watching regardless of any count, and would never be reached.
+    # Plex lists exactly those in one request per library.
+    stranded = _queue_on_deck_leftovers(owner)
     runtime.logger.info(
         "Queued a catch-up for %s show(s) with unwatched episodes (%s job(s)); "
-        "fully watched shows were skipped without reading their episodes",
+        "fully watched shows were skipped without reading their episodes"
+        "%s",
         shows, seasons_queued,
+        f"; {stranded} more were still on Plex's Continue Watching"
+        if stranded else "",
     )
-    return {"shows": shows, "jobs": seasons_queued}
+    return {"shows": shows, "jobs": seasons_queued, "on_deck": stranded}
+
+
+def _queue_on_deck_leftovers(owner: str = "") -> int:
+    """Queue shows Plex still offers to continue, whose rule says not to."""
+    queued = 0
+    for instance in runtime.config.instances:
+        plex = runtime.plex_clients.get(instance.name)
+        if plex is None:
+            continue
+        for library in instance.libraries:
+            if not runtime.config.mark_watched.shows_library(
+                instance.name, library.name,
+            ):
+                continue
+            try:
+                section_id = library.section_id or plex.find_section_id(library.name)
+                if not section_id or plex.get_section_type(str(section_id)) != "show":
+                    continue
+                on_deck = plex.list_on_deck(str(section_id))
+            except Exception:
+                runtime.logger.debug("Could not read on deck for %s::%s",
+                                     instance.name, library.name)
+                continue
+            seen = set()
+            for item in on_deck:
+                show_key = item["show_rating_key"]
+                if show_key in seen:
+                    continue
+                seen.add(show_key)
+                # Only a show already fully watched: anything else was queued
+                # by the rule walk and does not need queueing twice.
+                if item["view_count"] < 1:
+                    continue
+                if not runtime.mark_watched_rules.rule(
+                    instance.name, library.name, show_key, 0,
+                    tvdb_id=plex.get_show_tvdb_id(show_key),
+                )["show_enabled"]:
+                    continue
+                runtime.mark_watched.enqueue_manual({
+                    "series": {"title": item["show_title"] or "Plex show"},
+                    "manual": {
+                        "scope": "show",
+                        "instance": instance.name,
+                        "library": library.name,
+                        "show_rating_key": show_key,
+                    },
+                    "rule_user": owner,
+                })
+                queued += 1
+    return queued
 
 
 def start_catch_up(owner: str = "") -> None:

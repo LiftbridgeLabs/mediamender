@@ -481,6 +481,32 @@ class PlexClient:
                 return show
         return None
 
+    def list_on_deck(self, section_id: str) -> List[Dict]:
+        """What Plex is currently offering as Continue Watching for a section.
+
+        The only cheap way to find a show sitting on the home screen despite
+        being fully watched: a resume point keeps it there, and a watched count
+        cannot see one. Plex answers this in a single request.
+        """
+        try:
+            response = self._get(
+                f"/library/sections/{section_id}/onDeck", timeout=30,
+            )
+            response.raise_for_status()
+            items = self._metadata(response)
+        except (requests.RequestException, ValueError) as exc:
+            logger.debug("Plex would not list on deck for %s: %s", section_id, exc)
+            return []
+        return [{
+            "rating_key": str(item.get("ratingKey", "")),
+            "show_rating_key": str(item.get("grandparentRatingKey", "")),
+            "show_title": str(item.get("grandparentTitle", "")),
+            "season_index": int(item.get("parentIndex", 0) or 0),
+            "episode_index": int(item.get("index", 0) or 0),
+            "view_count": int(item.get("viewCount", 0) or 0),
+            "view_offset": int(item.get("viewOffset", 0) or 0),
+        } for item in items if item.get("grandparentRatingKey")]
+
     def describe_show(self, section_id: str, show_title: str) -> str:
         """What this library actually holds for a show, for a job that is stuck.
 
