@@ -1383,6 +1383,46 @@ def api_test_plex():
         return jsonify({"ok": False, "error": str(e)})
 
 
+@app.route("/api/plex/library-folders", methods=["GET"])
+@require_auth
+def api_plex_library_folders():
+    """The folders Plex itself scans for one configured library.
+
+    Plex is the authority on where a library's media lives, and it reports it
+    on every section. Asking someone to retype it, and then failing a file
+    count when the two disagree, is work the install can do for itself.
+    """
+    instance_name = str(request.args.get("instance", "")).strip()
+    library_name = str(request.args.get("library", "")).strip()
+    instance = next(
+        (item for item in config.instances if item.name == instance_name), None,
+    )
+    library = next(
+        (item for item in instance.libraries if item.name == library_name), None,
+    ) if instance else None
+    plex = plex_clients.get(instance_name)
+    if instance is None or library is None or plex is None:
+        return jsonify({"ok": False, "error": "Unknown Plex library"}), 404
+    try:
+        section = library.section_id or plex.find_section_id(library.name)
+        if not section:
+            return jsonify({
+                "ok": False,
+                "error": f"Plex has no library called {library.name}",
+            }), 404
+        folders = plex.get_section_locations(str(section))
+    except Exception as exc:
+        logger.warning("Could not read Plex folders for %s::%s (%s)",
+                       instance_name, library_name, type(exc).__name__)
+        return jsonify({"ok": False, "error": "Plex would not report its folders"}), 502
+    configured = {path.path.rstrip("/") for path in library.paths}
+    return jsonify({
+        "ok": True,
+        "folders": folders,
+        "missing": [f for f in folders if f.rstrip("/") not in configured],
+    })
+
+
 @app.route("/api/plex/auth/start", methods=["POST"])
 @require_auth
 def api_plex_auth_start():

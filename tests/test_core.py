@@ -1016,6 +1016,76 @@ class FileCoverageTests(unittest.TestCase):
             )
 
 
+class PlexFolderImportTests(unittest.TestCase):
+    """Plex reports where a library's media lives, so nobody should have to
+    retype it - which is how a file count ends up measuring a folder Plex
+    never scans."""
+
+    def _client(self):
+        client = app.app.test_client()
+        with client.session_transaction() as browser_session:
+            browser_session.update({"authenticated": True, "username": "admin",
+                                    "role": "admin", "permissions": ["*"],
+                                    "_csrf_token": "known-token"})
+        return client
+
+    def test_plex_folders_are_offered_for_a_configured_library(self):
+        from src.config import AppConfig, LibraryConfig, PathConfig, PlexInstanceConfig
+        library = LibraryConfig(
+            "TV Anime", "debrid",
+            [PathConfig("/mnt/symlink_media/tv-anime-old", "debrid", 90, [])],
+            section_id="9",
+        )
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Streamstead-Unlimited", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_locations.return_value = [
+            "/mnt/symlink_media/symlinks/nzbdav/tv-anime",
+        ]
+        with patch.object(app, "config", config),              patch.object(app, "plex_clients", {"Streamstead-Unlimited": plex}):
+            response = self._client().get(
+                "/api/plex/library-folders"
+                "?instance=Streamstead-Unlimited&library=TV+Anime"
+            )
+        body = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(body["folders"],
+                         ["/mnt/symlink_media/symlinks/nzbdav/tv-anime"])
+        # The configured path is not one of them, so it is still missing.
+        self.assertEqual(body["missing"],
+                         ["/mnt/symlink_media/symlinks/nzbdav/tv-anime"])
+
+    def test_a_folder_already_configured_is_not_offered_again(self):
+        from src.config import AppConfig, LibraryConfig, PathConfig, PlexInstanceConfig
+        library = LibraryConfig(
+            "TV Anime", "debrid",
+            [PathConfig("/mnt/symlink_media/symlinks/nzbdav/tv-anime", "debrid", 90, [])],
+            section_id="9",
+        )
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Streamstead-Unlimited", "http://plex", "token", [library],
+        )])
+        plex = Mock()
+        plex.get_section_locations.return_value = [
+            "/mnt/symlink_media/symlinks/nzbdav/tv-anime",
+        ]
+        with patch.object(app, "config", config),              patch.object(app, "plex_clients", {"Streamstead-Unlimited": plex}):
+            response = self._client().get(
+                "/api/plex/library-folders"
+                "?instance=Streamstead-Unlimited&library=TV+Anime"
+            )
+        self.assertEqual(response.get_json()["missing"], [])
+
+    def test_an_unknown_library_is_refused(self):
+        from src.config import AppConfig
+        with patch.object(app, "config", AppConfig(instances=[])),              patch.object(app, "plex_clients", {}):
+            response = self._client().get(
+                "/api/plex/library-folders?instance=Nope&library=Nope"
+            )
+        self.assertEqual(response.status_code, 404)
+
+
 class SafetyTests(unittest.TestCase):
     @staticmethod
     def _run_objects(max_items=1000, max_percent=25):

@@ -166,6 +166,12 @@ and a reload returns you where you were.
 
 For mixed libraries the file threshold check combines all paths before comparing to your Plex count, so individual paths don't need to hold the full library.
 
+**Use the folders Plex scans**, in a library's path editor, adds them straight
+from Plex. Plex is the authority on where a library's media lives and reports
+it on every section, so retyping it by hand is only a way to end up counting a
+folder Plex never looks at. Folders already configured are not offered again,
+and the path type is worth reviewing before saving.
+
 A ratio well under the threshold has two very different causes: the library has
 genuinely lost files, or the count only covered part of it. Plex names the
 folders it scans, so a failing check compares them against the paths configured

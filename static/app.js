@@ -2657,8 +2657,9 @@ function renderSettingsLibraries(libs, ii) {
                 <button class="btn btn-secondary btn-sm" onclick="openBrowser(${ii},${li})">browse</button>
               </div>
             </div>
-            <div style="display:flex;gap:8px;">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
               <button class="btn btn-success btn-sm" onclick="addPath(${ii},${li})">Add Path</button>
+              <button class="btn btn-secondary btn-sm" onclick="usePlexFolders(${ii},${li},this)" title="Plex reports the folders it scans for this library">Use the folders Plex scans</button>
               <button class="btn btn-secondary btn-sm" onclick="document.getElementById('apf-${ii}-${li}').classList.remove('open')">Cancel</button>
             </div>
           </div>
@@ -2764,6 +2765,42 @@ function addPath(ii, li) {
   document.getElementById(`si-paths-${ii}-${li}`).innerHTML = renderPathItems(_settingsData.instances[ii].libraries[li].paths, ii, li);
   document.getElementById(`apf-${ii}-${li}`).classList.remove('open');
   document.getElementById(`apf-path-${ii}-${li}`).value = '';
+}
+
+// Plex is the authority on where a library's media lives, and it reports it on
+// every section. Retyping it by hand is how a file count ends up measuring a
+// folder Plex never scans.
+async function usePlexFolders(ii, li, button) {
+  const instance = _settingsData.instances[ii];
+  const library = instance?.libraries?.[li];
+  if (!library?.name) return toast('Name the library first', 'fail');
+  button.disabled = true;
+  try {
+    const query = new URLSearchParams({instance: instance.name, library: library.name});
+    const response = await fetch(`/api/plex/library-folders?${query}`);
+    const data = await readJsonResponse(response, 'Plex folders');
+    if (!response.ok) throw new Error(data.error || 'Plex would not report its folders');
+    const missing = data.missing || [];
+    if (!missing.length) {
+      return toast(data.folders?.length
+        ? 'Every folder Plex scans is already configured'
+        : 'Plex reports no folders for this library', '');
+    }
+    const type = library.type === 'mixed' ? 'debrid' : (library.type || 'physical');
+    const threshold = parseInt(document.getElementById(`apf-thr-${ii}-${li}`)?.value) || 90;
+    for (const path of missing) {
+      const pathObj = {path, type, min_threshold: threshold};
+      if (type === 'debrid' || type === 'usenet') pathObj.provider_checks = [];
+      library.paths.push(pathObj);
+    }
+    document.getElementById(`si-paths-${ii}-${li}`).innerHTML =
+      renderPathItems(library.paths, ii, li);
+    toast(`Added ${missing.length} folder${missing.length===1?'':'s'} from Plex; review the type, then save`, 'pass');
+  } catch (error) {
+    toast(error.message || 'Plex would not report its folders', 'fail');
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function removePath(ii, li, pi, source = '_settingsData') {
