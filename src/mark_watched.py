@@ -438,10 +438,21 @@ class MarkWatchedManager:
             with self._lock:
                 self._inflight.discard(job_id)
 
+    # Past the configured ramp the wait doubles rather than repeating. An
+    # episode Plex has not produced in an hour is not going to appear because
+    # it was asked a three-hundredth time, and repeating the last step turned a
+    # five-day window into roughly 1,400 searches of every library. Doubling to
+    # a six-hour ceiling covers the same window in about thirty.
+    MAX_BACKOFF_SECONDS = 6 * 3600
+
     def _backoff(self, attempt: int) -> float:
-        """Seconds to wait before attempt ``attempt`` + 1, the last step repeating."""
+        """Seconds to wait before attempt ``attempt`` + 1."""
         delays = tuple(self.retry_delays) or (60,)
-        return float(delays[min(attempt, len(delays)) - 1])
+        if attempt <= len(delays):
+            return float(delays[attempt - 1])
+        doublings = attempt - len(delays)
+        grown = float(delays[-1]) * (2 ** min(doublings, 20))
+        return min(grown, float(self.MAX_BACKOFF_SECONDS))
 
     def _expired(self, record: dict) -> bool:
         if not self.give_up_after_hours:

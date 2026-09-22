@@ -629,6 +629,12 @@ record repeated. An upgrade arrives as a new file and so as a new webhook
 identity: the job still waiting on the replaced file is marked `superseded`
 rather than left to chase the same episode alongside its replacement.
 
+The retry ramp is a ramp, not a repetition: past the configured delays the wait
+doubles to a six-hour ceiling. An episode Plex has not produced within the hour
+is not going to appear because it was asked a three-hundredth time, and
+repeating the last step turned a five-day give-up window into roughly 1,400
+searches of every library. The same window now costs about thirty attempts.
+
 A job that keeps finding nothing reports what each library actually holds for
 that show - whether Plex has it at all, and which seasons with how many
 episodes. Sonarr and Plex do not always agree on numbering, and an episode Plex

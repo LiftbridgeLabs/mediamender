@@ -415,6 +415,12 @@ def parse_config(raw: dict, config_missing: bool = False) -> AppConfig:
         workers=min(16, max(1, int(mark_raw.get("workers", 4) or 4))),
         scan_on_import=mark_raw.get("scan_on_import", True) is not False,
         give_up_after_hours=max(0.0, float(mark_raw.get("give_up_after_hours", 120))),
+        # Every field here has to be read back, or it is written to config.yml
+        # and silently dropped on the next load - the setting then reverts the
+        # moment the page is reopened, with nothing to say why.
+        catch_up_cron=str(
+            mark_raw.get("catch_up_cron", MarkWatchedConfig.catch_up_cron)
+        ).strip(),
         visible_libraries=(
             [str(value) for value in mark_raw.get("visible_libraries", [])]
             if "visible_libraries" in mark_raw and isinstance(mark_raw.get("visible_libraries"), list)

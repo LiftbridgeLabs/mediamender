@@ -610,14 +610,30 @@ class MarkWatchedQueueTests(unittest.TestCase):
         self.assertEqual(manager.get(record["id"])["status"], "succeeded")
         self.assertEqual(len(attempts), 40)
 
-    def test_backoff_escalates_then_holds_at_the_last_step(self):
+    def test_backoff_follows_the_ramp_then_doubles_to_a_ceiling(self):
+        """An episode Plex has not produced in an hour will not appear because
+        it was asked a three-hundredth time. Repeating the last step turned a
+        five-day window into roughly 1,400 searches of every library."""
         manager = MarkWatchedManager(
             str(self.runtime), retry_delays=(10, 60, 300), autostart=False,
         )
         self.assertEqual(
             [manager._backoff(n) for n in range(1, 7)],
-            [10, 60, 300, 300, 300, 300],
+            [10, 60, 300, 600, 1200, 2400],
         )
+        # And it settles at the ceiling rather than growing without bound.
+        self.assertEqual(manager._backoff(99), manager.MAX_BACKOFF_SECONDS)
+
+    def test_a_five_day_window_costs_tens_of_attempts_not_thousands(self):
+        manager = MarkWatchedManager(
+            str(self.runtime), autostart=False,
+            retry_delays=(15, 30, 60, 120, 300, 600, 900, 1200),
+        )
+        waited = attempts = 0
+        while waited < 120 * 3600:
+            attempts += 1
+            waited += manager._backoff(attempts)
+        self.assertLess(attempts, 60)
 
     def test_an_optional_cap_eventually_gives_up(self):
         def process(_event):
@@ -1418,6 +1434,33 @@ class MarkWatchedRuleTests(unittest.TestCase):
                 mark_watched_routes._queue_on_deck_leftovers("admin"), 0,
             )
         manager.enqueue_manual.assert_not_called()
+
+    def test_the_catch_up_schedule_survives_a_reload(self):
+        """Every field has to be read back, or it is written to config.yml and
+        dropped on the next load - the setting then reverts the moment the page
+        is reopened, with nothing to say why."""
+        import tempfile
+        from src.config import load_config
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yml"
+            path.write_text(yaml.safe_dump({
+                "plex_instances": [],
+                "mark_watched": {"catch_up_cron": "*/15 * * * *"},
+            }), encoding="utf-8")
+            loaded = load_config(str(path))
+        self.assertEqual(loaded.mark_watched.catch_up_cron, "*/15 * * * *")
+
+    def test_an_emptied_schedule_survives_a_reload_too(self):
+        import tempfile
+        from src.config import load_config
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yml"
+            path.write_text(yaml.safe_dump({
+                "plex_instances": [],
+                "mark_watched": {"catch_up_cron": ""},
+            }), encoding="utf-8")
+            loaded = load_config(str(path))
+        self.assertEqual(loaded.mark_watched.catch_up_cron, "")
 
     def test_the_catch_up_runs_by_default(self):
         """A rule fires on import, so an episode the import never reached stays
