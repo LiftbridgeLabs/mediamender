@@ -679,6 +679,15 @@ Rule files written by earlier versions were keyed by mediaMender username and
 are migrated on first load: every show or season left On under any account name
 stays On, and the flattened file is written back on the next rule change.
 
+Each library is asked whether it has the series at all before being searched
+for an episode of it. One search answers that, where a miss otherwise costs a
+filtered query, a coordinate query, a show search and an episode listing - in
+every configured TV library, including the ones that were never going to carry
+that series. Only a definite "not here" skips a library: a search that fails is
+searched anyway, because a library wrongly skipped is an episode never marked.
+Movie and music libraries are not searched at all, and neither are libraries
+hidden in Settings.
+
 The same episode often lands in several libraries, and they do not scan at the
 same speed. A job is finished only once every library whose rule covers the
 show has produced the episode - a match in a library without a rule no longer

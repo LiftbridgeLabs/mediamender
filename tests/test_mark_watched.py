@@ -1631,6 +1631,59 @@ class MarkWatchedRuleTests(unittest.TestCase):
                 {"Unlimited": slow, "altmount": fast}, self.rules)
         self.assertIn("Unlimited::TV Shows", "\n".join(caught.exception.details))
 
+    def test_a_library_without_the_show_is_not_searched_for_episodes(self):
+        """Chopped is not in the anime library, and hunting through it for a
+        Chopped episode costs a filtered query, a coordinate query, a show
+        search and an episode listing to discover that."""
+        config = AppConfig(instances=[
+            PlexInstanceConfig("Unlimited", "http://a", "token", [
+                LibraryConfig("TV Shows", "debrid", [], section_id="1")]),
+            PlexInstanceConfig("Anime", "http://b", "token", [
+                LibraryConfig("TV Anime", "debrid", [], section_id="2")]),
+        ])
+        has, lacks = Mock(), Mock()
+        for client in (has, lacks):
+            client.get_section_type.return_value = "show"
+        has.find_show.return_value = {"rating_key": "109241", "tvdb_id": "1234"}
+        lacks.find_show.return_value = None
+        has.find_episode.return_value = {
+            "rating_key": "77", "show_rating_key": "109241",
+            "season_rating_key": "", "season_index": 6, "episode_index": 5,
+            "title": "Basket Blunders", "show_title": "Chopped",
+        }
+        self.rules.set_show("Unlimited", "TV Shows", "109241", True, tvdb_id="1234")
+        result = process_plex_event({
+            "series": {"title": "Chopped", "tvdb_id": 1234},
+            "episodes": [{"season": 6, "episode": 5}],
+        }, config, {"Unlimited": has, "Anime": lacks}, self.rules)
+        self.assertEqual(result["marked"], 1)
+        lacks.find_episode.assert_not_called()
+        self.assertIn("no entry for this show found here",
+                      "\n".join(result["details"]))
+
+    def test_a_search_that_fails_still_searches_the_library(self):
+        """A library wrongly skipped is an episode never marked, so only a
+        definite "not here" skips it."""
+        config = AppConfig(instances=[PlexInstanceConfig(
+            "Unlimited", "http://a", "token", [
+                LibraryConfig("TV Shows", "debrid", [], section_id="1")],
+        )])
+        plex = Mock()
+        plex.get_section_type.return_value = "show"
+        plex.find_show.return_value = {}          # answered, but not a show
+        plex.find_episode.return_value = {
+            "rating_key": "77", "show_rating_key": "109241",
+            "season_rating_key": "", "season_index": 6, "episode_index": 5,
+            "title": "Basket Blunders", "show_title": "Chopped",
+        }
+        self.rules.set_show("Unlimited", "TV Shows", "109241", True, tvdb_id="1234")
+        result = process_plex_event({
+            "series": {"title": "Chopped", "tvdb_id": 1234},
+            "episodes": [{"season": 6, "episode": 5}],
+        }, config, {"Unlimited": plex}, self.rules)
+        plex.find_episode.assert_called_once()
+        self.assertEqual(result["marked"], 1)
+
     def test_a_library_without_the_show_is_not_waited_for(self):
         """Nothing can be owed an episode of a series it does not carry."""
         slow, fast = Mock(), Mock()

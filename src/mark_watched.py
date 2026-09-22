@@ -1079,6 +1079,10 @@ def process_plex_event(event: dict, app_config, clients: dict,
     matched_per_library: dict[str, set] = {}
     searched = []
     scannable: list[tuple] = []
+    # Libraries that do not carry this series. Kept only so a series no library
+    # has yet - a first import of a brand new show - still has somewhere to ask
+    # for a scan.
+    absent: list[tuple] = []
     for instance in app_config.instances:
         plex = clients.get(instance.name)
         if plex is None:
@@ -1094,6 +1098,22 @@ def process_plex_event(event: dict, app_config, clients: dict,
                 details.append(f"{library_key}: skipped, not a Plex TV library")
                 continue
             searched.append(library_key)
+            # Ask whether this library has the show at all before hunting
+            # through it for an episode. One search answers that, where a miss
+            # otherwise costs a filtered query, a coordinate query, a show
+            # search and an episode listing - five times over, for libraries
+            # that were never going to hold this series.
+            here = plex.find_show(
+                str(section_id), event["series"]["title"],
+                str(event["series"].get("tvdb_id") or ""),
+            )
+            # Only a definite "not here" skips it. Anything else - including a
+            # search that failed - is searched, because a library wrongly
+            # skipped is an episode never marked.
+            if here is None:
+                details.append(f"{library_key}: no entry for this show found here")
+                absent.append((library_key, plex, str(section_id)))
+                continue
             scannable.append((library_key, plex, str(section_id)))
             for episode in event["episodes"]:
                 item = plex.find_episode(
@@ -1244,7 +1264,9 @@ def process_plex_event(event: dict, app_config, clients: dict,
         # that could not possibly gain this episode. A show no library has yet
         # is the one case where there is nothing better to go on.
         if app_config.mark_watched.scan_on_import:
-            details.extend(request_plex_scan(holding or scannable, event))
+            details.extend(request_plex_scan(
+                holding or scannable or absent, event,
+            ))
         raise PlexEpisodePending(
             f"{event['series']['title']} {coordinates}", details,
         )
