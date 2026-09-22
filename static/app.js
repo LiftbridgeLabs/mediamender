@@ -172,6 +172,8 @@ let _markWatchedJobTimer = null;
 const _markWatchedOpenLogs = new Set();
 // Seasons as last fetched, so a rule change redraws without a round trip.
 const _markWatchedSeasons = new Map();
+// When the scheduled catch-up next fires, as the scheduler sees it.
+let _markWatchedCatchUp = null;
 
 function markWatchedStorageKey(name) {
   return `mediamender-mark-watched-${_identity.username || 'default'}-${name}`;
@@ -635,7 +637,8 @@ function markWatchedJobEpisodes(job) {
   }
   const episodes = job.event?.episodes || [];
   const coords = episodes.map(item =>
-    `S${String(item.season ?? 0).padStart(2,'0')}E${String(item.episode ?? 0).padStart(2,'0')}`);
+    `S${String(item.season ?? 0).padStart(2,'0')}E${String(item.episode ?? 0).padStart(2,'0')}`)
+    .sort();
   if (coords.length > 3) return `${coords[0]}–${coords[coords.length-1]} (${coords.length})`;
   return coords.join(', ');
 }
@@ -659,8 +662,10 @@ function groupMarkWatchedJobs(jobs) {
     groups.push({key, lead: job, jobs: [job]});
   }
   for (const group of groups) {
+    // Sorted, or a batch that arrived out of order reads as S01E60-S01E55.
     const coords = group.jobs.flatMap(job => (job.event?.episodes || []).map(item =>
-      `S${String(item.season ?? 0).padStart(2,'0')}E${String(item.episode ?? 0).padStart(2,'0')}`));
+      `S${String(item.season ?? 0).padStart(2,'0')}E${String(item.episode ?? 0).padStart(2,'0')}`))
+      .sort();
     group.episodes = coords.length > 3
       ? `${coords[0]}–${coords[coords.length-1]} (${coords.length})`
       : coords.join(', ') || markWatchedJobEpisodes(group.lead);
@@ -669,6 +674,10 @@ function groupMarkWatchedJobs(jobs) {
 }
 
 function renderMarkWatchedJobs(data) {
+  if (data && data.catch_up) {
+    _markWatchedCatchUp = data.catch_up;
+    renderMarkWatchedSettings();
+  }
   const target = document.getElementById('mark-watched-jobs');
   if (!target) return;
   const jobs = data.jobs || [];
@@ -1833,6 +1842,11 @@ async function loadSettings() {
       webhook_secret: '',
       webhook_secret_configured: cfg.mark_watched?.webhook_secret_configured === true,
       retry_delays: cfg.mark_watched?.retry_delays || [10,30,60,120,300],
+      // Every field the save sends has to be read back here too. The payload
+      // spreads this object, so a field missing from it is posted back empty
+      // and wipes what was just stored - the setting reverting on save, with
+      // the server having done nothing wrong.
+      catch_up_cron: cfg.mark_watched?.catch_up_cron ?? '',
     };
     _settingsData.max_trash_items    = cfg.max_trash_items ?? 1000;
     _settingsData.max_trash_percent  = cfg.max_trash_percent ?? 25;
@@ -2205,8 +2219,13 @@ function renderMarkWatchedSettings() {
   const catchUpState = document.getElementById('s-mw-catch-up-state');
   if (catchUpState) {
     const cron = (_settingsData.mark_watched.catch_up_cron || '').trim();
+    const schedule = _markWatchedCatchUp || {};
+    const when = schedule.next_run
+      ? ` — next run ${fmtTime(schedule.next_run)} (${fmtIn(schedule.next_run)}`
+        + `${schedule.timezone ? `, ${schedule.timezone}` : ''})`
+      : '';
     catchUpState.textContent = cron
-      ? `Scheduled: ${cronDescription(cron)}`
+      ? `Scheduled: ${cronDescription(cron)}${when}`
       : 'Not scheduled — the catch-up runs only when you press Catch up now.';
     catchUpState.style.color = cron ? 'var(--pass2)' : 'var(--warn2)';
   }

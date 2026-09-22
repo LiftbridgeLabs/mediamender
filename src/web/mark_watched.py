@@ -251,7 +251,26 @@ def api_mark_watched_status():
             **runtime.webhook_log.summary(),
             "recent": runtime.webhook_log.recent(10),
         },
+        "catch_up": _catch_up_schedule(),
     })
+
+
+def _catch_up_schedule() -> dict:
+    """When the catch-up next runs, in the clock it is actually scheduled on.
+
+    "Every 15 minutes" says nothing about which quarter-hours, and the
+    container's clock is not always the one the operator is reading.
+    """
+    cron = runtime.config.mark_watched.catch_up_cron.strip()
+    if not cron:
+        return {"cron": "", "next_run": "", "timezone": ""}
+    job = runtime.scheduler.get_job("mark-watched-catch-up")
+    nxt = getattr(job, "next_run_time", None) if job else None
+    return {
+        "cron": cron,
+        "next_run": nxt.isoformat() if nxt else "",
+        "timezone": str(runtime.scheduler.timezone),
+    }
 
 
 @bp.route("/api/mark-watched/jobs/<job_id>/cancel", methods=["POST"])

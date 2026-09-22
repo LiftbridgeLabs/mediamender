@@ -1,3 +1,4 @@
+import re
 import json
 import tempfile
 import time
@@ -1434,6 +1435,25 @@ class MarkWatchedRuleTests(unittest.TestCase):
                 mark_watched_routes._queue_on_deck_leftovers("admin"), 0,
             )
         manager.enqueue_manual.assert_not_called()
+
+    def test_the_settings_page_reads_back_every_field_it_saves(self):
+        """The save payload spreads the loaded object, so a field the loader
+        drops is posted back empty and wipes what was just stored - the setting
+        reverting on save, with the server having done nothing wrong."""
+        source = ui_text()
+        saved = re.search(
+            r"'mark-watched': \(\) => \(\{\s*mark_watched: \{(.*?)\n    \},",
+            source, re.S,
+        )
+        self.assertIsNotNone(saved, "the mark-watched save payload moved")
+        loaded = re.search(
+            r"_settingsData\.mark_watched = \{(.*?)\n    \};", source, re.S,
+        )
+        self.assertIsNotNone(loaded, "the mark-watched settings loader moved")
+        posted = set(re.findall(r"^\s{6}(\w+):", saved.group(1), re.M))
+        read_back = set(re.findall(r"^\s{6}(\w+):", loaded.group(1), re.M))
+        # webhook_secret is deliberately write-only.
+        self.assertEqual(posted - read_back - {"webhook_secret"}, set())
 
     def test_the_catch_up_schedule_survives_a_reload(self):
         """Every field has to be read back, or it is written to config.yml and

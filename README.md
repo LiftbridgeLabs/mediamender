@@ -540,7 +540,10 @@ shown. Search is scoped to the entire selected Plex TV library, and page control
 are available both above and below the poster grid.
 
 **Scheduled catch-up**, under Mark-it-Watched > Configure, runs that catch-up on
-a cron expression, hourly by default. A rule fires on import, so an episode
+a cron expression, hourly by default. The line under the field states whether
+it is scheduled at all, and when it next fires, in the scheduler's own
+timezone - "every 15 minutes" says nothing about which quarter-hours, and the
+container's clock is not always the one being read. A rule fires on import, so an episode
 that arrived before the rule was set, that Sonarr never announced, or whose
 import went wrong is never reached by the automatic path - and the page then
 shows an outstanding count beside a rule that will never act on it. A feature
