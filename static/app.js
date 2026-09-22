@@ -2200,6 +2200,16 @@ function renderMarkWatchedSettings() {
     </div></div></section>`).join('') || '<div class="empty-msg">No Plex instances configured.</div>';
   const catchUp = document.getElementById('s-mw-catch-up');
   if (catchUp) catchUp.value = _settingsData.mark_watched.catch_up_cron || '';
+  // An empty field and a field showing its placeholder look alike, and one of
+  // them means the catch-up never runs. Say which this is.
+  const catchUpState = document.getElementById('s-mw-catch-up-state');
+  if (catchUpState) {
+    const cron = (_settingsData.mark_watched.catch_up_cron || '').trim();
+    catchUpState.textContent = cron
+      ? `Scheduled: ${cronDescription(cron)}`
+      : 'Not scheduled — the catch-up runs only when you press Catch up now.';
+    catchUpState.style.color = cron ? 'var(--pass2)' : 'var(--warn2)';
+  }
   const giveUp = document.getElementById('s-mw-give-up');
   if (giveUp) giveUp.value = _settingsData.mark_watched.give_up_after_hours ?? 120;
   const workers = document.getElementById('s-mw-workers');
@@ -2442,6 +2452,9 @@ async function discoverRepairDatabases(index) {
 
 function cronDescription(cron) {
   const known = {
+    '*/5 * * * *': 'Every 5 minutes',
+    '*/10 * * * *': 'Every 10 minutes',
+    '*/15 * * * *': 'Every 15 minutes',
     '*/30 * * * *': 'Every 30 minutes',
     '0 * * * *': 'Every hour',
     '0 */2 * * *': 'Every 2 hours',

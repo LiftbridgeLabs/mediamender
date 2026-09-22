@@ -433,6 +433,7 @@
           <div class="form-group" style="margin-top:14px;">
             <label class="form-label" for="s-mw-catch-up">Scheduled catch-up</label>
             <input class="form-input" id="s-mw-catch-up" type="text" placeholder="0 * * * * (hourly)">
+            <div class="form-hint" id="s-mw-catch-up-state" style="margin-top:6px;font-weight:600;"></div>
             <div class="form-hint">A cron expression; <code>0 * * * *</code>, hourly, by default. A rule only fires on import, so an episode that arrived before the rule was set, that Sonarr never announced, or whose import went wrong is never reached by the automatic path &mdash; this applies the rules you already have to what Plex already holds, which is what keeps an outstanding count from sitting next to a rule forever. It deals only in what is still unwatched, skips a show Plex already counts complete without reading its episodes, and honours season overrides. Empty it to run the catch-up only by hand.</div>
           </div>
         </div></div>
