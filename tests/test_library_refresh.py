@@ -133,10 +133,12 @@ class LibraryRefreshApiTests(unittest.TestCase):
              patch.object(app, "_update_next"), \
              patch.object(app, "_update_refresh_next"):
             app._setup_scheduler(target)
-        self.assertEqual(add_job.call_count, 1)
-        self.assertEqual(
-            add_job.call_args.kwargs["id"], "refresh::Plex::Youtube",
-        )
+        # Mark-it-Watched keeps its own hourly catch-up alongside.
+        refresh_jobs = [
+            call.kwargs.get("id") for call in add_job.call_args_list
+            if str(call.kwargs.get("id", "")).startswith("refresh::")
+        ]
+        self.assertEqual(refresh_jobs, ["refresh::Plex::Youtube"])
 
     def test_page_exposes_manual_and_scheduled_refresh_controls(self):
         html = ui_text()

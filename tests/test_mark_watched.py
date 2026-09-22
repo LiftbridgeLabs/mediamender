@@ -1419,9 +1419,11 @@ class MarkWatchedRuleTests(unittest.TestCase):
             )
         manager.enqueue_manual.assert_not_called()
 
-    def test_the_catch_up_schedule_is_off_unless_asked_for(self):
-        """It writes Plex watch history on a timer, so it is never a default."""
-        self.assertEqual(MarkWatchedConfig().catch_up_cron, "")
+    def test_the_catch_up_runs_by_default(self):
+        """A rule fires on import, so an episode the import never reached stays
+        unwatched next to a rule that plainly covers it. A feature called
+        auto-watch has to close that itself rather than wait to be asked."""
+        self.assertEqual(MarkWatchedConfig().catch_up_cron, "0 * * * *")
 
     def test_a_catch_up_schedule_is_registered_when_set(self):
         config = AppConfig(
@@ -1435,8 +1437,10 @@ class MarkWatchedRuleTests(unittest.TestCase):
         ]
         self.assertIn("mark-watched-catch-up", registered)
 
-    def test_no_schedule_is_registered_without_one(self):
-        config = AppConfig(instances=[], mark_watched=MarkWatchedConfig())
+    def test_emptying_the_schedule_turns_it_off(self):
+        config = AppConfig(
+            instances=[], mark_watched=MarkWatchedConfig(catch_up_cron=""),
+        )
         with patch.object(app, "scheduler") as scheduler:
             app._setup_scheduler(config)
         registered = [

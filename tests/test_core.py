@@ -710,7 +710,12 @@ class FeatureToggleTests(unittest.TestCase):
             app._setup_scheduler(target)
             app._start_readonly_status_refresh(target, {})
         remove_jobs.assert_called_once_with()
-        add_job.assert_not_called()
+        # Mark-it-Watched keeps its own hourly catch-up; nothing here is a
+        # trash job.
+        self.assertEqual(
+            [call.kwargs.get("id") for call in add_job.call_args_list],
+            ["mark-watched-catch-up"],
+        )
         thread.assert_not_called()
 
     def test_disabled_features_reject_manual_operations(self):

@@ -540,11 +540,14 @@ shown. Search is scoped to the entire selected Plex TV library, and page control
 are available both above and below the poster grid.
 
 **Scheduled catch-up**, under Mark-it-Watched > Configure, runs that catch-up on
-a cron expression - `0 4 * * *` for 4am daily. It is blank by default and stays
-that way until asked for, because it writes Plex watch history without anyone
-present. It is the answer to a show that plainly has a rule and plainly has an
-unwatched episode: the rule fires on import, and no import is coming for an
-episode that arrived before the rule was set or that Sonarr never announced.
+a cron expression, hourly by default. A rule fires on import, so an episode
+that arrived before the rule was set, that Sonarr never announced, or whose
+import went wrong is never reached by the automatic path - and the page then
+shows an outstanding count beside a rule that will never act on it. A feature
+called auto-watch has to close that by itself. It marks only what is already
+unwatched in a show whose rule is on, skips a show Plex counts complete without
+reading its episodes, and honours season overrides. Empty the field to run the
+catch-up only by hand.
 
 A rule only governs future imports, so switching one on leaves every episode
 already in the library unwatched - the show keeps sitting in Plex's Continue
