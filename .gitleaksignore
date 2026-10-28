@@ -1,0 +1,9 @@
+# Approved by Jason, 2026-10-27. Each line is one exact gitleaks finding
+# (commit:file:rule:line). All three are placeholder text, not credentials.
+
+# README example command: the header value is the literal word "your-token".
+b9d62b1b7be51cc8377359d8633aeeccc034c2b4:README.md:curl-auth-header:392
+e2e1c4a126f43b46ac5bdc36ab7bd7a8071c15b4:README.md:curl-auth-header:256
+
+# docker-compose.yml default for EMPTYARR_WORKER_TOKEN: a "replace with..." placeholder.
+93df54b4060932b80f9ab1b1ed434e1ce7f629ec:docker-compose.yml:generic-api-key:54
