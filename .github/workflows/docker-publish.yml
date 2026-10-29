@@ -5,6 +5,11 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+# The image goes to Docker Hub with its own login, so GITHUB_TOKEN only
+# needs to read the code.
+permissions:
+  contents: read
+
 jobs:
   # Deploy gate (Rule #2): the image is not built or pushed if a scan fails.
   scan:
