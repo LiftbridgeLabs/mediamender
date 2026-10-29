@@ -8,7 +8,7 @@ on:
 jobs:
   # Deploy gate (Rule #2): the image is not built or pushed if a scan fails.
   scan:
-    uses: LiftbridgeLabs/.github/.github/workflows/security-scan.yml@285f06f9c05ae483229ce1d8265697e4f2629c75 # main, 2026-10-27
+    uses: LiftbridgeLabs/.github/.github/workflows/security-scan.yml@ead0198752a5d39a283ed4699215967dadb22816 # main, 2026-10-28
     with:
       pip-requirements: "requirements.txt"
     secrets:
